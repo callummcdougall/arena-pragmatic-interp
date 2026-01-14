@@ -25,7 +25,7 @@ r'''
 # ! TAGS: []
 
 r'''
-<img src="https://raw.githubusercontent.com/chloeli-15/ARENA_img/refs/heads/main/img/header-64.png" width="350">
+<img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png" width="350">
 '''
 
 # ! CELL TYPE: markdown
