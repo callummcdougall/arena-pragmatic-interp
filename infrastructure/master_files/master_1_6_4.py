@@ -25,9 +25,7 @@ r'''
 # ! TAGS: []
 
 r'''
-<img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-12.png" width="350">
-
-Image idea - tentacles reaching around an anchor at sea (shoggoth vibes)
+<img src="https://raw.githubusercontent.com/chloeli-15/ARENA_img/refs/heads/main/img/header-64.png" width="350">
 '''
 
 # ! CELL TYPE: markdown
