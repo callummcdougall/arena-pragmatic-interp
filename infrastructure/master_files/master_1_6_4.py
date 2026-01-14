@@ -2339,11 +2339,3 @@ r'''
 - 💻 Repository: https://github.com/interp-reasoning/thought-anchors
 '''
 
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Bonus exercises
-# Add your own experiments here!
-
-
