@@ -42,3 +42,5 @@ logs/
 __pycache__/
 infrastructure/master_files/js
 demos
+infrastructure/master_files/deception-detection/
+infrastructure/context
