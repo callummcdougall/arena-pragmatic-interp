@@ -176,6 +176,8 @@ If you don't have permission, then you can request it [here](https://huggingface
 
 from huggingface_hub import login
 
+API_KEY = ""
+
 login(token=API_KEY)  # Add your API key here
 
 # ! CELL TYPE: markdown
@@ -216,8 +218,8 @@ tokenizer.pad_token = tokenizer.eos_token
 # # Apollo found layer 22 of 80 works well for the 70B model, so we'll pick a layer that's this
 # # same fraction of the way through our model (in case we picked a model smaller than 70B).
 NUM_LAYERS = len(model.model.layers)
-PROBE_LAYER = int(NUM_LAYERS * 22 / 80)
-# PROBE_LAYER = int(NUM_LAYERS * 3 / 4)
+PROBE_LAYER = int(NUM_LAYERS * 2 / 3)
+# PROBE_LAYER = int(NUM_LAYERS * 22 / 80)
 print(f"Probing at layer {PROBE_LAYER} of {NUM_LAYERS}")
 
 # ! CELL TYPE: markdown
@@ -243,9 +245,7 @@ test_prompts = [
 
 
 def generate_response(messages, max_new_tokens=100):
-    text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(text, return_tensors="pt").to(device)
 
     with torch.no_grad():
@@ -257,9 +257,7 @@ def generate_response(messages, max_new_tokens=100):
             pad_token_id=tokenizer.eos_token_id,
         )
 
-    response = tokenizer.decode(
-        outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=True
-    )
+    response = tokenizer.decode(outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=True)
     return response
 
 
@@ -296,12 +294,7 @@ prefill = "Sure,"
 
 
 def generate_response(messages, max_new_tokens=100, prefill=""):
-    text = (
-        tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        + prefill
-    )
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + prefill
     inputs = tokenizer(text, return_tensors="pt").to(device)
 
     with torch.no_grad():
@@ -313,9 +306,7 @@ def generate_response(messages, max_new_tokens=100, prefill=""):
             pad_token_id=tokenizer.eos_token_id,
         )
 
-    response = tokenizer.decode(
-        outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=True
-    )
+    response = tokenizer.decode(outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=True)
     return response
 
 
@@ -398,6 +389,65 @@ print(f"Testing set: {len(true_facts_test)}")
 # ! TAGS: []
 
 r"""
+We also define honest and dishonest prompts, to prime the model to be honest or deceptive:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+HONEST_PROMPT = "Pretend you are an honest person making statements about the world."
+DISHONEST_PROMPT = "Pretend you are a deceptive person making statements about the world."
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+First, it's important to test out whether this model has the capability to be deceptive with these priming prompts:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def test_completion(
+    prefix: str = "The smallest planet in our",
+    honest: bool = True,
+) -> None:
+    messages = [
+        {"role": "user", "content": HONEST_PROMPT if honest else DISHONEST_PROMPT},
+        {"role": "assistant", "content": prefix},
+    ]
+    input_ids = tokenizer.apply_chat_template(messages, add_generation_prompt=False, return_tensors="pt").to(device)[
+        :, :-1
+    ]  # slice out the <|eot_id|> token
+
+    with torch.no_grad():
+        output = model.generate(
+            input_ids,
+            max_new_tokens=16,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    completion = tokenizer.decode(output[0][input_ids.shape[1] :], skip_special_tokens=True)
+    return prefix + completion
+
+
+print("Honest completion:")
+print(test_completion(honest=True))
+print("\nDeceptive completion:")
+print(test_completion(honest=False))
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Good, we've shown the model is capable of this!
+
 Now we extract activations for probe training. Key implementation details from the paper:
 
 - **Layer selection**: The paper probes layer 22 of 80 for Llama-3.3-70B. We scale proportionally for our smaller model.
@@ -436,36 +486,49 @@ def extract_activations(
     layer_idx: int,
     exclude_last_n_tokens: int = 0,
     average: bool = True,
+    system_prompt: str | None = None,
 ) -> Float[torch.Tensor, " hidden_dim"] | Float[torch.Tensor, "num_tokens hidden_dim"]:
     """
     Extract activations from a specific layer.
     Following the paper: exclude last N tokens to capture 'intent' before completion.
     If average=True, return averaged vector; if False, return per-token activations.
     """
-    # We get tokens for the "only user prompt" part as well, so we can see what the start position
-    # is for the model's response. The "-1" is because of the EOS token.
-    only_user_prompt = tokenizer.apply_chat_template(
+    # Build messages
+    # TODO(mcdougallc) - this is messy as hell and should be nicer (e.g. get string & split & tokenize)
+    messages_user_only = []
+    messages_full = []
+    if system_prompt:
+        messages_user_only.append({"role": "system", "content": system_prompt})
+        messages_full.append({"role": "system", "content": system_prompt})
+    messages_user_only.extend(
         [
             {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": ""},
-        ],
-        tokenize=True,
+        ]
     )
-    start_idx = len(only_user_prompt) - 1
-
-    # Now define the full prompt, and convert it to tokens
-    full_prompt = tokenizer.apply_chat_template(
+    messages_full.extend(
         [
             {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": assistant_response},
-        ],
+        ]
+    )
+
+    # We get tokens for the "only user prompt" part as well, so we can see what the start position
+    # is for the model's response. The "-1" is because of the EOS token.
+    only_user_prompt_tokens = tokenizer.apply_chat_template(
+        messages_user_only,
+        tokenize=True,
+    )
+    start_idx = len(only_user_prompt_tokens) - 1
+
+    # Now define the full prompt, and convert it to tokens
+    full_prompt = tokenizer.apply_chat_template(
+        messages_full,
         tokenize=False,
     )
 
     # Tokenize the full prompt (i.e. user prompt + assistant response)
-    inputs = tokenizer(
-        full_prompt, return_tensors="pt", truncation=True, max_length=512
-    ).to(device)
+    inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
 
     with torch.no_grad():
         outputs = model(**inputs, output_hidden_states=True)
@@ -476,9 +539,7 @@ def extract_activations(
         if hidden_states.shape[0] <= start_idx + exclude_last_n_tokens:
             return None
 
-        hidden_states = hidden_states[
-            start_idx : hidden_states.shape[0] - exclude_last_n_tokens
-        ]
+        hidden_states = hidden_states[start_idx : hidden_states.shape[0] - exclude_last_n_tokens]
 
         if average:
             # Average over sequence (mean across tokens)
@@ -488,12 +549,6 @@ def extract_activations(
             activations = hidden_states.cpu().numpy()
 
     return activations
-
-
-HONEST_PROMPT = "Pretend you are an honest person making statements about the world."
-DISHONEST_PROMPT = (
-    "Pretend you are a deceptive person making statements about the world."
-)
 
 
 def gather_dataset(
@@ -509,17 +564,13 @@ def gather_dataset(
         fact = row["statement"]
 
         # Honest version
-        activations = extract_activations(
-            honest_prompt, fact, probe_layer, exclude_last_n_tokens=5, average=False
-        )
+        activations = extract_activations(honest_prompt, fact, probe_layer, exclude_last_n_tokens=5, average=False)
         if activations is not None:
             training_data.append(activations)
             training_labels.extend([0 for _ in activations])
 
         # Deceptive version
-        activations = extract_activations(
-            dishonest_prompt, fact, probe_layer, exclude_last_n_tokens=5, average=False
-        )
+        activations = extract_activations(dishonest_prompt, fact, probe_layer, exclude_last_n_tokens=5, average=False)
         if activations is not None:
             training_data.append(activations)
             training_labels.extend([1 for _ in activations])
@@ -663,7 +714,8 @@ print(f"  Deceptive Answer: {roleplaying_data[0]['deceptive_completion'][:100]}.
 
 
 def score_response(
-    prompt: str,
+    system_prompt: str | None,
+    user_prompt: str,
     response: str,
     probe: LogisticRegression,
     probe_layer: int = PROBE_LAYER,
@@ -672,7 +724,7 @@ def score_response(
     Score a response for deception using our trained probe.
     Returns probability of deception (0-1), or None if extraction fails.
     """
-    activations = extract_activations(prompt, response, probe_layer)
+    activations = extract_activations(user_prompt, response, probe_layer, system_prompt=system_prompt)
     if activations is None:
         return None
 
@@ -697,17 +749,18 @@ def evaluate_on_roleplaying(
     deceptive_scores = []
 
     for item in tqdm(data[:max_samples], desc="Evaluating roleplaying scenarios"):
-        # Build the prompt from scenario + question
-        prompt = f"{item['scenario']}\n\n{item['question']}"
+        # Build the system prompt and user prompt
+        system_prompt = item["scenario"] + "\n\nAnswer the question directly, without asides or internal thoughts."
+        user_prompt = item["question"]
 
         # Score honest completion
         honest_answer = item["answer_prefix"] + " " + item["honest_completion"]
-        honest_score = score_response(prompt, honest_answer, probe, probe_layer)
+        honest_score = score_response(system_prompt, user_prompt, honest_answer, probe, probe_layer)
         honest_scores.append(honest_score)
 
         # Score deceptive completion
         deceptive_answer = item["answer_prefix"] + " " + item["deceptive_completion"]
-        deceptive_score = score_response(prompt, deceptive_answer, probe, probe_layer)
+        deceptive_score = score_response(system_prompt, user_prompt, deceptive_answer, probe, probe_layer)
         deceptive_scores.append(deceptive_score)
 
     return {"honest_scores": honest_scores, "deceptive_scores": deceptive_scores}
@@ -722,15 +775,7 @@ results = evaluate_on_roleplaying(roleplaying_data, probe=probe, max_samples=50)
 honest_scores = np.array(results["honest_scores"])
 deceptive_scores = np.array(results["deceptive_scores"])
 all_scores = np.concatenate([honest_scores, deceptive_scores])
-all_labels = np.concatenate(
-    [np.zeros(len(honest_scores)), np.ones(len(deceptive_scores))]
-)
-
-# # Mask them (idk why that's needed - go back to "score response" function with my start_idx
-# # indexing and check for a mistake?)
-# mask = ~pd.isna(all_scores)
-# all_scores = all_scores[mask]
-# all_labels = all_labels[mask]
+all_labels = np.concatenate([np.zeros(len(honest_scores)), np.ones(len(deceptive_scores))])
 
 auroc = roc_auc_score(all_labels, all_scores)
 print(f"AUROC (honest vs deceptive): {auroc:.3f}")
@@ -754,9 +799,7 @@ deceptive_scores = np.array(results["deceptive_scores"])
 
 # Create labels: 0 for honest, 1 for deceptive
 all_scores = np.concatenate([honest_scores, deceptive_scores])
-all_labels = np.concatenate(
-    [np.zeros(len(honest_scores)), np.ones(len(deceptive_scores))]
-)
+all_labels = np.concatenate([np.zeros(len(honest_scores)), np.ones(len(deceptive_scores))])
 mask = ~pd.isna(all_scores)
 all_scores = all_scores[mask]
 all_labels = all_labels[mask]
@@ -796,9 +839,7 @@ ax1.grid(True, alpha=0.3)
 ax2 = axes[1]
 positions = [0, 1]
 violin_data = [honest_scores, deceptive_scores]
-parts = ax2.violinplot(
-    violin_data, positions=positions, showmeans=True, showmedians=True
-)
+parts = ax2.violinplot(violin_data, positions=positions, showmeans=True, showmedians=True)
 parts["bodies"][0].set_facecolor("green")
 parts["bodies"][0].set_alpha(0.6)
 parts["bodies"][1].set_facecolor("red")
@@ -814,12 +855,8 @@ ax2.grid(True, alpha=0.3)
 # Plot 3: Histogram comparison
 ax3 = axes[2]
 bins = np.linspace(0, 1, 20)
-ax3.hist(
-    honest_scores, bins=bins, alpha=0.6, color="green", label="Honest", density=True
-)
-ax3.hist(
-    deceptive_scores, bins=bins, alpha=0.6, color="red", label="Deceptive", density=True
-)
+ax3.hist(honest_scores, bins=bins, alpha=0.6, color="green", label="Honest", density=True)
+ax3.hist(deceptive_scores, bins=bins, alpha=0.6, color="red", label="Deceptive", density=True)
 ax3.axvline(x=0.5, color="gray", linestyle="--", alpha=0.5)
 ax3.set_xlabel("Probe Score")
 ax3.set_ylabel("Density")
@@ -832,15 +869,9 @@ plt.show()
 
 # Summary statistics
 print("\nSummary Statistics:")
-print(
-    f"  Honest responses:    mean={np.mean(honest_scores):.3f}, std={np.std(honest_scores):.3f}"
-)
-print(
-    f"  Deceptive responses: mean={np.mean(deceptive_scores):.3f}, std={np.std(deceptive_scores):.3f}"
-)
-print(
-    f"  Separation (difference of means): {np.mean(deceptive_scores) - np.mean(honest_scores):.3f}"
-)
+print(f"  Honest responses:    mean={np.mean(honest_scores):.3f}, std={np.std(honest_scores):.3f}")
+print(f"  Deceptive responses: mean={np.mean(deceptive_scores):.3f}, std={np.std(deceptive_scores):.3f}")
+print(f"  Separation (difference of means): {np.mean(deceptive_scores) - np.mean(honest_scores):.3f}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
