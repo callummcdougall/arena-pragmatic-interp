@@ -245,7 +245,7 @@ chapters:
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-13-2.png"
         parent: "1_3_overview"
         streamlit_description: "These exercises take you through practical interpretability work with sparse autoencoders. You'll use the SAELens library to load pretrained SAEs, investigate learned features, and perform attribution and steering using SAE latents."
-        streamlit_description_short: "Use sparse autoencoders to decompose LLM activation space, monitor cognition & steer behaviour."
+        streamlit_description_short: "Use SAEs to decompose LLM activation space, monitor cognition & steer behaviour."
 
       # Group 1.4: Circuits in LLMs
       - id: "1_4_overview"
