@@ -1,2 +1,0 @@
-- This link is good too, https://www.lesswrong.com/posts/jP9KDyMkchuv6tHwm/how-to-become-a-mechanistic-interpretability-researcher
-- Subliminal learning? Link to recent-ish thing [here](https://www.lesswrong.com/posts/CRn9XtGoMtjnb5ygr/subliminal-learning-across-models)
