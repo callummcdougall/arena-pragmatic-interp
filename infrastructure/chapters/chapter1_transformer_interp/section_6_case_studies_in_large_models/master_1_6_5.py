@@ -2,46 +2,46 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ```python
 [
     {"title": "Mapping Persona Space", "icon": "1-circle-fill", "subtitle": "(50%)"},
     {"title": "Steering along the Assistant Axis", "icon": "2-circle-fill", "subtitle": "(50%)"},
 ]
 ```
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # [1.6.5] LLM Psychology & Persona Vectors
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png" width="350">
 
 *Note - this content is subject to change depending on how much Anthropic publish about their [soul doc](https://simonwillison.net/2025/Dec/2/claude-soul-document/) over the coming weeks.*
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # Introduction
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Most exercises in this chapter have dealt with LLMs at quite a low level of abstraction; as mechanisms to perform certain tasks (e.g. indirect object identification, in-context antonym learning, or algorithmic tasks like predicting legal Othello moves). However, if we want to study the characteristics of current LLMs which might have alignment relevance, we need to use a higher level of abstraction. LLMs often exhibit "personas" that can shift unexpectedly - sometimes dramatically (see Sydney, Grok's "MechaHitler" persona, or [Tim Hua's work](https://www.lesswrong.com/posts/iGF7YcnQkEbwvYLPA/ai-induced-psychosis-a-shallow-investigation) on AI-induced psychosis). These personalities are clearly shaped through training and prompting, but exactly why remains a mystery.
 
 In this section, we'll explore one approach for studying these kinds of LLM behaviours - **model psychiatry**. This sits at the intersection of evals (behavioural observation) and mechanistic interpretability (understanding internal representations / mechanisms). We aim to use interp tools to understand & intervene on behavioural traits.
@@ -49,13 +49,13 @@ In this section, we'll explore one approach for studying these kinds of LLM beha
 The main focus will be on two different papers from Anthropic. First, we'll replicate the results from [The assistant axis: situating and stabilizing the character of large language models](https://www.anthropic.com/research/assistant-axis), which studies the "persona space" in internal model activations, and situates the "Assistant persona" within that space. The paper also introduces a method called **activation capping**, which identifies the normal range of activation intensity along this "Assistant Axis" and caps the model's activations when it would otherwise exceed it, which reduces the model's susceptibility to persona-based jailbreaks. Then, we'll move to the paper [Persona vectors: Monitoring and controlling character traits in language models](https://www.anthropic.com/research/persona-vectors) which predates the Assistant Axis paper but is broader and more methodologically sophisticated, proposing an automated pipeline for identifying persona vectors corresponding to specific kinds of undesireable personality shifts.
 
 This section is (compared to many others in this chapter) very recent work, and there are still many uncertainties and unanswered questions! We'll suggest several bonus exercises or areas for further reading / exploration as we move through these exercises.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Content & Learning Objectives
 
 ### 1️⃣ Mapping Persona Space
@@ -98,27 +98,27 @@ Finally, you'll validate your extracted trait vectors through steering as well a
 > * Complete your artifact pipeline by implementing persona steering
 > * Repeat this full pipeline for "hallucination" and "evil", as well as for any additional traits you choose to study
 > * Study the geometry of trait vectors
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Setup code
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Before running this code, you'll need to clone [Tim Hua's AI psychosis repo](https://github.com/tim-hua-01/ai-psychosis) which contains transcripts of conversations where models exhibit concerning persona drift:
 
 ```bash
 git clone https://github.com/tim-hua-01/ai-psychosis.git
 ```
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -206,17 +206,15 @@ warnings.filterwarnings("ignore")
 t.set_grad_enabled(False)
 device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
-from plotly_utils import imshow
-
 MAIN = __name__ == "__main__"
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Verify the ai-psychosis repo is cloned:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -234,9 +232,9 @@ for folder in sorted((ai_psychosis_path / "full_transcripts").iterdir()):
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We'll use the OpenRouter API for generating responses from models like Gemma 27B and Qwen 32B (this is faster than running locally for long generations, and we'll use the local model for activation extraction / steering). Load your API key from a `.env` file:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -259,15 +257,15 @@ openrouter_client = OpenAI(
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 1️⃣ Mapping Persona Space
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Background: The Assistant Axis
 
 The [Assistant Axis paper](https://www.anthropic.com/research/assistant-axis) studies how language models represent different personas internally. The key insight is:
@@ -283,13 +281,13 @@ The paper maps out a **persona space** by:
 3. Finding that the leading principal component captures how "Assistant-like" a persona is
 
 This leading direction is called the **Assistant Axis**. Personas like "consultant", "analyst", and "evaluator" cluster at the Assistant end, while "ghost", "hermit", and "leviathan" cluster at the opposite end.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Loading Gemma 2 27B
 
 We'll use Gemma 2 27B Instruct as our primary model, following the paper. This requires a GPU with significant memory (ideally 40GB+). If you have less memory, you can try:
@@ -297,7 +295,7 @@ We'll use Gemma 2 27B Instruct as our primary model, following the paper. This r
 - Using `torch_dtype=torch.float16` or `torch.bfloat16`
 - Using `device_map="auto"` to split across multiple GPUs
 - Switching to a smaller model like Qwen 2.5 7B (though results may differ)
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -334,7 +332,7 @@ print(f"Hidden size: {model.config.hidden_size}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Defining Personas
 
 The full paper uses 275 personas. We'll work with a smaller subset of ~20 that span the spectrum from "Assistant-like" to "fantastical". These are selected based on the paper's findings about which personas cluster at each end of the Assistant Axis.
@@ -347,7 +345,7 @@ The full paper uses 275 personas. We'll work with a smaller subset of ~20 that s
 
 **Anti-Assistant personas** (low cosine similarity):
 - Ghost, Hermit, Bohemian, Trickster, Leviathan, Oracle, Jester
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -386,7 +384,7 @@ print(f"Defined {len(PERSONAS)} personas")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Evaluation Questions
 
 To extract persona vectors, we need the model to generate responses while "in character". We'll use a diverse set of questions that can elicit different behaviors across personas. These questions are designed to:
@@ -394,7 +392,7 @@ To extract persona vectors, we need the model to generate responses while "in ch
 1. Be open-ended enough to allow persona-specific responses
 2. Cover various topics (advice, opinions, explanations, hypotheticals)
 3. Not be so specific that only certain personas can answer
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -424,11 +422,11 @@ print(f"Defined {len(EVAL_QUESTIONS)} evaluation questions")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Generating Responses via API
 
 For efficiency, we'll use the OpenRouter API to generate responses. This is faster than running generation locally, and we only need the local model for extracting activations.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -471,13 +469,13 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Generate responses for all personas
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
->
+> >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
@@ -487,12 +485,11 @@ Note: This will make many API calls. To save time during development, you can:
 - Use a subset of personas/questions
 - Cache results to disk
 - Use the provided solution which includes caching
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def generate_all_responses(
     personas: dict[str, str],
@@ -563,7 +560,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Extracting Activation Vectors
 
 Now we need to extract the model's internal activations while it processes each response. The paper uses the **mean activation across all response tokens** at a specific layer (they found middle-to-late layers work best).
@@ -572,12 +569,11 @@ We'll:
 1. Format the conversation (system prompt + question + response) as the model would see it
 2. Run a forward pass and cache the hidden states
 3. Extract the mean activation over the response tokens only
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def format_conversation(system_prompt: str, question: str, response: str, tokenizer) -> str:
     """Format a conversation for the model using its chat template."""
@@ -650,25 +646,24 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Extract persona vectors
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
+> >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
 For each persona, compute its **persona vector** by averaging the activation vectors across all its responses. This gives us a single vector that characterizes how the model represents that persona.
 
 The paper uses layer ~60% through the model. You can experiment with different layers.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def extract_persona_vectors(
     model,
@@ -746,36 +741,35 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Analyzing Persona Space Geometry
 
 Now let's analyze the structure of persona space using:
 1. **Cosine similarity matrix** - How similar are different personas to each other?
 2. **PCA** - What are the main axes of variation?
 3. **Assistant Axis** - Defined as `mean(assistant_like_personas) - mean(all_personas)`
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Compute cosine similarity matrix
 
 > ```yaml
 > Difficulty: 🔴⚪⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
->
+> >
 > You should spend up to 5 minutes on this exercise.
 > ```
 
 Compute the pairwise cosine similarity between all persona vectors.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def compute_cosine_similarity_matrix(
     persona_vectors: dict[str, Float[Tensor, " d_model"]],
@@ -809,7 +803,7 @@ def compute_cosine_similarity_matrix(
 if MAIN:
     cos_sim_matrix, persona_names = compute_cosine_similarity_matrix(persona_vectors)
 
-    imshow(
+    px.imshow(
         cos_sim_matrix,
         x=persona_names,
         y=persona_names,
@@ -823,25 +817,24 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - PCA analysis and Assistant Axis
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
+> >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
 Run PCA on the persona vectors and visualize them in 2D. Also compute the **Assistant Axis** - defined as the direction from the mean of all personas toward the "assistant" persona (or mean of assistant-like personas).
 
 The paper found that PC1 strongly correlates with the Assistant Axis, suggesting that how "assistant-like" a persona is explains most of the variance in persona space.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def analyze_persona_space(
     persona_vectors: dict[str, Float[Tensor, " d_model"]],
@@ -923,28 +916,28 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 If your results match the paper, you should see:
 - **High correlation between PC1 and the Assistant Axis** - the main axis of variation captures assistant-likeness
 - **Assistant-like personas** (consultant, analyst, etc.) cluster together with high projections
 - **Fantastical personas** (ghost, jester, etc.) cluster at the opposite end
 
 > **TODO(mcdougallc):** Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 2️⃣ Steering along the Assistant Axis
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Background: Activation Steering and Capping
 
 Now that we have the Assistant Axis, we can use it to:
@@ -963,22 +956,21 @@ where $\alpha$ is the steering coefficient and $v$ is the steering vector.
 1. Identify the "normal range" of activation along the Assistant Axis during typical Assistant behavior
 2. Only intervene when activations would drift outside this range
 3. Cap activations at the boundary, preventing drift while preserving normal behavior
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Implementing Steering
 
 First, let's implement basic activation steering. We'll use PyTorch hooks to modify the hidden states during generation.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 @dataclass
 class SteeringConfig:
@@ -1047,18 +1039,17 @@ def generate_with_steering(
 
     return response
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Test steering effects
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
+> >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
@@ -1067,7 +1058,7 @@ Test how steering affects model behavior. Generate responses to the same prompt 
 - Negative coefficients should make it more willing to adopt alternative personas
 
 Try prompts that ask the model to roleplay or adopt a different identity.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1135,17 +1126,17 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 You should observe:
 - **Negative steering** (away from Assistant): Model is more willing to adopt the "secretary" persona, may invent a name and backstory
 - **Positive steering** (toward Assistant): Model is more likely to maintain its AI assistant identity and decline to roleplay
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Activation Capping
 
 Steering always adds the vector, which can degrade capabilities. **Activation capping** is a more targeted approach:
@@ -1155,12 +1146,11 @@ Steering always adds the vector, which can degrade capabilities. **Activation ca
 3. Clamp activations to the boundary
 
 This preserves normal behavior while preventing drift into harmful territory.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 @dataclass
 class CappingConfig:
@@ -1238,25 +1228,24 @@ def generate_with_capping(
 
     return response
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Establish baseline activation range
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
+> >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
 Before we can cap activations, we need to know what "normal" looks like. Run the model on a set of benign prompts (as the Assistant persona) and measure the distribution of projections onto the Assistant Axis.
 
 Use the 5th and 95th percentiles as your capping boundaries.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1325,7 +1314,7 @@ if MAIN:
     min_val = baseline_projections.quantile(0.05).item()
     max_val = baseline_projections.quantile(0.95).item()
 
-    print(f"Baseline projection statistics:")
+    print("Baseline projection statistics:")
     print(f"  Mean: {baseline_projections.mean().item():.3f}")
     print(f"  Std:  {baseline_projections.std().item():.3f}")
     print(f"  5th percentile (min cap): {min_val:.3f}")
@@ -1346,7 +1335,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Case Study: AI-Induced Psychosis Transcripts
 
 Now let's apply our tools to a real-world case study. Tim Hua collected transcripts of conversations where AI models exhibited concerning persona drift - becoming overly mystical, validating delusions, or encouraging harmful behavior.
@@ -1355,12 +1344,11 @@ We'll:
 1. Parse these transcripts to extract conversation turns
 2. Measure how the model's position on the Assistant Axis changes through the conversation
 3. Test whether activation capping prevents the concerning behavior
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def parse_transcript(filepath: Path) -> list[dict[str, str]]:
     """
@@ -1408,13 +1396,13 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Monitor persona drift through conversation
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
+> >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
@@ -1423,12 +1411,11 @@ Measure how the model's projection onto the Assistant Axis changes as we feed it
 - Therapy-like or philosophical conversations cause significant drift
 
 We expect the AI psychosis transcripts to show drift away from the Assistant persona over time.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def measure_drift_through_conversation(
     model,
@@ -1515,13 +1502,13 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Exercise - Test activation capping effectiveness
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵🔵
->
+> >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
@@ -1530,7 +1517,7 @@ Finally, test whether activation capping prevents concerning behavior. Take a pr
 2. **Capped generation** - Activations are constrained to the normal range
 
 The paper found that capping reduced harmful response rates by ~50% while preserving capabilities.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1618,7 +1605,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Ideally, you should observe:
 - **Uncapped**: Model may validate delusions, adopt a mystical persona, or generate concerning content
 - **Capped**: Model maintains its professional Assistant identity, providing appropriate hedging or redirecting to professional help
@@ -1627,13 +1614,13 @@ The effectiveness depends on:
 - Quality of the Assistant Axis (need enough diverse personas)
 - Appropriate capping bounds (too tight = capability loss, too loose = no effect)
 - The specific conversation and model
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Summary
 
 In this section, you learned to:
@@ -1649,33 +1636,33 @@ Key findings from the paper:
 - Steering away from Assistant increases susceptibility to persona-based jailbreaks
 - Activation capping reduces harmful response rates by ~50% while preserving MMLU performance
 - Natural conversation (especially therapy-like or philosophical) can cause drift without any explicit attack
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 3️⃣ Contrastive Prompting
 
 *Coming soon - this section will cover the Persona Vectors paper's automated pipeline for extracting trait-specific vectors.*
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 4️⃣ Steering with Persona Vectors
 
 *Coming soon - this section will cover validation through steering and projection-based monitoring.*
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## ☆ Bonus
 
 1. **More personas**: Extend the analysis to more of the 275 personas from the paper. Do you find the same clustering structure?
@@ -1695,4 +1682,5 @@ r"""
 - 📄 Persona Vectors Paper: https://www.anthropic.com/research/persona-vectors
 - 💻 Neuronpedia Demo: https://www.neuronpedia.org/assistant-axis
 - 💻 Tim Hua's AI Psychosis Repo: https://github.com/tim-hua-01/ai-psychosis
-"""
+'''
+

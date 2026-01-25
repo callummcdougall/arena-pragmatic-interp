@@ -10,7 +10,7 @@ This module handles conversions between .ipynb and .py formats, including:
 import json
 from typing import TYPE_CHECKING
 
-from .processors import _process_source, _strip_empty_lines_from_start_and_end
+from .processors import _strip_empty_lines_from_start_and_end
 
 if TYPE_CHECKING:
     from .cell import Cell
@@ -74,26 +74,20 @@ def _split_into_cells(lines: list[str]) -> list["Cell"]:
         # c_start = "CELL TYPE" line, followed by FILTERS, TAGS, empty line, then first line of cell content
         # c_end = "CELL TYPE" line for next cell, i.e. c_end-2 is the last line of cell content
         cell_type = lines[c_start].strip().removeprefix("# ! CELL TYPE: ")
-        filters = (
-            lines[c_start + 1].strip().removeprefix("# ! FILTERS: [").removesuffix("]").split(",")
-        )
+        filters = lines[c_start + 1].strip().removeprefix("# ! FILTERS: [").removesuffix("]").split(",")
         filters = [filter for filter in filters if filter != ""]
         tags = lines[c_start + 2].strip().removeprefix("# ! TAGS: [").removesuffix("]").split(",")
         tags = [tag for tag in tags if tag != ""]
 
         # "TAGS" might have 2 empty lines after it, if cell starts with class or function definition (because the ruff
         # autoformatter inserts an extra line in this case)
-        assert lines[c_start + 3] == "", (
-            f"Expected empty L{c_start + 3} after (CELL_TYPE, FILTERS, TAGS) in master.py"
-        )
+        assert lines[c_start + 3] == "", f"Expected empty L{c_start + 3} after (CELL_TYPE, FILTERS, TAGS) in master.py"
         c_start_real = (c_start + 4) if lines[c_start + 4] else (c_start + 5)
         assert lines[c_start_real], f"Expected first line of cell L{c_start + 4} to be non-empty"
 
         # Now we know where the real cell content starts, we create a Cell object from it
         source = _strip_empty_lines_from_start_and_end(lines[c_start_real : c_end - 1])
-        vscode_lines_str = (
-            f"({c_start_real + 1}, {c_end - 1})"  # this is so we can find & debug it in master.py
-        )
+        vscode_lines_str = f"({c_start_real + 1}, {c_end - 1})"  # this is so we can find & debug it in master.py
         cells.append(Cell(filters, tags, cell_type, source, vscode_lines_str))
 
     return cells
@@ -117,9 +111,7 @@ def _cells_to_notebook_data(cells: list["Cell"] | list[dict]) -> str:
         cells = [cell.master_ipynb_dict for cell in cells]
 
     for cell in cells:
-        assert not any([line.endswith("\n") for line in cell["source"]]), (
-            "Source already has line breaks!"
-        )
+        assert not any([line.endswith("\n") for line in cell["source"]]), "Source already has line breaks!"
         assert cell["source"][-1], "Found empty cell source!"
         cell["source"] = [line + "\n" for line in cell["source"]]
         cell["source"][-1] = cell["source"][-1].removesuffix("\n")
