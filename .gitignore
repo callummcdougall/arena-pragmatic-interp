@@ -40,8 +40,10 @@ chapter1_transformer_interp/exercises/part42_function_vectors_and_model_steering
 .env
 logs/
 __pycache__/
-infrastructure/master_files/js
+infrastructure/js
 demos
-infrastructure/master_files/deception-detection/
+infrastructure/deception-detection/
 infrastructure/context
-infrastructure/master_files/chapters/**/**/context_*.md
+infrastructure/chapters/**/**/**/context_*.md
+infrastructure/chapters/**/**/context_*.md
+infrastructure/chapters/**/context_*.md

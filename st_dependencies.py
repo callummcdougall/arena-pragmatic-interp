@@ -1,15 +1,115 @@
 import platform
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import streamlit as st
+import yaml
 
 # from st_on_hover_tabs import on_hover_tabs
 
 IS_LOCAL = platform.processor() != ""
 
 ROOT_PATH = Path(__file__).resolve().parent
+CONFIG_PATH = ROOT_PATH / "infrastructure" / "core" / "config.yaml"
+
+
+# =============================================================================
+# Configuration Loading from YAML
+# =============================================================================
+
+
+@lru_cache(maxsize=1)
+def _load_config() -> dict:
+    """Load the config.yaml file. Cached for performance."""
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+@dataclass
+class SectionContent:
+    """Content for a section, loaded from config.yaml."""
+
+    number: str  # e.g. "1.1" or "1.3.1"
+    title: str  # e.g. "Transformers from Scratch"
+    description: str  # Full description for display
+    is_group: bool = False  # Whether this is a group header
+    is_special: bool = False  # Whether this is a special section (e.g. Monthly Algorithmic Problems)
+    custom_img_url: str | None = None  # Custom image URL for special sections
+
+    @property
+    def name(self) -> str:
+        """Returns formatted name like '[1.1] Transformers from Scratch'."""
+        if self.number:
+            return f"[{self.number}] {self.title}"
+        return self.title
+
+    @property
+    def img_url(self) -> str:
+        """Returns the image URL for this section."""
+        if self.custom_img_url:
+            return self.custom_img_url
+        URL_ROOT = "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc"
+        if not self.number:
+            # For sections without numbers, return a default
+            return f"{URL_ROOT}/alg-combined.png"
+        section = self.number.replace(".", "")
+        section = section if len(section) == 2 else section[:2] + "-" + section[2:]
+        return f"{URL_ROOT}/headers/header-{section}.png"
+
+
+def get_chapter_content(chapter_id: str) -> tuple[dict, list[SectionContent]]:
+    """
+    Get chapter metadata and sections from config.yaml.
+
+    Args:
+        chapter_id: The chapter ID, e.g. "chapter1_transformer_interp"
+
+    Returns:
+        Tuple of (chapter_metadata, list of SectionContent objects)
+    """
+    config = _load_config()
+    chapters = config.get("chapters", {})
+
+    if chapter_id not in chapters:
+        raise ValueError(f"Chapter {chapter_id} not found in config")
+
+    chapter_data = chapters[chapter_id]
+    sections = []
+
+    for section in chapter_data.get("sections", []):
+        # Skip group headers for the main content list (they're for hierarchy only)
+        is_group = section.get("is_group", False)
+        is_special = section.get("is_special", False)
+
+        content = SectionContent(
+            number=section.get("number", ""),
+            title=section.get("title", ""),
+            description=section.get("streamlit_description", ""),
+            is_group=is_group,
+            is_special=is_special,
+            custom_img_url=section.get("streamlit_img_url"),
+        )
+        sections.append(content)
+
+    return chapter_data, sections
+
+
+def get_displayable_sections(chapter_id: str) -> list[SectionContent]:
+    """
+    Get only the displayable sections (excluding group headers) for image_select.
+
+    Args:
+        chapter_id: The chapter ID, e.g. "chapter1_transformer_interp"
+
+    Returns:
+        List of SectionContent objects that should be displayed in the image selector
+    """
+    _, sections = get_chapter_content(chapter_id)
+    # Filter out group headers, keep regular sections and special sections
+    return [s for s in sections if not s.is_group]
 MODES = {
     "DARK-INLINE": ["toh1p3", "aak2an", "u10a3r"],
     "CUSTOM-INLINE": ["10hpw00", "1lu8bb5", "mn2ukz"],

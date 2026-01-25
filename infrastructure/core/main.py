@@ -6,7 +6,7 @@ Run from the `infrastructure/core` directory.
 
 Usage:
     python main.py --chapters=1.6.2
-    python main.py --chapters=1.6.* --use_py=true
+    python main.py --chapters=1.6.* --use_py=true --generate_files=false
     python main.py --chapters=1.* --verbose=false --overwrite=true
 """
 
@@ -41,7 +41,9 @@ def match_chapters(pattern: str, all_chapters: list[str]) -> list[str]:
         if pattern in all_chapters:
             return [pattern]
         else:
-            raise ValueError(f"Chapter '{pattern}' not found in config. Available chapters: {sorted(all_chapters)}")
+            raise ValueError(
+                f"Chapter '{pattern}' not found in config, please manually add to file `core/config.yaml`. Available chapters: {sorted(all_chapters)}"
+            )
 
     # Wildcard matching
     matches = [ch for ch in all_chapters if fnmatch.fnmatch(ch, pattern)]
@@ -69,7 +71,7 @@ def main():
         epilog="""
 Examples:
   %(prog)s --chapters=1.6.2
-  %(prog)s --chapters=1.6.* --use_py=true
+  %(prog)s --chapters=1.6.* --use_py=true --generate_files=false
   %(prog)s --chapters=1.* --verbose=false --overwrite=true
   %(prog)s --chapters=1.3.* --ruff_format=true
         """,
@@ -85,6 +87,12 @@ Examples:
         type=parse_bool,
         default=False,
         help="If true, source is .py file (py→ipynb→py→generate). If false, source is .ipynb (ipynb→py→ipynb→generate). Default: false",
+    )
+    parser.add_argument(
+        "--generate_files",
+        type=parse_bool,
+        default=True,
+        help="Whether to generate output files after conversion. Default: true",
     )
     parser.add_argument(
         "--overwrite", type=parse_bool, default=True, help="Whether to overwrite existing files. Default: true"
@@ -103,7 +111,9 @@ Examples:
 
     # Load configuration
     config = load_config()
-    all_filenames = {key: (value["streamlit_page"], value["exercise_dir"]) for key, value in config["chapters"].items()}
+    all_filenames = {
+        key: (value["streamlit_page"], value["exercise_dir"]) for key, value in config["conversion_map"].items()
+    }
     chapter_names = config["chapter_names"]
     chapter_names_long = config["chapter_names_long"]
 
@@ -171,7 +181,8 @@ Examples:
                 master.master_ipynb_to_py(overwrite=args.overwrite)
 
                 print("Step 3/3: Generating output files...")
-                master.generate_files(overwrite=args.overwrite, verbose=args.verbose, ruff_format=args.ruff_format)
+                if args.generate_files:
+                    master.generate_files(overwrite=args.overwrite, verbose=args.verbose, ruff_format=args.ruff_format)
             else:
                 # use_py=False: ipynb → py → ipynb → generate_files
                 print("Step 1/3: Converting master.ipynb → master.py...")
@@ -181,7 +192,8 @@ Examples:
                 master.master_py_to_ipynb(overwrite=args.overwrite)
 
                 print("Step 3/3: Generating output files...")
-                master.generate_files(overwrite=args.overwrite, verbose=args.verbose, ruff_format=args.ruff_format)
+                if args.generate_files:
+                    master.generate_files(overwrite=args.overwrite, verbose=args.verbose, ruff_format=args.ruff_format)
 
             print(f"\n✓ Successfully processed {file_id}")
 

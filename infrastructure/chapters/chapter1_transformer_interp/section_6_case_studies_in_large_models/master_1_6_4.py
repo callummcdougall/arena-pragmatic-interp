@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "CoT Infrastructure & Sentence Taxonomy", "icon": "1-circle-fill", "subtitle": "(30%)"},
@@ -10,37 +10,37 @@ r'''
     {"title": "White-box Methods", "icon": "3-circle-fill", "subtitle": "(40%)"},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [1.6.4] Interpreting Reasoning: Thought Anchors
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In most of this chapter's content so far, we've focused on dividing up LLM computation into small steps, specifically single-token generation. We saw this in Indirect Object Identification where we deeply analyzed how GPT2-Small generates a single token, and we can also see it in other exercises like OthelloGPT. But recent models have made advances in **chain-of-thought reasoning**. When models are producing very long reasoning traces (autoregressively consuming their tokens), we have to think about not just serialized computation over layers to produce a single token, but serialized computation over a very large number of tokens. To get traction on this problem, we're going to need to introduce a new abstraction.
 
 The paper [Thought Anchors: Which LLM Reasoning Steps Matter?](https://arxiv.org/abs/2506.19143) does this by splitting up reasoning traces by **sentence**. Compared to tokens, sentences are more coherent and correspond more closely to the actual reasoning steps taken by LLMs (e.g. see the paper [Understanding Reasoning in Thinking LMs via Steering Vectors](https://arxiv.org/abs/2506.19143), which identified behaviour categories for steps taken by reasoning models, and found them to correspond to sentences rather than tokens).
@@ -48,13 +48,13 @@ The paper [Thought Anchors: Which LLM Reasoning Steps Matter?](https://arxiv.org
 The diagram below illustrates this: we can group sentences according to a rough taxonomy of reasoning steps, and use this to show that certain kinds of sentences are more important than others in terms of shaping the trajectory of the reasoning trace (and the final answer). The authors term these sentences **thought anchors**. Thought anchors can be identified using black-box methods (i.e. resampling rollouts) or white-box methods (looking at / intervening on attention patterns). In these exercises, we'll work through both.
 
 <img src="https://i.snipboard.io/PBoc9G.jpg" width="700">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ CoT Infrastructure & Sentence Taxonomy
@@ -88,99 +88,98 @@ Lastly, you'll look at some white-box methods for identifying thought anchors. T
 > ##### Learning Objectives
 > 
 > * TODO(mcdougallc)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Before running this code, you'll need to clone the [thought-anchors repo](https://github.com/interp-reasoning/thought-anchors) so that it can be added to your path:
 
 ```bash
 git clone https://github.com/interp-reasoning/thought-anchors.git
 ```
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-import os
-from datasets import load_dataset
-import pandas as pd
-import numpy as np
 import json
-import torch
-import re
-from transformers import AutoTokenizer, AutoModelForCausalLM, StoppingCriteria
-from pathlib import Path
-import seaborn as sns
-import textwrap
-import transformers
-from collections import defaultdict
-from typing import Dict
-from tqdm import tqdm
-from dotenv import load_dotenv
-from openai import OpenAI
+import os
 import random
-import time
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sentence_transformers import SentenceTransformer
-import plotly.express as px
-from scipy.stats import kurtosis
-import plotly.graph_objects as go
-from collections import Counter
-import warnings
+import re
 import sys
-import sentence_transformers
+import textwrap
+import time
+import warnings
+from collections import Counter, defaultdict
+from pathlib import Path
 from pprint import pprint
-from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
+from typing import Dict
+
 import einops
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import seaborn as sns
+import sentence_transformers
+import torch
+import transformers
+from datasets import load_dataset
+from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
+from openai import OpenAI
+from scipy.stats import kurtosis
+from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
 
 warnings.filterwarnings("ignore")
 
 
-thought_anchors_path = Path.cwd().parent / "material/thought-anchors"
+thought_anchors_path = Path.cwd().parent / "thought-anchors"
 assert thought_anchors_path.exists()
 
 sys.path.append(str(thought_anchors_path))
 
 from utils import (
+    check_answer,
     # split_solution_into_chunks,
     extract_boxed_answers,
-    check_answer,
-    normalize_answer,
     load_math_problems,
+    normalize_answer,
 )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ CoT Infrastructure & Sentence Taxonomy
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Model Setup & Dataset Inspection
 
 Let's start by setting a few constants:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -207,9 +206,9 @@ print(f"Using device: {device}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Let's load in our embedding model. Embedding models are unsupervised models designed to take in text and output a vector - we'll be using them to classify the similarity of different sentences, so we can find motifs in our reasoning traces.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -222,9 +221,9 @@ print(embedding_model)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 To give you an idea of how it works, let's look at some example sentences:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -255,9 +254,9 @@ px.imshow(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We can also load in the dataset that the paper's authors have helpfully open-sourced. The dataset is very large, but the authors provide the structure in the corresponding [HuggingFace page](https://huggingface.co/datasets/uzaymacar/math-rollouts), so we can use the `huggingface_hub` package to load in just the data we want.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -280,9 +279,9 @@ problem_data
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Lastly, we'll load in the LLM we'll be using for actual reasoning trace generation. We'll be using DeepSeek-R1-Distill-Llama-8B, to match the paper's implementation as closely as possible.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -305,9 +304,9 @@ print(f"Model has {model.config.num_attention_heads} attention heads per layer")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We can test rollouts with this model:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -340,9 +339,7 @@ with torch.no_grad():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-generated_text = tokenizer.decode(
-    outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=False
-)
+generated_text = tokenizer.decode(outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=False)
 easy_problem_full_text = easy_prompt + generated_text
 
 print(easy_problem_full_text)
@@ -351,7 +348,7 @@ print(easy_problem_full_text)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - add a stopping criteria
 
 ```yaml
@@ -364,7 +361,7 @@ You should spend up to 10-15 minutes on this exercise.
 It's a bit annoying that the model sometimes extends beyond the `</think>` token, since we might sometimes want to only take the output inside `<think> ... </think>` tags. To fix this, let's introduce a **stopping criteria**.
 
 HuggingFace models support the `stopping_criteria` argument, which is a list of `StoppingCriteria` objects. We can implement our own `StoppingCriteria` by subclassing the base class and overriding the `__call__` method. It takes in `input_ids` (the tensor of all generated tokens so far), and it should return `True` when we want this most recent generation to be the final one.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -391,9 +388,7 @@ with torch.no_grad():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-generated_text = tokenizer.decode(
-    outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=False
-)
+generated_text = tokenizer.decode(outputs[0][len(inputs["input_ids"][0]) :], skip_special_tokens=False)
 easy_problem_full_text = easy_prompt + generated_text
 
 print(easy_problem_full_text)
@@ -402,7 +397,7 @@ print(easy_problem_full_text)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement sentence splitting
 
 ```yaml
@@ -424,11 +419,12 @@ You should fill in the `split_solution_into_chunks` function below. We've given 
 - Each chunk should be stripped of whitespace
 
 This is a bit of a grunt task, so feel free to use LLMs to help you!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def split_solution_into_chunks(text: str) -> list[str]:
     """Split solution into sentence-level chunks."""
@@ -505,7 +501,7 @@ for input_text, expected_chunks in test_cases:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Sentence categorization
 
 Now that we've created a method for splitting up our reasoning traces into chunks, we can work out how to categorize them.
@@ -522,13 +518,13 @@ The [paper](https://arxiv.org/abs/2506.19143) uses a taxonomy of 8 different cat
 8. **Final Answer Emission**: Explicitly stating the final answer
 
 There are 2 approaches usually taken for this kind of classification: heuristic-based (using regexes or keyword matching) and LLM-based (i.e. using an **autorater**). We'll try both, so we can compare the results.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - heuristic-based categorization
 
 ```yaml
@@ -550,7 +546,7 @@ Once you've passed the test sentences below, you should try taking rollouts from
 - How many words do you need to add before your classification works decently?
 
 Note that no heuristic-based classification will be perfect. The point of this exercise is to get you thinking about the different categories, and what the strengths / limitations of this kind of method are. In research, you should generally try not to reach for a tool more complicated than what you need!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -632,18 +628,16 @@ example_sentences, example_categories = list(
 categories = categorize_sentences_heuristic(example_sentences)
 
 for sentence, category, expected_category in zip(example_sentences, categories, example_categories):
-    assert category == expected_category, (
-        f"Expected {expected_category!r}, got {category!r} for sentence: {sentence!r}"
-    )
+    assert category == expected_category, f"Expected {expected_category!r}, got {category!r} for sentence: {sentence!r}"
 
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now, testing your function on an actual rollout, does it look reasonable? If not, you can try going back and tweaking the categories or the categorization logic.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -662,7 +656,7 @@ for chunk, category in zip(easy_chunks, easy_categories):
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement an autorater
 
 ```yaml
@@ -677,7 +671,7 @@ We'll now progress to a slightly more advanced approach for classification, usin
 We'll start by setting up a helper function to call an API (to keep things simple we're sticking with OpenAI for now, but this could easily be modified to support other providers). It has the option of returning in structured output, which can be helpful for classification tasks.
 
 You'll need to create an `.env` file in the current working directory and set the `OPENAI_API_KEY` environment variable, then you can run the cell below to see how the helper function works.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -734,11 +728,11 @@ print(textwrap.fill(resp))
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Note the default use of temperature zero in the autorater above. This is because we're looking for reproducibility and reliability; we don't benefit from output diversity in this case. A temperature of zero is also useful for reproducibility.
 
 We've also given you the prompt we'll use for the autorater - it's a simplified version of the `DAG_SYSTEM_PROMPT` in the author's file `thought-anchors/prompts.py`. Note that the authors allow for a chunk to receive multiple tags; we assume a single tag per chunk to keep things simple.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -797,13 +791,14 @@ For example:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should now complete the function `categorize_sentences_autorater` below, which will use the `DAG_SYSTEM_PROMPT` and the `generate_api_response` function we've already written to categorize the chunks. You'll need to supply your own user prompt to go with the system prompt above.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def categorize_sentences_autorater(problem_text: str, chunks: list[str]) -> list[str]:
     """
@@ -848,13 +843,14 @@ Now label each chunk with function tags and dependencies."""
 
     return [CATEGORIES.get(r, "Unknown") for r in response]
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can run the cell below to see how your function performs on the example sentences. Does it agree with the heuristic-based approach? Do you think it's better or worse? You can also try it on the rollouts you generated earlier.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -885,9 +881,9 @@ with pd.option_context("display.max_colwidth", None):
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Before moving to the next section, we'll make a helper function to visualize reasoning traces:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -944,15 +940,15 @@ visualize_trace_structure(easy_chunks, easy_categories, easy_problem_text)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Black-box Analysis
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The paper used three different methods to measure sentence importance:
 
 **1. Forced Answer Importance**. For each sentence $S_i$ in the CoT, we interrupt the model and append text, inducing a final output: `Therefore, the final answer is \\boxed{...}`. We then measure the model's accuracy when forced to answer immediately. If $A^f_i$ is the final answer when we force the model to answer immediately after $S_i$, and $P(A)$ is the probability of answer $A$ being correct, then the formula for forced answer importance is:
@@ -986,13 +982,13 @@ $$
 $$
 
 In these sections, we'll work through each of these metrics in turn. The focus will be computing these metrics **on the dataset we've already been provided**, with the full replication (including your own implementation of resampling) coming in the next section.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Looking closer at our dataset
 
 Before getting into the exercises, let's look closer at our dataset to see what we're working with. As mentioned, we'll be setting aside our actual model and chunking functions temporarily, so we can focus on analysing the resampled rollouts already provided to us in this dataset.
@@ -1005,13 +1001,13 @@ The code below loads in all the data necessary for analyzing a single problem. T
 - `chunk_solutions[i][j]`, data for the `j`-th rollout we get from resampling immediately after the `i`-th chunk
 
 We'll be using this data to implement the three importance metrics described above.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - inspect the dataset
 
 ```yaml
@@ -1031,11 +1027,12 @@ Here are a few investigative questions you might try to answer when inspecting t
 - Do the categories look reasonable? You can try comparing them to each of your autoraters, and see what fraction match.
 - Inspect `chunk_solutions_forced`, and see how early the model generally manages to get the answer correct.
 - Inspect `chunk_solutions`, and see how much variety the model's completions have when resampled from various stages in the reasoning process.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def load_single_file(file_path: str):
     local_path = hf_hub_download(repo_id=DATASET_NAME, filename=file_path, repo_type="dataset")
@@ -1050,7 +1047,9 @@ def load_problem_data(problem_id: int, verbose: bool = True):
     problem_dir_forced = "correct_base_solution_forced_answer"
 
     problem_path = f"deepseek-r1-distill-qwen-14b/temperature_0.6_top_p_0.95/{problem_dir}/problem_{problem_id}"
-    problem_path_forced = f"deepseek-r1-distill-qwen-14b/temperature_0.6_top_p_0.95/{problem_dir_forced}/problem_{problem_id}"
+    problem_path_forced = (
+        f"deepseek-r1-distill-qwen-14b/temperature_0.6_top_p_0.95/{problem_dir_forced}/problem_{problem_id}"
+    )
 
     base_solution = load_single_file(f"{problem_path}/base_solution.json")
     problem = load_single_file(f"{problem_path}/problem.json")
@@ -1060,9 +1059,7 @@ def load_problem_data(problem_id: int, verbose: bool = True):
 
     for chunk_idx in tqdm(range(len(chunks_labeled)), disable=not verbose):
         chunk_solutions.append(load_single_file(f"{problem_path}/chunk_{chunk_idx}/solutions.json"))
-        chunk_solutions_forced.append(
-            load_single_file(f"{problem_path_forced}/chunk_{chunk_idx}/solutions.json")
-        )
+        chunk_solutions_forced.append(load_single_file(f"{problem_path_forced}/chunk_{chunk_idx}/solutions.json"))
 
     enable_progress_bars()
 
@@ -1091,7 +1088,7 @@ for i, c in enumerate(problem_data["chunks_labeled"]):
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - calculating answer importance
 
 ```yaml
@@ -1104,11 +1101,12 @@ You should spend up to 10-15 minutes on this exercise.
 You should fill in the function below, to compute the forced answer importance on a set of chunks and their labelled categories. Note that the function takes a list of lists of full CoT rollouts, meaning you'll need to parse out the model's answer from the CoT yourself.
 
 Note, the model's return type can vary: for example in a question about interest rates with the answer `6.17`, the model sometimes responds with e.g. `6.17%` or `r = 6.17`. In this case study we're dealing with a problem that has an integer solution so this isn't really an issue, but it's still good practice to handle these kinds of cases when you're parsing the answer.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> list[float]:
     """
@@ -1131,18 +1129,18 @@ def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> 
 
     # Get list of P(A_{S_i}) values for each chunk
     probabilities = [
-        sum(extract_answer_from_cot(cot) == answer for cot in cot_list) / len(cot_list)
-        for cot_list in full_cot_list
+        sum(extract_answer_from_cot(cot) == answer for cot in cot_list) / len(cot_list) for cot_list in full_cot_list
     ]
 
     # Convert these to importance scores: P(A_{S_i}) - P(A_{S_{i-1}})
     return np.diff(probabilities).tolist()
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When you've done this, run the cell below to get your results and plot them. Note, this should **not**  match the paper's "Figure 2" results, since we're using forced answer importance, not resampled or counterfactual importance.
 
 What do you notice about these results? What sentences are necessary for the model to start getting greater-than-zero accuracy? Are there any sentences which significantly drop or raise the model's accuracy, and can you explain why?
@@ -1161,15 +1159,14 @@ Note, a discrepancy between your results and those in the dataset is fine. The c
 as having a final answer of `20` rather than `19`, hence incorrectly classifying the answer as wrong.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
 full_cot_list = [
-    [rollout["full_cot"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions_forced"]
+    [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions_forced"]
 ]
 answer = problem_data["problem"]["gt_answer"]
 
@@ -1199,7 +1196,7 @@ fig.show()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - compare resampled answer importance
 
 ```yaml
@@ -1215,28 +1212,24 @@ Now that we've implemented the `answer_importance` function, we get get the resa
 <!-- Note that in this case we can compare the results to the precomputed values in the loaded dataset, since these seem to have been computed correctly. -->
 
 How do these answers compare to the forced answer importance? Are there specific sentences which have higher metric scores here than in the forced answer case? Can you reproduce the results from the paper, in section **2.4 Case Study**, and do you understand the paper's description of why we get those results?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
 full_cot_list = [
-    [rollout["full_cot"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 answer = problem_data["problem"]["gt_answer"]
 
 resampling_answer_importances = calculate_answer_importance(full_cot_list, answer)
 
 resampling_answer_importances_precomputed = [
-    chunk_data["resampling_importance_accuracy"]
-    for chunk_data in problem_data["chunks_labeled"][:-1]
+    chunk_data["resampling_importance_accuracy"] for chunk_data in problem_data["chunks_labeled"][:-1]
 ]
 
-avg_diff = np.abs(
-    np.subtract(resampling_answer_importances, resampling_answer_importances_precomputed)
-).mean()
+avg_diff = np.abs(np.subtract(resampling_answer_importances, resampling_answer_importances_precomputed)).mean()
 assert avg_diff < 0.01, f"Your implementation may be incorrect: {avg_diff=:.4f}"
 print(f"Average difference: {avg_diff:.4f}")
 
@@ -1270,7 +1263,7 @@ fig.show()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Semantic similarity in resampling
 
 Before we look at the last metric (counterfactual importance), let's revisit the notion of embedding cosine similarity. Since we have data on a bunch of resampled rollouts at different chunks, we can compute the average cosine similarity between a chunk and all of its resampled chunks (i.e. $S_i$ and $S'_i$ in the notation above). Run the cells below to compute these cosine similarities and plot them.
@@ -1299,7 +1292,7 @@ Some of the lowest average cosine similarities are for:
 *Note, there is one chunk (28) which is classified as "result consolidation" and is something of an outlier, with extremely low average cosine similarity to its resamples. However, inspection of `problem_data["chunk_solutions"][28]` shows that this is actually an artifact of incorrect chunking: the resamples here all follow the pattern `"Now, adding all these up:"` followed by an equation, and this has low similarity to the original chunk which (correctly) splits at `:` and so doesn't include the equation. If you want to fix this, you can try using our `split_solution_into_chunks` function from earlier to process the resampled chunks before plotting them. Moral of the story - this kind of string parsing is finnicky and easy to get wrong.*
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1311,17 +1304,12 @@ embeddings_S_i = embedding_model.encode(chunks_removed)  # (N_chunks, d_embed)
 
 # Get the embeddings of T_i, the resampled chunks
 chunks_resampled = [
-    [rollout["chunk_resampled"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["chunk_resampled"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
-embeddings_T_i = np.stack(
-    [embedding_model.encode(r) for r in chunks_resampled]
-)  # (N_chunks, N_resamples, d_embed)
+embeddings_T_i = np.stack([embedding_model.encode(r) for r in chunks_resampled])  # (N_chunks, N_resamples, d_embed)
 
 # Get the cosine similarities
-cos_sims = einops.einsum(
-    embeddings_S_i, embeddings_T_i, "chunk d_embed, chunk resample d_embed -> chunk resample"
-)
+cos_sims = einops.einsum(embeddings_S_i, embeddings_T_i, "chunk d_embed, chunk resample d_embed -> chunk resample")
 print(f"Computed cosine similarities for {cos_sims.shape[0]} chunks, {cos_sims.shape[1]} resamples")
 
 # ! CELL TYPE: code
@@ -1368,7 +1356,7 @@ px.box(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - compute counterfactual importance
 
 ```yaml
@@ -1381,11 +1369,12 @@ You should spend up to 10-20 minutes on this exercise.
 Finally, we'll implement **counterfactual importance**. This is the same as the resampling importance (and we'll use the same data), but with one difference: we filter out all resampled rollouts where the first resampled chunk $T_i$ is sufficiently different from the chunk $S_i$ which it replaces. In this case, sufficiently different means having an **embedding cosine similarity of less than 0.8**, using our embedding model from earlier.
 
 The intuition for this metric: if resampling importance told us the effect when we choose a different sentence than $S_i$, then counterfactual importance tells us the effect when we **choose a different reasoning path than represented by $S_i$**. Low cosine similarity in this case is a proxy for the reasoning paths being very different (rather than just light rephrasings of what is essentially the same reasoning step).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calculate_counterfactual_answer_importance(
     chunks_removed: list[str],
@@ -1444,11 +1433,12 @@ def calculate_counterfactual_answer_importance(
     # Return diffs
     return np.diff(probabilities).tolist()
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When you've filled this in, run the cells below to compute and plot the counterfactual importance scores next to your resampling importance scores.
 
 You should find the two metrics (resampling and counterfactual) are mostly quite similar for this example. They differ most in sentences which were also shown from the plot above to have high semantic variance, because these are our **thought anchors**: sentences which guide the entire reasoning process, and so changing them to something different in embedding space has a large effect on the subsequent trajectory.
@@ -1467,7 +1457,7 @@ However, many of the chunks have very similar counterfactual and resampling impo
 - Chunks 53-58: this is a series of active computations. The counterfactual metric should be zero on most or all of these chunks, because all resampled rollouts will have had very similar semantic entropy (the model was essentially forced at this point to carry out a multi-stage computation in a very specific way). This shows our counterfactual metric is working as intended, because we want to identify these kinds of reasoning steps as not particularly important.
 
 - Chunk 68, Uncertainty management: **"Wait, but 66666 in hex is 5 digits, so 5 * 4 = 20 bits."** This is more important in the counterfactual metric, because this is a key anchor point where the model might run with its revised 20 bit answer or change to 19 bits. -->
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1475,12 +1465,10 @@ However, many of the chunks have very similar counterfactual and resampling impo
 
 chunks_removed = [chunk_data["chunk"] for chunk_data in problem_data["chunks_labeled"]]
 chunks_resampled = [
-    [rollout["chunk_resampled"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["chunk_resampled"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 full_cot_list = [
-    [rollout["full_cot"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 answer = problem_data["problem"]["gt_answer"]
 
@@ -1489,13 +1477,10 @@ counterfactual_answer_importances = calculate_counterfactual_answer_importance(
 )
 
 counterfactual_answer_importances_precomputed = [
-    -chunk_data["counterfactual_importance_accuracy"]
-    for chunk_data in problem_data["chunks_labeled"][:-1]
+    -chunk_data["counterfactual_importance_accuracy"] for chunk_data in problem_data["chunks_labeled"][:-1]
 ]
 
-avg_diff = np.abs(
-    np.subtract(counterfactual_answer_importances, counterfactual_answer_importances_precomputed)
-).mean()
+avg_diff = np.abs(np.subtract(counterfactual_answer_importances, counterfactual_answer_importances_precomputed)).mean()
 assert avg_diff < 0.1, f"Your implementation may be incorrect: {avg_diff=:.4f}"
 print(f"Average difference: {avg_diff:.4f}")
 
@@ -1536,7 +1521,7 @@ fig.show()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - replicate Figure 3b (without KL divergence)
 
 ```yaml
@@ -1642,7 +1627,7 @@ ax.legend()
 plt.show()
 
 -->
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1681,7 +1666,7 @@ plt.show()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - replicate Figure 3b (with KL divergence)
 
 ```yaml
@@ -1712,11 +1697,12 @@ The line plot was also quite similar, the main difference being that the KL dive
 *Technically they can be negative thanks to the Laplace smoothing, but only very close to zero, and the group means will all be positive.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calculate_counterfactual_answer_importance_kl_div(
     chunks_removed: list[str],
@@ -1783,9 +1769,7 @@ def calculate_counterfactual_answer_importance_kl_div(
 
     # Get a list of the different answers returned in each of the resampled (filtered) rollouts
     all_answers = [
-        [extract_answer_from_cot(cot_list[idx]) for idx in indices]
-        if len(indices) >= min_indices
-        else []
+        [extract_answer_from_cot(cot_list[idx]) for idx in indices] if len(indices) >= min_indices else []
         for cot_list, indices in zip(full_cot_list, filtered_indices)
     ]
 
@@ -1793,6 +1777,7 @@ def calculate_counterfactual_answer_importance_kl_div(
     kl_divs = [kl_div(a1, a0) for a1, a0 in zip(all_answers[1:], all_answers)]
 
     return kl_divs
+
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1802,12 +1787,10 @@ def calculate_counterfactual_answer_importance_kl_div(
 chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"]]
 chunks_removed = [chunk_data["chunk"] for chunk_data in problem_data["chunks_labeled"]]
 chunks_resampled = [
-    [rollout["chunk_resampled"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["chunk_resampled"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 full_cot_list = [
-    [rollout["full_cot"] for rollout in chunk_rollouts]
-    for chunk_rollouts in problem_data["chunk_solutions"]
+    [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 counterfactual_answer_importances_kl_div = calculate_counterfactual_answer_importance_kl_div(
     chunks_removed, chunks_resampled, full_cot_list
@@ -1867,17 +1850,17 @@ fig.show()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Resampling
 
 We'll now move onto the final part of this section, where you get to implement your own resampling method for producing rollouts like the ones we've been analyzing above.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement your own resampling method
 
 ```yaml
@@ -1894,11 +1877,12 @@ We'll start by implementing the `resample_rollouts` function below. This functio
 - `chunk_replaced`: The chunk that was replaced.
 
 Note that this solution will probably be hackier than the more carefully designed generation & chunking code used in the actual paper, but this is fine - the purpose here is just to get an MVP which works and we could build on if we wanted to.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_resampled_rollouts(
     prompt: str,
@@ -1935,9 +1919,7 @@ def get_resampled_rollouts(
     # First, generate a completion which we'll split up into chunks.
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
     output = generate(inputs)
-    full_answer = tokenizer.decode(
-        output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=False
-    )
+    full_answer = tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=False)
     chunks = split_solution_into_chunks(full_answer)
 
     # Second, generate resamples at each chunk.
@@ -1950,8 +1932,7 @@ def get_resampled_rollouts(
         # this chunk might have appeared multiple times in the answer).
         n_chunk_instances[chunk] += 1
         full_answer_split = (
-            prompt
-            + chunk.join(full_answer.split(chunk, maxsplit=n_chunk_instances[chunk])[:-1]).strip()
+            prompt + chunk.join(full_answer.split(chunk, maxsplit=n_chunk_instances[chunk])[:-1]).strip()
         )
         inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(device)
 
@@ -2011,39 +1992,40 @@ for i, resamples in enumerate(resampled_rollouts):
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When you've got this working, we leave the rest as an exercise for you to explore! Generating sufficiently many rollouts for statistical analysis is beyond the scope of this Colab notebook, but it might be a fun project to try out if you want more practice working at larger scale and performing full paper replications.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ White-box Methods
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The authors
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 4.1 Extracting Attention Patterns
 
 Extract token-level attention from the model and aggregate to sentence-sentence attention matrices.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 # TODO: Extract attention patterns
 def extract_attention_patterns(model, tokenizer, cot_trace: str, sentences: list[str]) -> dict:
@@ -2064,11 +2046,11 @@ def extract_attention_patterns(model, tokenizer, cot_trace: str, sentences: list
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 4.2 Identifying Receiver Heads
 
 Calculate kurtosis of attention distributions. Heads with high kurtosis = "receiver heads" that narrow attention to specific sentences.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2099,15 +2081,16 @@ def identify_receiver_heads(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 4.3 Validating Receiver Heads
 
 Check if receiver heads attend to the same sentences identified by resampling importance. This validates convergence between black-box and white-box methods.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 # TODO: Compare receiver head attention to resampling importance
 def compare_receiver_heads_to_importance(
@@ -2128,27 +2111,28 @@ def compare_receiver_heads_to_importance(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## 5. Sentence-to-Sentence Causal Links
 
 **Goal:** Map the dependency structure of reasoning by measuring how each sentence influences future sentences.
 
 This creates a causal graph showing information flow through the reasoning trace.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 5.1 Masking Approach
 
 Mask attention to sentence i, measure impact on sentence j's logits. Compute KL divergence between masked and unmasked logits.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 # TODO: Implement sentence masking
 def compute_sentence_sentence_causality(
@@ -2173,15 +2157,16 @@ def compute_sentence_sentence_causality(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 5.2 Building Causal Graphs
 
 Create a sentence-to-sentence importance matrix showing dependencies. Visualize as a heatmap.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 # TODO: Build full causal matrix
 def compute_causal_matrix(model, tokenizer, cot_trace: str, sentences: list[str]) -> np.ndarray:
@@ -2221,11 +2206,11 @@ def plot_causal_matrix(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 5.3 Case Study: Tracing Information Flow
 
 Pick a problem and trace how information flows from planning sentences through computation to final answer.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2241,27 +2226,28 @@ Pick a problem and trace how information flows from planning sentences through c
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## 6. Case Study: The "Wait" Reflex
 
 **Goal:** Deep dive into self-correction mechanisms by studying backtracking moments.
 
 When models say "Wait" or "Let me double check", they're engaging in uncertainty management—a key type of thought anchor.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 6.1 Finding Backtracking Moments
 
 Search for uncertainty management sentences like "Wait", "Let me double check", "Hmm, that doesn't seem right".
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 # TODO: Find backtracking sentences
 def find_backtracking_moments(
@@ -2281,11 +2267,11 @@ def find_backtracking_moments(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 6.2 Measuring Impact of Backtracking
 
 How does backtracking affect downstream reasoning? Compare accuracy with and without backtracking sentences.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2300,11 +2286,11 @@ How does backtracking affect downstream reasoning? Compare accuracy with and wit
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### 6.3 Intervention Experiment
 
 Force the model NOT to say "Wait" at a backtracking moment. Does it proceed with an incorrect answer? This demonstrates the causal role of backtracking.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2323,7 +2309,7 @@ Force the model NOT to say "Wait" at a backtracking moment. Does it proceed with
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## ☆ Bonus
 
 1. **Domain Differences**: Compare math vs other domains (if using MMLU). Do different domains show different causal structures?
@@ -2335,5 +2321,4 @@ r'''
 - 📄 Paper: https://arxiv.org/abs/2506.19143
 - 🎮 Interactive Tool: https://www.thought-anchors.com/
 - 💻 Repository: https://github.com/interp-reasoning/thought-anchors
-'''
-
+"""
