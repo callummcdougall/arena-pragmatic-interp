@@ -45,6 +45,7 @@ tabulate
 opencv-python
 nbformat
 docformatter
+pyyaml
 
 # Visualization
 matplotlib

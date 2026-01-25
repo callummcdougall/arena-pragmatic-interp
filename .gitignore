@@ -7,7 +7,7 @@
 *chunk_*.txt
 *.chroma
 *.pytest_cache
-*models
+models/
 *data
 !chapter1_transformer_interp/exercises/part42_function_vectors_and_model_steering/data
 *wandb
@@ -44,3 +44,4 @@ infrastructure/master_files/js
 demos
 infrastructure/master_files/deception-detection/
 infrastructure/context
+infrastructure/master_files/chapters/**/**/context_*.md
