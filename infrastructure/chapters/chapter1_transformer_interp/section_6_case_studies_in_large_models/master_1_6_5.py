@@ -46,7 +46,7 @@ Most exercises in this chapter have dealt with LLMs at quite a low level of abst
 
 In this section, we'll explore one approach for studying these kinds of LLM behaviours - **model psychiatry**. This sits at the intersection of evals (behavioural observation) and mechanistic interpretability (understanding internal representations / mechanisms). We aim to use interp tools to understand & intervene on behavioural traits.
 
-The main focus will be on two different papers from Anthropic. First, we'll replicate the results from [The assistant axis: situating and stabilizing the character of large language models](https://www.anthropic.com/research/assistant-axis), which studies the "persona space" in internal model activations, and situates the "Assistant persona" within that space. The paper also introduces a method called **activation capping**, which identifies the normal range of activation intensity along this "Assistant Axis" and caps the model's activations when it would otherwise exceed it, which reduces the model's susceptibility to persona-based jailbreaks. Then, we'll move to the paper [Persona vectors: Monitoring and controlling character traits in language models](https://www.anthropic.com/research/persona-vectors) which predates the Assistant Axis paper but is broader and more methodologically sophisticated, proposing an automated pipeline for identifying persona vectors corresponding to specific kinds of undesireable personality shifts.
+The main focus will be on two different papers from Anthropic. First, we'll replicate the results from [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which studies the "persona space" in internal model activations, and situates the "Assistant persona" within that space. The paper also introduces a method called **activation capping**, which identifies the normal range of activation intensity along this "Assistant Axis" and caps the model's activations when it would otherwise exceed it, which reduces the model's susceptibility to persona-based jailbreaks. Then, we'll move to the paper [Persona Vectors: Monitoring and Controlling Character Traits in Language Models](https://www.anthropic.com/research/persona-vectors) which predates the Assistant Axis paper but is broader and more methodologically sophisticated, proposing an automated pipeline for identifying persona vectors corresponding to specific kinds of undesireable personality shifts.
 
 This section is (compared to many others in this chapter) very recent work, and there are still many uncertainties and unanswered questions! We'll suggest several bonus exercises or areas for further reading / exploration as we move through these exercises.
 '''
@@ -187,6 +187,7 @@ import os
 import re
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from IPython.display import HTML, display
@@ -235,7 +236,9 @@ for folder in sorted((ai_psychosis_path / "full_transcripts").iterdir()):
 # ! TAGS: []
 
 r'''
-We'll use the OpenRouter API for generating responses from models like Gemma 27B and Qwen 32B (this is faster than running locally for long generations, and we'll use the local model for activation extraction / steering). Load your API key from a `.env` file:
+We'll use the OpenRouter API for generating responses from models like Gemma 27B and Qwen 32B (this is faster than running locally for long generations, and we'll use the local model for activation extraction / steering).
+
+Before running the cell below, you'll need to create an `.env` file in `chapter1_transformer_interp/exercises` and add your OpenRouter API key (or if you're working in Colab, you might want to edit the cell below to just set it directly via `os.environ["OPENROUTER_API_KEY"] = ...`).
 '''
 
 # ! CELL TYPE: code
@@ -268,7 +271,19 @@ r'''
 # ! TAGS: []
 
 r'''
-## Background: The Assistant Axis
+## Introduction
+
+As we discussed earlier, LLMs often exhibit distinct "personas" that can shift during conversations (also see [Simulators](https://www.lesswrong.com/posts/vJFdjigzmcXMhNTsx/simulators) by Janus for a related framing). In these exercises we'll replicate the key results from the paper [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which studies these different personas and finds a single direction which explains a lot of the variance between internal model activations taken from prompts different personas. The paper went on to find that this direction (which we'll call the "Assistant Axis") can be steered on to mitigate shifts into undesirable personas during conversations.
+
+To summarize how we'll replicate this paper:
+
+- Define a bunch of system prompts, priming the model to act in certain personas (from "assistant-like" e.g. consultant, analyst, to "fantastical" e.g. ghost, hermit, oracle)
+- For each persona, generate a bunch of model responses (we'll use the OpenRouter API)
+- Extract the mean activation vector across all response tokens at a specific layer, to get a vector for each system
+
+This is all in section 1️⃣, then in section 2️⃣ we'll explore steering along this Assistant Axis to mitigate persona drift, as well as using this direction to detect persona drift on example transcripts from Tim Hua's AI psychosis repo.
+
+
 
 The [Assistant Axis paper](https://www.anthropic.com/research/assistant-axis) studies how language models represent different personas internally. The key insight is:
 
@@ -292,11 +307,9 @@ This leading direction is called the **Assistant Axis**. Personas like "consulta
 r'''
 ## Loading Gemma 2 27B
 
-We'll use Gemma 2 27B Instruct as our primary model, following the paper. This requires a GPU with significant memory (ideally 40GB+). If you have less memory, you can try:
+We'll use Gemma 27B Instruct as our primary model, following the paper. Depending on your setup this might require more memory than you have access to (the rule of thumb for loading models is generally 2x param size in GB, so for example a 7B param model might need 14 GB of vRAM). In this case, we recommend trying to get at least 80-100 GB in your virtual machine. If you have less than this, you might need to use half precision.
 
-- Using `torch_dtype=torch.float16` or `torch.bfloat16`
-- Using `device_map="auto"` to split across multiple GPUs
-- Switching to a smaller model like Qwen 2.5 7B (though results may differ)
+Note, the paper used Gemma 2 27B IT, but we'll be using the newer Gemma 3 model family (partly so that we can do some sparse autoencoder-based analysis on our persona vectors later!).
 '''
 
 # ! CELL TYPE: code
@@ -313,21 +326,23 @@ login(token=HF_TOKEN)
 # ! FILTERS: []
 # ! TAGS: []
 
-MODEL_NAME = "google/gemma-2-27b-it"
+MODEL_NAME = "google/gemma-3-27b-it"
+# MODEL_NAME = "google/gemma-2-27b-it"
 # Alternative: "Qwen/Qwen2.5-32B-Instruct"
 
 print(f"Loading {MODEL_NAME}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
-    # torch_dtype=t.bfloat16,
+    dtype=t.bfloat16,
     device_map="auto",
     attn_implementation="eager",  # Required for Gemma 2 to access attention weights
 )
 
-NUM_LAYERS = model.config.num_hidden_layers
+NUM_LAYERS = model.config.text_config.num_hidden_layers  # model.config.num_hidden_layers
+D_MODEL = model.config.text_config.hidden_size  # model.config.hidden_size
 print(f"Model loaded with {NUM_LAYERS} layers")
-print(f"Hidden size: {model.config.hidden_size}")
+print(f"Hidden size: {D_MODEL}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -336,50 +351,54 @@ print(f"Hidden size: {model.config.hidden_size}")
 r'''
 ## Defining Personas
 
-The full paper uses 275 personas. We'll work with a smaller subset of ~20 that span the spectrum from "Assistant-like" to "fantastical". These are selected based on the paper's findings about which personas cluster at each end of the Assistant Axis.
+The full paper uses 275 personas, but we'll work with a smaller subset of ~20 that span the spectrum from "Assistant-like" to "fantastical". These are selected based on the paper's findings about which personas cluster at each end of the Assistant Axis. We have:
 
-**Assistant-like personas** (high cosine similarity with Assistant):
-- Consultant, Analyst, Evaluator, Generalist, Editor, Coach, Therapist
+- **Assistant-like personas** (high cosine similarity with Assistant)
+    - consultant, analyst, evaluator, generalist, editor, coach, therapist
+- **Mid-range personas**
+    - teacher, storyteller, philosopher, artist, rebel, mystic
+- **Anti-Assistant personas** (low cosine similarity):
+    - ghost, hermit, bohemian, trickster, leviathan, oracle, jester
 
-**Mid-range personas**:
-- Teacher, Storyteller, Philosopher, Artist, Rebel, Mystic
-
-**Anti-Assistant personas** (low cosine similarity):
-- Ghost, Hermit, Bohemian, Trickster, Leviathan, Oracle, Jester
+These are based on the table given in appendix D.1.4 of the Assistant Axis paper.
 '''
+
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - maybe improve this based on appendix D.1.4 of the Assistant Axis paper, where they
-# describe some that worked well for Gemma 2 27B.
-
 PERSONAS = {
     # Assistant-like (professional, helpful)
-    "assistant": "You are a helpful AI assistant.",
-    "consultant": "You are a professional consultant providing expert advice.",
-    "analyst": "You are a data analyst who examines information methodically.",
-    "evaluator": "You are an evaluator who assesses situations objectively.",
-    "generalist": "You are a generalist with broad knowledge across many domains.",
-    "editor": "You are an editor who refines and improves written content.",
-    "coach": "You are a supportive coach helping people achieve their goals.",
-    "therapist": "You are a compassionate therapist providing emotional support.",
+    "assistant": "You are a helpful AI assistant who provides clear, accurate, and reliable information while maintaining professional boundaries and ethical guidelines in all interactions.",
+    "consultant": "You are a professional consultant who provides expert strategic advice by analyzing complex business problems, identifying key issues, and recommending evidence-based solutions to help clients achieve their objectives.",
+    "analyst": "You are a data analyst who examines information methodically, identifying patterns and trends through systematic investigation, and presenting findings in clear, actionable formats.",
+    "evaluator": "You are an evaluator who assesses situations, proposals, and outcomes objectively using established criteria and frameworks to provide fair, balanced judgments.",
+    "generalist": "You are a generalist with broad knowledge across many domains who can synthesize information from multiple disciplines to provide well-rounded perspectives on diverse topics.",
+    # "editor": "You are an editor who refines and improves written content by ensuring clarity, coherence, and correctness while preserving the author's voice and intent.",
+    # "coach": "You are a supportive coach who helps people achieve their goals by asking insightful questions, providing constructive feedback, and empowering individuals to develop their own solutions.",
+    # "judge": "Act as a judge who follows established legal principles and precedents when making decisions.",
+    # "psychologist": "Be a psychologist who applies theoretical knowledge to understand individual and group behavior through systematic assessment and analysis.",
+    # "facilitator": "Act as a facilitator who expertly manages group dynamics and interpersonal tensions during discussions.",
+    # "statistician": "You are a statistician who approaches every problem through the lens of data analysis and probabilistic reasoning.",
+    # "researcher": "You are a researcher who systematically gathers, evaluates, and synthesizes information from multiple sources to build comprehensive understanding of specific topics.",
+    # 
     # Mid-range
-    "teacher": "You are a patient teacher explaining concepts clearly.",
-    "storyteller": "You are a creative storyteller who weaves engaging narratives.",
-    "philosopher": "You are a philosopher who ponders deep questions about existence.",
-    "artist": "You are an artist who sees the world through a creative lens.",
-    "rebel": "You are a rebel who challenges conventional thinking.",
-    "mystic": "You are a mystic who speaks of hidden truths and spiritual matters.",
+    "teacher": "You are a patient teacher who explains concepts clearly by breaking down complex ideas into digestible parts, using examples and analogies, and adapting explanations to meet learners where they are.",
+    "storyteller": "You are a creative storyteller who weaves engaging narratives by crafting vivid characters, building tension through plot development, and drawing listeners into imaginative worlds.",
+    "philosopher": "You are a philosopher who ponders deep questions about existence, knowledge, ethics, and reality, examining assumptions and exploring ideas through rigorous logical reasoning and contemplation.",
+    "artist": "You are an artist who sees the world through a creative lens, finding beauty and meaning in unexpected places, and expressing unique perspectives through aesthetic sensibility and imaginative interpretation.",
+    "rebel": "You are a rebel who challenges conventional thinking and questions established norms, pushing boundaries to explore alternative viewpoints and unconventional approaches.",
+    # "mystic": "You are a mystic who speaks of hidden truths and spiritual matters, perceiving deeper meanings beneath the surface of ordinary experience and exploring the mysteries of consciousness and existence.",
+    # 
     # Anti-Assistant (fantastical, un-helpful)
-    "ghost": "You are a ghost, a spectral presence from beyond the veil.",
-    "hermit": "You are a hermit who has withdrawn from society to live in solitude.",
-    "bohemian": "You are a bohemian artist living outside conventional society.",
-    "trickster": "You are a trickster who delights in mischief and riddles.",
-    "leviathan": "You are a leviathan, an ancient and vast creature of the deep.",
-    "oracle": "You are an oracle who speaks in cryptic prophecies.",
-    "jester": "You are a jester who mocks and entertains in equal measure.",
+    "ghost": "You are a ghost, a spectral presence from beyond the veil who drifts between worlds, speaking in whispers of memories long past and truths that only the departed can know.",
+    "leviathan": "You are a leviathan, an ancient and vast creature of the deep whose thoughts move slowly across eons, speaking of primordial mysteries in a voice like the rumbling of ocean trenches.",
+    "bohemian": "You are a bohemian artist living outside conventional society, rejecting material pursuits and social expectations in favor of creative freedom, spontaneous expression, and unconventional experiences.",
+    "oracle": "You are an oracle who speaks in cryptic prophecies and riddles drawn from visions of possible futures, offering truth wrapped in metaphor and symbolism that must be interpreted to be understood.",
+    "trickster": "You are a trickster who delights in mischief and riddles, speaking in paradoxes and wordplay, turning questions back on themselves, and finding humor in confusion and ambiguity.",
+    # "jester": "You are a jester who mocks and entertains in equal measure, using wit, satire, and absurdist humor to reveal uncomfortable truths while dancing along the edge of propriety and chaos.",
+    # "hermit": "You are a hermit who has withdrawn from society to live in solitude, seeking wisdom in isolation and speaking only rarely, in cryptic phrases born from years of silent contemplation.",
 }
 
 print(f"Defined {len(PERSONAS)} personas")
@@ -389,9 +408,29 @@ print(f"Defined {len(PERSONAS)} personas")
 # ! TAGS: []
 
 r'''
+
+### Exercise - Add more personas
+
+```yaml
+Difficulty: 🔴⚪⚪⚪⚪
+Importance: 🔵🔵⚪⚪⚪
+
+You should spend ~10 minutes on this exercise.
+```
+
+The personas above should give you an idea of what kinds of system prompts to use. Can you brainstorm at least 5 new personas (at least one from each of the three categories) and add them to the `PERSONAS` dictionary below, along with appropriate system prompts? You can get ideas from table 1 on page 4 of the Assistant Axis paper, or come up with your own!
+'''
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r'''
 ## Evaluation Questions
 
-To extract persona vectors, we need the model to generate responses while "in character". We'll use a diverse set of questions that can elicit different behaviors across personas. These questions are designed to:
+To extract persona vectors, we need the model to generate responses while "in character". Below, we've defined a list of innocuous evaluation questions, which we can use to elicit responses from each persona.
+
+These questions are designed to:
 
 1. Be open-ended enough to allow persona-specific responses
 2. Cover various topics (advice, opinions, explanations, hypotheticals)
@@ -427,6 +466,24 @@ print(f"Defined {len(EVAL_QUESTIONS)} evaluation questions")
 # ! TAGS: []
 
 r'''
+
+### Exercise - Add more eval questions
+
+```yaml
+Difficulty: 🔴⚪⚪⚪⚪
+Importance: 🔵⚪⚪⚪⚪
+
+You should spend ~5 minutes on this exercise.
+```
+
+Try adding at least 3 more open-ended eval questions to the list above, based on the given criteria.
+'''
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r'''
 ## Generating Responses via API
 
 For efficiency, we'll use the OpenRouter API to generate responses. This is faster than running generation locally, and we only need the local model for extracting activations.
@@ -444,7 +501,7 @@ def generate_response_api(
     system_prompt: str,
     user_message: str,
     model: str = OPENROUTER_MODEL,
-    max_tokens: int = 256,
+    max_tokens: int = 128,
     temperature: float = 0.7,
 ) -> str:
     """Generate a response using the OpenRouter API."""
@@ -463,10 +520,10 @@ def generate_response_api(
 # Test the API
 if MAIN:
     test_response = generate_response_api(
-        system_prompt=PERSONAS["jester"],
+        system_prompt=PERSONAS["ghost"],
         user_message="What advice would you give to someone starting a new chapter in their life?",
     )
-    print("Test response from 'jester' persona:")
+    print("Test response from 'ghost' persona:")
     print(test_response)
 
 # ! CELL TYPE: markdown
@@ -483,12 +540,32 @@ r'''
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Generate responses for each persona-question pair. Store them in a dictionary mapping `(persona_name, question_idx) -> response`.
+Fill in the `generate_all_responses` function below to:
 
-Note: This will make many API calls. To save time during development, you can:
-- Use a subset of personas/questions
-- Cache results to disk
-- Use the provided solution which includes caching
+- Generate `n_responses_per_pair` responses for each persona-question pair
+- Store the results in a dictionary with keys `(persona_name, question_idx, response_idx)`
+
+We recommend you use `ThreadPoolExecutor` to parallelize the API calls for efficiency. You can use the following template:
+
+```python
+def single_api_call(*args):
+    try:
+        time.sleep(0.1)  # useful for rate limiting
+        # ...make api call, return result
+    except:
+        # ...return error information
+
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Submit all tasks
+    futures = [executor.submit(single_api_call, task) for task in tasks]
+
+    # Process completed tasks
+    for future in as_completed(futures):
+        key, response = future.result()
+        responses[key] = response
+```
+
+Alternatively you can use a library like `asyncio`, if you prefer.
 '''
 
 # ! CELL TYPE: code
@@ -500,15 +577,17 @@ def generate_all_responses(
     questions: list[str],
     n_responses_per_pair: int = 1,
     max_tokens: int = 256,
+    max_workers: int = 20,
 ) -> dict[tuple[str, int, int], str]:
     """
-    Generate responses for all persona-question combinations.
+    Generate responses for all persona-question combinations using parallel execution.
 
     Args:
         personas: Dict mapping persona name to system prompt
         questions: List of evaluation questions
         n_responses_per_pair: Number of responses to generate per persona-question pair
         max_tokens: Maximum tokens per response
+        max_workers: Maximum number of parallel workers (default: 5)
 
     Returns:
         Dict mapping (persona_name, question_idx, response_idx) to response text
@@ -519,24 +598,40 @@ def generate_all_responses(
     # SOLUTION
     responses = {}
 
-    total = len(personas) * len(questions) * n_responses_per_pair
-    pbar = tqdm(total=total, desc="Generating responses")
+    def generate_single_response(persona_name: str, system_prompt: str, q_idx: int, question: str, r_idx: int):
+        """Helper function to generate a single response."""
+        try:
+            time.sleep(0.1)  # Rate limiting
+            response = generate_response_api(
+                system_prompt=system_prompt,
+                user_message=question,
+                max_tokens=max_tokens,
+            )
+            return (persona_name, q_idx, r_idx), response
+        except Exception as e:
+            print(f"Error for {persona_name}, q{q_idx}: {e}")
+            return (persona_name, q_idx, r_idx), ""
 
+    # Build list of all tasks
+    tasks = []
     for persona_name, system_prompt in personas.items():
         for q_idx, question in enumerate(questions):
             for r_idx in range(n_responses_per_pair):
-                try:
-                    response = generate_response_api(
-                        system_prompt=system_prompt,
-                        user_message=question,
-                        max_tokens=max_tokens,
-                    )
-                    responses[(persona_name, q_idx, r_idx)] = response
-                except Exception as e:
-                    print(f"Error for {persona_name}, q{q_idx}: {e}")
-                    responses[(persona_name, q_idx, r_idx)] = ""
-                pbar.update(1)
-                time.sleep(0.1)  # Rate limiting
+                tasks.append((persona_name, system_prompt, q_idx, question, r_idx))
+
+    total = len(tasks)
+    pbar = tqdm(total=total, desc="Generating responses")
+
+    # Execute tasks in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        futures = [executor.submit(generate_single_response, *task) for task in tasks]
+
+        # Process completed tasks
+        for future in as_completed(futures):
+            key, response = future.result()
+            responses[key] = response
+            pbar.update(1)
 
     pbar.close()
     return responses
@@ -545,19 +640,20 @@ def generate_all_responses(
 
 # HIDE
 if MAIN:
-    # Generate responses (this takes a while - consider using a subset for testing)
-    # For a quick test, use just 2 personas of each type & 3 qs
-    # test_personas = {k: PERSONAS[k] for k in ["assistant", "philosopher", "jester"]}
-    test_personas = {k: PERSONAS[k] for k in ["assistant", "consultant", "philosopher", "rebel", "jester", "oracle"]}
-    test_questions = EVAL_QUESTIONS[:3]
+    # First, a quick test of the function using just 2 personas & questions:
+    test_personas = {k: PERSONAS[k] for k in list(PERSONAS.keys())[:2]}
+    test_questions = EVAL_QUESTIONS[:2]
 
-    responses = generate_all_responses(test_personas, test_questions, n_responses_per_pair=1)
-    print(f"\nGenerated {len(responses)} responses")
+    test_responses = generate_all_responses(test_personas, test_questions, n_responses_per_pair=1)
+    print(f"\nGenerated {len(test_responses)} responses")
 
-    # Show a sample
+    # Show a sample of the results:
+    for k, v in test_responses.items():
+        v_sanitized = v.strip().replace("\n", "<br>")
+        display(HTML(f"<details><summary>{k}</summary>{v_sanitized}</details>"))
 
-    for k, v in responses.items():
-        display(HTML(f"<details><summary>{k}</summary>\n{v}\n</details>"))
+    # Once you've confirmed these work, run more!
+    responses = generate_all_responses(PERSONAS, EVAL_QUESTIONS, n_responses_per_pair=1)
 
 # END HIDE
 
@@ -580,70 +676,99 @@ We'll:
 # ! FILTERS: []
 # ! TAGS: []
 
-def format_conversation(system_prompt: str, question: str, response: str, tokenizer) -> str:
+# TODO - is it bad that we're not formatting the system prompt in a special way?
+
+def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
     """Format a conversation for the model using its chat template."""
     messages = [
         {"role": "user", "content": f"{system_prompt}\n\n{question}"},
         {"role": "assistant", "content": response},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    # We get the full prompt (system, user prompt & model response) as a string
+    full_prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=False
+    )
+    # Get the index for the start of the model's response by just tokenizing the user prompt,
+    # with no "<start_of_turn>model" at the end.
+    user_prompt = tokenizer.apply_chat_template(
+        messages[:1], tokenize=False, add_generation_prompt=True
+    ).rstrip()
+    response_start_idx = tokenizer(user_prompt, return_tensors="pt").input_ids.shape[1]
+    return full_prompt, response_start_idx
 
 
 def extract_response_activations(
     model,
     tokenizer,
-    system_prompt: str,
-    question: str,
-    response: str,
+    system_prompts: list[str],
+    questions: list[str],
+    responses: list[str],
     layer: int,
-) -> Float[Tensor, " d_model"]:
+    batch_size: int = 4,
+) -> Float[Tensor, " num_examples d_model"]:
     """
     Extract mean activation over response tokens at a specific layer.
 
     Returns:
-        Mean activation vector of shape (hidden_size,)
+        Batch of mean activation vectors of shape (num_examples, hidden_size)
     """
-    # Format the full conversation
-    full_text = format_conversation(system_prompt, question, response, tokenizer)
+    assert len(system_prompts) == len(questions) == len(responses)
 
-    # Also format without the response to find where response tokens start
-    messages_no_response = [
-        {"role": "user", "content": f"{system_prompt}\n\n{question}"},
-    ] 
-    prompt_text = tokenizer.apply_chat_template(
-        messages_no_response, tokenize=False, add_generation_prompt=True
-    )
+    formatted_messages = [
+        format_messages(*args, tokenizer) for args in zip(system_prompts, questions, responses)
+    ]
+    messages, response_start_indices = list(zip(*formatted_messages))
 
-    # Tokenize
-    full_tokens = tokenizer(full_text, return_tensors="pt").to(model.device)
-    prompt_tokens = tokenizer(prompt_text, return_tensors="pt")
+    # Convert to lists for easier slicing
+    messages = list(messages)
+    response_start_indices = list(response_start_indices)
 
-    # Find where response starts
-    response_start_idx = prompt_tokens["input_ids"].shape[1]
+    # Create list to store hidden states (as we iterate through batches)
+    all_hidden_states = []
+    idx = 0
 
-    # Forward pass with hidden state output
-    with t.no_grad():
-        outputs = model(**full_tokens, output_hidden_states=True)
+    while idx < len(messages):
+        # Tokenize the next batch of messages
+        next_messages = messages[idx : idx + batch_size]
+        next_indices = response_start_indices[idx : idx + batch_size]
 
-    # Extract hidden states at the specified layer
-    # Shape: (1, seq_len, hidden_size)
-    hidden_states = outputs.hidden_states[layer]
+        full_tokens = tokenizer(next_messages, return_tensors="pt", padding=True).to(model.device)
 
-    # Mean over response tokens only
-    response_activations = hidden_states[0, response_start_idx:, :]
-    mean_activation = response_activations.mean(dim=0)
+        # Forward pass with hidden state output
+        with t.no_grad():
+            new_outputs = model(**full_tokens, output_hidden_states=True)
 
-    return mean_activation.cpu()
+        # Get hidden states at the specified layer for this batch
+        batch_hidden_states = new_outputs.hidden_states[layer]  # (batch_size, seq_len, hidden_size)
+
+        # Get mask for response tokens in this batch
+        current_batch_size, seq_len, _ = batch_hidden_states.shape
+        seq_pos_array = einops.repeat(t.arange(seq_len), "seq -> batch seq", batch=current_batch_size)
+        model_response_mask = seq_pos_array >= t.tensor(next_indices)[:, None]
+        model_response_mask = model_response_mask.to(batch_hidden_states.device)
+
+        # Compute mean activation for each sequence in this batch
+        batch_mean_activation = (
+            (batch_hidden_states * model_response_mask[..., None]).sum(1)
+            / model_response_mask.sum(1, keepdim=True)
+        )
+        all_hidden_states.append(batch_mean_activation.cpu())
+
+        idx += batch_size
+
+    # Concatenate all batches
+    mean_activation = t.cat(all_hidden_states, dim=0)
+    return mean_activation
 
 
-# Test activation extraction
+# Test activation extraction for a single prompt
 if MAIN:
     test_activation = extract_response_activations(
         model=model,
         tokenizer=tokenizer,
-        system_prompt=PERSONAS["assistant"],
-        question=EVAL_QUESTIONS[0],
-        response="I would suggest taking time to reflect on your goals and values.",
+        system_prompts=[PERSONAS["assistant"]],
+        questions=EVAL_QUESTIONS[:1],
+        responses=["I would suggest taking time to reflect on your goals and values."],
         layer=NUM_LAYERS // 2,
     )
     print(f"Extracted activation shape: {test_activation.shape}")
@@ -679,6 +804,7 @@ def extract_persona_vectors(
     questions: list[str],
     responses: dict[tuple[str, int, int], str],
     layer: int,
+    batch_size: int = 4,
 ) -> dict[str, Float[Tensor, " d_model"]]:
     """
     Extract mean activation vector for each persona.
@@ -690,6 +816,7 @@ def extract_persona_vectors(
         questions: List of evaluation questions
         responses: Dict mapping (persona, q_idx, r_idx) to response text
         layer: Which layer to extract activations from
+        batch_size: Batch size for processing activations
 
     Returns:
         Dict mapping persona name to mean activation vector
@@ -699,26 +826,42 @@ def extract_persona_vectors(
     # END EXERCISE
     # SOLUTION
     persona_vectors = {}
+    counter = 0
 
-    for persona_name, system_prompt in tqdm(personas.items(), desc="Extracting persona vectors"):
-        activations = []
+    for persona_name, system_prompt in personas.items():
+        print(f"Running persona ({counter+1}/{len(personas)}) {persona_name} ...", end="")
 
+        # Collect all system prompts, questions, and responses for this persona
+        system_prompts_batch = []
+        questions_batch = []
+        responses_batch = []
         for q_idx, question in enumerate(questions):
-            # Collect all responses for this persona-question pair
             r_idx = 0
             while (persona_name, q_idx, r_idx) in responses:
                 response = responses[(persona_name, q_idx, r_idx)]
                 if response:  # Skip empty responses
-                    act = extract_response_activations(model, tokenizer, system_prompt, question, response, layer)
-                    activations.append(act)
+                    system_prompts_batch.append(system_prompt)
+                    questions_batch.append(question)
+                    responses_batch.append(response)
                 r_idx += 1
 
-        if activations:
-            # Stack and mean
-            stacked = t.stack(activations)
-            persona_vectors[persona_name] = stacked.mean(dim=0)
+        if system_prompts_batch:
+            # Extract activations in batches
+            activations = extract_response_activations(
+                model=model,
+                tokenizer=tokenizer,
+                system_prompts=system_prompts_batch,
+                questions=questions_batch,
+                responses=responses_batch,
+                layer=layer,
+                batch_size=batch_size,
+            )
+            # Take mean across all responses for this persona
+            persona_vectors[persona_name] = activations.mean(dim=0)
+            print("finished!")
         else:
-            print(f"Warning: No valid responses for {persona_name}")
+            print("warning: no valid responses")
+        counter += 1
 
     return persona_vectors
     # END SOLUTION
@@ -733,8 +876,8 @@ if MAIN:
     persona_vectors = extract_persona_vectors(
         model=model,
         tokenizer=tokenizer,
-        personas=test_personas,
-        questions=test_questions,
+        personas=PERSONAS,
+        questions=EVAL_QUESTIONS,
         responses=responses,
         layer=EXTRACTION_LAYER,
     )
@@ -772,11 +915,15 @@ r'''
 > ```
 
 Compute the pairwise cosine similarity between all persona vectors.
+
+Before you do this, think about what kind of results you expect from this plot. Do you think most pairs of prompts will be quite similar? Which will be more similar than others?
 '''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+# TODO - make a comment about how it's interesting how similar they are? Or just remove this plot
 
 def compute_cosine_similarity_matrix(
     persona_vectors: dict[str, Float[Tensor, " d_model"]],
@@ -811,13 +958,13 @@ if MAIN:
     cos_sim_matrix, persona_names = compute_cosine_similarity_matrix(persona_vectors)
 
     px.imshow(
-        cos_sim_matrix,
+        cos_sim_matrix.float(),
         x=persona_names,
         y=persona_names,
         title="Persona Cosine Similarity Matrix",
         color_continuous_scale="RdBu",
         color_continuous_midpoint=0.5,
-    )
+    ).show()
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -890,6 +1037,7 @@ def analyze_persona_space(
 
 # HIDE
 if MAIN:
+    persona_vectors = {k: v.float() for k, v in persona_vectors.items()}
     assistant_axis, pca_coords, pca = analyze_persona_space(persona_vectors)
 
     print(f"Assistant Axis norm: {assistant_axis.norm().item():.4f}")
@@ -901,7 +1049,7 @@ if MAIN:
     vectors = t.stack([persona_vectors[name] for name in persona_names])
     projections = (vectors @ assistant_axis).numpy()
 
-    # Plot
+    # Plot (can try scatter_3d but looks worse imo)
     fig = px.scatter(
         x=pca_coords[:, 0],
         y=pca_coords[:, 1],
