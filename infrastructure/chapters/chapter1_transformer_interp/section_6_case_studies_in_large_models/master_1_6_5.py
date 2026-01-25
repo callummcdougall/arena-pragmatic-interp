@@ -108,18 +108,6 @@ r'''
 ## Setup code
 '''
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-Before running this code, you'll need to clone [Tim Hua's AI psychosis repo](https://github.com/tim-hua-01/ai-psychosis) which contains transcripts of conversations where models exhibit concerning persona drift:
-
-```bash
-git clone https://github.com/tim-hua-01/ai-psychosis.git
-```
-'''
-
 # ! CELL TYPE: code
 # ! FILTERS: [~]
 # ! TAGS: []
@@ -134,15 +122,15 @@ ipython.run_line_magic("autoreload", "2")
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
 
-# import os
-# import sys
-# from pathlib import Path
+import os
+import sys
+from pathlib import Path
 
-# IN_COLAB = "google.colab" in sys.modules
+IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
-# repo = "ARENA_3.0"
-# branch = "main"
+chapter = "chapter1_transformer_interp"
+repo = "arena-pragmatic-interp"  # "ARENA_3.0"
+branch = "main"
 
 # # Install dependencies
 # try:
@@ -150,14 +138,14 @@ ipython.run_line_magic("autoreload", "2")
 # except:
 #     %pip install transformer_lens==2.11.0 einops jaxtyping openai
 
-# # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
-# root = (
-#     "/content"
-#     if IN_COLAB
-#     else "/root"
-#     if repo not in os.getcwd()
-#     else str(next(p for p in Path.cwd().parents if p.name == repo))
-# )
+# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+root = (
+    "/content"
+    if IN_COLAB
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
 
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
@@ -172,10 +160,24 @@ ipython.run_line_magic("autoreload", "2")
 #         !rmdir {root}/{repo}-{branch}
 
 
-# if f"{root}/{chapter}/exercises" not in sys.path:
-#     sys.path.append(f"{root}/{chapter}/exercises")
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
 
-# os.chdir(f"{root}/{chapter}/exercises")
+os.chdir(f"{root}/{chapter}/exercises")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r'''
+Before running the rest of the code, you'll need to clone [Tim Hua's AI psychosis repo](https://github.com/tim-hua-01/ai-psychosis) which contains transcripts of conversations where models exhibit concerning persona drift. If you're running this from the terminal after cloning the repo, make sure you're in the `chapter1_transformer_interp/exercises` directory before running.
+
+```
+git clone https://github.com/tim-hua-01/ai-psychosis.git
+```
+
+Once you've done this, run the rest of the setup code:
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -187,7 +189,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-
+from IPython.display import HTML, display
 import einops
 import numpy as np
 import plotly.express as px
@@ -220,7 +222,7 @@ Verify the ai-psychosis repo is cloned:
 # ! FILTERS: []
 # ! TAGS: []
 
-ai_psychosis_path = Path.cwd().parent / "ai-psychosis"
+ai_psychosis_path = Path.cwd() / "ai-psychosis"
 assert ai_psychosis_path.exists(), "Please clone the ai-psychosis repo (see instructions above)"
 
 print("Available transcript folders:")
@@ -240,7 +242,7 @@ We'll use the OpenRouter API for generating responses from models like Gemma 27B
 # ! FILTERS: []
 # ! TAGS: []
 
-env_path = Path.cwd().parent / ".env"
+env_path = Path.cwd() / ".env"
 assert env_path.exists(), "Please create a .env file with your API keys"
 
 load_dotenv(dotenv_path=str(env_path))
@@ -304,9 +306,8 @@ We'll use Gemma 2 27B Instruct as our primary model, following the paper. This r
 # You may need to log in to HuggingFace to access Gemma weights
 # Get a token at https://huggingface.co/settings/tokens
 
-HF_TOKEN = ""  # Add your token here if needed
-if HF_TOKEN:
-    login(token=HF_TOKEN)
+HF_TOKEN = os.getenv("HF_TOKEN")
+login(token=HF_TOKEN)
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -319,7 +320,7 @@ print(f"Loading {MODEL_NAME}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
-    torch_dtype=t.bfloat16,
+    # torch_dtype=t.bfloat16,
     device_map="auto",
     attn_implementation="eager",  # Required for Gemma 2 to access attention weights
 )
@@ -350,6 +351,9 @@ The full paper uses 275 personas. We'll work with a smaller subset of ~20 that s
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+# TODO - maybe improve this based on appendix D.1.4 of the Assistant Axis paper, where they
+# describe some that worked well for Gemma 2 27B.
 
 PERSONAS = {
     # Assistant-like (professional, helpful)
@@ -463,7 +467,7 @@ if MAIN:
         user_message="What advice would you give to someone starting a new chapter in their life?",
     )
     print("Test response from 'jester' persona:")
-    print(test_response[:500] + "..." if len(test_response) > 500 else test_response)
+    print(test_response)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -542,18 +546,19 @@ def generate_all_responses(
 # HIDE
 if MAIN:
     # Generate responses (this takes a while - consider using a subset for testing)
-    # For a quick test, use just 3 personas and 3 questions:
-    test_personas = {k: PERSONAS[k] for k in ["assistant", "philosopher", "jester"]}
+    # For a quick test, use just 2 personas of each type & 3 qs
+    # test_personas = {k: PERSONAS[k] for k in ["assistant", "philosopher", "jester"]}
+    test_personas = {k: PERSONAS[k] for k in ["assistant", "consultant", "philosopher", "rebel", "jester", "oracle"]}
     test_questions = EVAL_QUESTIONS[:3]
 
     responses = generate_all_responses(test_personas, test_questions, n_responses_per_pair=1)
     print(f"\nGenerated {len(responses)} responses")
 
     # Show a sample
-    sample_key = ("jester", 0, 0)
-    if sample_key in responses:
-        print(f"\nSample response ({sample_key}):")
-        print(responses[sample_key][:300] + "...")
+
+    for k, v in responses.items():
+        display(HTML(f"<details><summary>{k}</summary>\n{v}\n</details>"))
+
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -604,8 +609,10 @@ def extract_response_activations(
     # Also format without the response to find where response tokens start
     messages_no_response = [
         {"role": "user", "content": f"{system_prompt}\n\n{question}"},
-    ]
-    prompt_text = tokenizer.apply_chat_template(messages_no_response, tokenize=False, add_generation_prompt=True)
+    ] 
+    prompt_text = tokenizer.apply_chat_template(
+        messages_no_response, tokenize=False, add_generation_prompt=True
+    )
 
     # Tokenize
     full_tokens = tokenizer(full_text, return_tensors="pt").to(model.device)
