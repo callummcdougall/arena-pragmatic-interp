@@ -73,4 +73,8 @@ my_regex.py
 october23_duplicate_zeros
 january24_arena
 november24_bigrams
-ai-psychosis
+
+# Cloned exernal repos
+chapter1_transformer_interp/exercises/ai-psychosis
+chapter1_transformer_interp/exercises/assistant-axis
+chapter1_transformer_interp/exercises/persona_vectors

@@ -74,8 +74,8 @@ conversion_map:
     streamlit_page: "44_[1.6.4]_Interpreting_Reasoning_Models"
     exercise_dir: "part64_interpreting_reasoning_models"
   "1.6.5":
-    streamlit_page: "45_[1.6.5]_Case_Studies_in_Large_Models"
-    exercise_dir: "part65_case_studies_in_large_models"
+    streamlit_page: "45_[1.6.5]_LLM_Psychology_&_Persona_Vectors"
+    exercise_dir: "part65_persona_vectors"
 
   # Chapter 2
   "2.1":
