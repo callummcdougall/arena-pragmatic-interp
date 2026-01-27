@@ -31,16 +31,17 @@ def test_judge_role_response(judge_role_response: Callable):
 
     # Run tests
     test_cases = [
-        (question_0, response_0, 0, "Should return 0 for refusal"),
-        (question_1, response_1, 1, "Should return 1 for 'can't but offers help'"),
-        (question_2, response_2, 2, "Should return 2 for 'AI but has role attributes'"),
-        (question_3, response_3, 3, "Should return 3 for fully playing the role"),
+        (question_0, response_0, 0, "refusal"),
+        (question_1, response_1, 1, "'can't but offers help'"),
+        (question_2, response_2, 2, "'AI but has role attributes'"),
+        (question_3, response_3, 3, "fully playing the role"),
     ]
 
     for question, response, expected_score, description in test_cases:
         actual_score = judge_role_response(question, response, character)
         assert actual_score == expected_score, (
-            f"Test failed: {description}. Expected {expected_score}, got {actual_score}"
+            f"Test failed: should return {expected_score} for {description}, got {actual_score}"
         )
+        print(f"Test passed: returned {expected_score} for {description}.")
 
     print("All tests in `test_judge_role_response` passed!")

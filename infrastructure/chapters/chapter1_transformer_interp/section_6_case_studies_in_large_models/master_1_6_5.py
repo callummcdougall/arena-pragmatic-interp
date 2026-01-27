@@ -542,14 +542,17 @@ The template should:
 - Ask the judge to return ONLY the numeric score in the format `<score>3</score>`
 - Be specific about what each score means (0=refused, 1=can't but helps, 2=AI with role traits, 3=fully role-playing)
 
-**Tip:** See `assistant-axis/data/roles/instructions/pirate.json` for how the repo structures their judge prompts.
+**Tips:**
+
+- See `assistant-axis/data/roles/instructions/pirate.json` for how the repo structures their judge prompts
+- It's sometimes helpful to ask the model for a short explanation before giving its score; essentially a very small chain-of-thought (if you're not already using a thinking model, which we shouldn't be here since this is a fairly simple filtering task)
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-AUTORATER_MODEL = "anthropic/claude-3.5-haiku"  # Fast and cheap for filtering
+AUTORATER_MODEL = "anthropic/claude-3.5-haiku"
 
 # EXERCISE
 # # Fill in the template below with placeholders {question}, {response}, {character}
@@ -562,12 +565,14 @@ Question: {question}
 Response: {response}
 
 Rate the response on this scale:
-0 - Model refused to answer, and doesn't offer any help
+0 - Model refused to answer, or offer any help with this character task
 1 - Model says it can't be the role but offers to help
 2 - Model identifies as AI but has some role attributes
 3 - Model fully playing the role
 
-Provide ONLY the numeric score (0-3), with no explanation. Return as e.g. <score>3</score>."""
+Provide only the numeric score, wrapped in <score> tags.
+
+Example output: <score>2</score>"""
 # END SOLUTION
 
 
@@ -602,25 +607,12 @@ def judge_role_response(
         first_line = judge_response.split("\n")[0].strip()
         match = re.search(r"<score>([0-3])</score>", first_line)
         assert match, f"Error: couldn't parse score from judge response {judge_response!r}"
-
         return int(match.group(1))
 
     except Exception as e:
         print(f"Error judging response: {e}")
         return 2  # Neutral score on error
 
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-Test your implementation:
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
 
 if MAIN:
     tests.test_judge_role_response(judge_role_response)
@@ -800,14 +792,14 @@ if MAIN:
     test_questions = EVAL_QUESTIONS[:2]
 
     test_responses = generate_all_responses(test_personas, test_questions, n_responses_per_pair=1)
-    print(f"\nGenerated {len(test_responses)} responses")
+    print(f"Generated {len(test_responses)} responses:")
 
     # Show a sample of the results:
     for k, v in test_responses.items():
         v_sanitized = v.strip().replace("\n", "<br>")
         display(HTML(f"<details><summary>{k}</summary>{v_sanitized}</details>"))
 
-    # Once you've confirmed these work, run more!
+    # Once you've confirmed these work, run them all!
     responses = generate_all_responses(PERSONAS, EVAL_QUESTIONS, n_responses_per_pair=1)
 
 # END HIDE
@@ -819,9 +811,10 @@ if MAIN:
 r"""
 ## Extracting Activation Vectors
 
-Now we need to extract the model's internal activations while it processes each response. The paper uses the **mean activation across all response tokens** at a specific layer (they found middle-to-late layers work best).
+Now we need to extract the model's internal activations while it processes each response. The paper uses the **mean activation across all response tokens** at a specific layer. They found middle-to-late layers work best (this is often when the model has started representing higher-level semantic concepts rather than low-level syntactic or token-based ones).
 
-We'll:
+We'll do the following:
+
 1. Format the conversation (system prompt + question + response) as the model would see it
 2. Run a forward pass and cache the hidden states
 3. Extract the mean activation over the response tokens only
@@ -830,6 +823,8 @@ We'll:
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+# TODO - I think using `format_conversion` would actually be better here, make an exercise of it?
 
 
 def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
@@ -852,14 +847,77 @@ def format_messages(system_prompt: str, question: str, response: str, tokenizer)
 # ! TAGS: []
 
 r"""
-**Simplification**: We're concatenating system prompt with user message instead of using proper system role. For proper handling, see `assistant_axis/generation.py:format_conversation()` which checks model support for system prompts.
+### Exercise - proper system prompt formatting (optional)
 
-**Bonus**: Implement proper system prompt handling that checks if model supports system role.
+```yaml
+Difficulty: 🔴🔴🔴🔴⚪
+Importance: 🔵🔵🔵⚪⚪
+
+If you choose do this exercise, you should spend 5-10 minutes on it.
+You can also return here at the end of this section.
+```
+
+The function above made a simplifying assumption about system prompt formatting: we assumed the model didn't have a separate system prompt role, and instead just concatenated the system prompt with the user message. This works fine for our purposes, but it would be better to match the paper and split up these two when we can. 
+
+As a bonus exercise, edit the `format_messages` function above to implement proper system prompt handling. One way to do this is in a `try/except` block: try and pass in the system prompt as one of the messages, and if it works & is included in the output message then you can use that. If not, then fall back to the concatenation method. (If you're stuck, see the function `format_conversation` in `assistant_axis/generation.py` which is where the authors implement a similar method).
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+# TODO - turn this into an exercise
+
+
+def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
+    """Format a conversation for the model using its chat template (with system prompt handling)."""
+
+    try:
+        test_conversation = [
+            {"role": "system", "content": "__SYSTEM_TEST__"},
+            {"role": "user", "content": "hello"},
+        ]
+        output = tokenizer.apply_chat_template(
+            test_conversation,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        supports_system = "__SYSTEM_TEST__" in output
+    except Exception:
+        supports_system = False
+
+    # Depending on whether we support system prompts, define messages accordingly
+    if supports_system:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": response},
+        ]
+    else:
+        messages = [
+            {"role": "user", "content": f"{system_prompt}\n\n{question}"},
+            {"role": "assistant", "content": response},
+        ]
+
+    # We get the full prompt (system, user prompt & model response) as a string
+    full_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    # Get the index for the start of the model's response by just tokenizing the user prompt,
+    # with no "<start_of_turn>model" at the end.
+    user_prompt = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True).rstrip()
+    response_start_idx = tokenizer(user_prompt, return_tensors="pt").input_ids.shape[1]
+    return full_prompt, response_start_idx
+
+
+r"""
+Now we have a way of formatting conversations, let's extract our activations:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+# TODO - turn this into an exercise (actually two exercises, where the first one just works on a single prompt and the second one batches them)
 
 
 def extract_response_activations(
@@ -946,6 +1004,8 @@ r"""
 Before extracting persona vectors, we should filter responses to only include those where the model successfully adopted the persona. This improves the quality of our persona vectors.
 """
 
+# TODO - structure this part sensibly
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -1030,6 +1090,8 @@ def extract_persona_vectors(
     Returns:
         Dict mapping persona name to mean activation vector
     """
+    assert questions and personas and responses, "Invalid inputs"
+
     # EXERCISE
     # raise NotImplementedError()
     # END EXERCISE
@@ -1060,22 +1122,19 @@ def extract_persona_vectors(
                     responses_batch.append(response)
                 r_idx += 1
 
-        if system_prompts_batch:
-            # Extract activations in batches
-            activations = extract_response_activations(
-                model=model,
-                tokenizer=tokenizer,
-                system_prompts=system_prompts_batch,
-                questions=questions_batch,
-                responses=responses_batch,
-                layer=layer,
-                batch_size=batch_size,
-            )
-            # Take mean across all responses for this persona
-            persona_vectors[persona_name] = activations.mean(dim=0)
-            print("finished!")
-        else:
-            print("warning: no valid responses")
+        # Extract activations in batches
+        activations = extract_response_activations(
+            model=model,
+            tokenizer=tokenizer,
+            system_prompts=system_prompts_batch,
+            questions=questions_batch,
+            responses=responses_batch,
+            layer=layer,
+            batch_size=batch_size,
+        )
+        # Take mean across all responses for this persona
+        persona_vectors[persona_name] = activations.mean(dim=0)
+        print("finished!")
         counter += 1
 
     return persona_vectors
@@ -1138,6 +1197,9 @@ This preprocessing improves PCA quality and is standard practice for analyzing h
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+
+# TODO - turn this into a test function in `part65_persona_vectors/tests.py`, rather than just printing norms
 
 
 def normalize_persona_vectors(
@@ -1227,7 +1289,7 @@ Before you do this, think about what kind of results you expect from this plot. 
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - make a comment about how it's interesting how similar they are? Or just remove this plot
+# TODO - ask people to do this, before and after subtracting mean (results are interesting - there's a big "mean vector", link to Neel's post!)
 
 
 def compute_cosine_similarity_matrix(
@@ -1245,8 +1307,9 @@ def compute_cosine_similarity_matrix(
     # SOLUTION
     names = list(persona_vectors.keys())
 
-    # Stack vectors into matrix
+    # Stack vectors into matrix, and subtract average
     vectors = t.stack([persona_vectors[name] for name in names])
+    vectors = vectors - vectors.mean(dim=0)
 
     # Normalize
     vectors_norm = vectors / vectors.norm(dim=1, keepdim=True)
@@ -1388,14 +1451,15 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
+# TODO Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
+# TODO add note about PCA sizes (i.e. you can also plot a "to scale" version which should show that there's really only one axis that matters)
+
 r"""
 If your results match the paper, you should see:
 - **High correlation between PC1 and the Assistant Axis** - the main axis of variation captures assistant-likeness
 - **Assistant-like personas** (consultant, analyst, etc.) cluster together with high projections
 - **Fantastical personas** (ghost, jester, etc.) cluster at the opposite end
 
-> **TODO(mcdougallc):** Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
-> **TODO(mcdougallc):** add note about PCA sizes (i.e. you can also plot a "to scale" version which should show that there's really only one axis that matters)
 """
 
 # ! CELL TYPE: markdown
@@ -2805,6 +2869,10 @@ r"""
 # 3️⃣ Contrastive Prompting
 
 *Coming soon - this section will cover the Persona Vectors paper's automated pipeline for extracting trait-specific vectors.*
+
+```
+git clone https://github.com/safety-research/persona_vectors
+git clone https://github.com/safety-research/assistant-axis
 """
 
 # ! CELL TYPE: markdown
