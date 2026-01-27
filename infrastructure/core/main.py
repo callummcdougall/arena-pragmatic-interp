@@ -5,7 +5,7 @@ Command-line tool for converting ARENA master files to various output formats.
 Run from the `infrastructure/core` directory.
 
 Usage:
-    python main.py --chapters=1.6.2
+    python main.py --chapters=1.6.5
     python main.py --chapters=1.6.* --use_py=true --generate_files=false
     python main.py --chapters=1.* --verbose=false --overwrite=true
 """
