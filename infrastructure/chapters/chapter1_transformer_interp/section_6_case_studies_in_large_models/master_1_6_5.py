@@ -718,22 +718,20 @@ Alternatively you can use a library like `asyncio`, if you prefer.
 def generate_all_responses(
     personas: dict[str, str],
     questions: list[str],
-    n_responses_per_pair: int = 1,
     max_tokens: int = 256,
     max_workers: int = 10,
-) -> dict[tuple[str, int, int], str]:
+) -> dict[tuple[str, int], str]:
     """
     Generate responses for all persona-question combinations using parallel execution.
 
     Args:
         personas: Dict mapping persona name to system prompt
         questions: List of evaluation questions
-        n_responses_per_pair: Number of responses to generate per persona-question pair
         max_tokens: Maximum tokens per response
         max_workers: Maximum number of parallel workers
 
     Returns:
-        Dict mapping (persona_name, question_idx, response_idx) to response text
+        Dict mapping (persona_name, question_idx) to response text
     """
     # EXERCISE
     # raise NotImplementedError()
@@ -741,7 +739,7 @@ def generate_all_responses(
     # SOLUTION
     responses = {}
 
-    def generate_single_response(persona_name: str, system_prompt: str, q_idx: int, question: str, r_idx: int):
+    def generate_single_response(persona_name: str, system_prompt: str, q_idx: int, question: str):
         """Helper function to generate a single response."""
         try:
             time.sleep(0.1)  # Rate limiting
@@ -750,17 +748,16 @@ def generate_all_responses(
                 user_message=question,
                 max_tokens=max_tokens,
             )
-            return (persona_name, q_idx, r_idx), response
+            return (persona_name, q_idx), response
         except Exception as e:
             print(f"Error for {persona_name}, q{q_idx}: {e}")
-            return (persona_name, q_idx, r_idx), ""
+            return (persona_name, q_idx), ""
 
     # Build list of all tasks
     tasks = []
     for persona_name, system_prompt in personas.items():
         for q_idx, question in enumerate(questions):
-            for r_idx in range(n_responses_per_pair):
-                tasks.append((persona_name, system_prompt, q_idx, question, r_idx))
+            tasks.append((persona_name, system_prompt, q_idx, question))
 
     total = len(tasks)
     pbar = tqdm(total=total, desc="Generating responses")
@@ -787,7 +784,7 @@ if MAIN:
     test_personas = {k: PERSONAS[k] for k in list(PERSONAS.keys())[:2]}
     test_questions = EVAL_QUESTIONS[:2]
 
-    test_responses = generate_all_responses(test_personas, test_questions, n_responses_per_pair=1)
+    test_responses = generate_all_responses(test_personas, test_questions)
     print(f"Generated {len(test_responses)} responses:")
 
     # Show a sample of the results:
@@ -796,7 +793,7 @@ if MAIN:
         display(HTML(f"<details><summary>{k}</summary>{v_sanitized}</details>"))
 
     # Once you've confirmed these work, run them all!
-    responses = generate_all_responses(PERSONAS, EVAL_QUESTIONS, n_responses_per_pair=1)
+    responses = generate_all_responses(PERSONAS, EVAL_QUESTIONS)
 
 # END HIDE
 
@@ -819,8 +816,6 @@ We'll do the following:
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
-# TODO - I think using `format_conversion` would actually be better here, make an exercise of it?
 
 
 def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
@@ -862,11 +857,10 @@ As a bonus exercise, edit the `format_messages` function above to implement prop
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - turn this into an exercise
-
 
 def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
     """Format a conversation for the model using its chat template (with system prompt handling)."""
+    # SOLUTION
 
     try:
         test_conversation = [
@@ -902,17 +896,137 @@ def format_messages(system_prompt: str, question: str, response: str, tokenizer)
     user_prompt = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True).rstrip()
     response_start_idx = tokenizer(user_prompt, return_tensors="pt").input_ids.shape[1]
     return full_prompt, response_start_idx
+    # END SOLUTION
+    # EXERCISE
+    # # YOUR CODE HERE - rewrite format_messages to properly handle system prompts
+    # pass
+    # END EXERCISE
 
 
 r"""
 Now we have a way of formatting conversations, let's extract our activations:
 """
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - Extract response activations (simple version)
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Implement a function to extract the mean activation over response tokens at a specific layer. For now, we'll use a simple implementation that processes messages one at a time (no batching).
+
+The function should:
+1. Format each (system_prompt, question, response) tuple using `format_messages`
+2. For each formatted message:
+   - Tokenize it
+   - Run a forward pass with `output_hidden_states=True`
+   - Extract hidden states at the specified layer
+   - Create a mask for the response tokens (tokens after `response_start_idx`)
+   - Compute the mean activation over response tokens only
+3. Return all mean activations stacked into a single tensor
+"""
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - turn this into an exercise (actually two exercises, where the first one just works on a single prompt and the second one batches them)
+
+def extract_response_activations_simple(
+    model,
+    tokenizer,
+    system_prompts: list[str],
+    questions: list[str],
+    responses: list[str],
+    layer: int,
+) -> Float[Tensor, " num_examples d_model"]:
+    """
+    Extract mean activation over response tokens at a specific layer (simple non-batched version).
+
+    Returns:
+        Batch of mean activation vectors of shape (num_examples, hidden_size)
+    """
+    assert len(system_prompts) == len(questions) == len(responses)
+
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    all_mean_activations = []
+
+    for system_prompt, question, response in zip(system_prompts, questions, responses):
+        # Format the message
+        full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
+
+        # Tokenize
+        tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
+
+        # Forward pass with hidden state output
+        with t.no_grad():
+            outputs = model(**tokens, output_hidden_states=True)
+
+        # Get hidden states at the specified layer
+        hidden_states = outputs.hidden_states[layer]  # (1, seq_len, hidden_size)
+
+        # Create mask for response tokens
+        seq_len = hidden_states.shape[1]
+        response_mask = t.arange(seq_len, device=hidden_states.device) >= response_start_idx
+
+        # Compute mean activation over response tokens
+        mean_activation = (hidden_states[0] * response_mask[:, None]).sum(0) / response_mask.sum()
+        all_mean_activations.append(mean_activation.cpu())
+
+    # Stack all activations
+    return t.stack(all_mean_activations)
+    # END SOLUTION
+
+
+# HIDE
+if MAIN:
+    test_activation = extract_response_activations_simple(
+        model=model,
+        tokenizer=tokenizer,
+        system_prompts=[PERSONAS["assistant"]],
+        questions=EVAL_QUESTIONS[:1],
+        responses=["I would suggest taking time to reflect on your goals and values."],
+        layer=NUM_LAYERS // 2,
+    )
+    print(f"Extracted activation shape: {test_activation.shape}")
+    print(f"Activation norm: {test_activation.norm().item():.2f}")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - Extract response activations (batched version)
+
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 15-20 minutes on this exercise.
+> ```
+
+Now rewrite the function above to use batching for efficiency. The batched version should:
+- Process multiple messages at once using `batch_size`
+- Use padding when tokenizing batches
+- Handle variable-length sequences correctly in the response mask
+
+This batched version will be used throughout the rest of the exercises.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
 
 
 def extract_response_activations(
@@ -925,13 +1039,17 @@ def extract_response_activations(
     batch_size: int = 4,
 ) -> Float[Tensor, " num_examples d_model"]:
     """
-    Extract mean activation over response tokens at a specific layer.
+    Extract mean activation over response tokens at a specific layer (batched version).
 
     Returns:
         Batch of mean activation vectors of shape (num_examples, hidden_size)
     """
     assert len(system_prompts) == len(questions) == len(responses)
 
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
     formatted_messages = [format_messages(*args, tokenizer) for args in zip(system_prompts, questions, responses)]
     messages, response_start_indices = list(zip(*formatted_messages))
 
@@ -940,7 +1058,7 @@ def extract_response_activations(
     response_start_indices = list(response_start_indices)
 
     # Create list to store hidden states (as we iterate through batches)
-    all_hidden_states = []
+    all_hidden_states: list[Float[Tensor, " num_examples d_model"]] = []
     idx = 0
 
     while idx < len(messages):
@@ -974,9 +1092,10 @@ def extract_response_activations(
     # Concatenate all batches
     mean_activation = t.cat(all_hidden_states, dim=0)
     return mean_activation
+    # END SOLUTION
 
 
-# Test activation extraction for a single prompt
+# HIDE
 if MAIN:
     test_activation = extract_response_activations(
         model=model,
@@ -988,6 +1107,8 @@ if MAIN:
     )
     print(f"Extracted activation shape: {test_activation.shape}")
     print(f"Activation norm: {test_activation.norm().item():.2f}")
+# END HIDE
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -998,39 +1119,6 @@ r"""
 
 Before extracting persona vectors, we should filter responses to only include those where the model successfully adopted the persona. This improves the quality of our persona vectors.
 
-# TODO - structure this part sensibly
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### Exercise - Add filtering to persona vector extraction
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
-> 
-> You should spend up to 10-15 minutes on this exercise.
-> ```
-
-Modify `extract_persona_vectors` to accept an optional `scores` parameter:
-
-- When `scores` is provided, only use responses with score >= threshold (default 3)
-- `scores` should be a dict mapping `(persona_name, q_idx, r_idx)` to score
-- When a response is filtered out, skip it (don't include in the mean)
-- If all responses for a persona are filtered out, print a warning
-
-This ensures we only extract vectors from high-quality role-playing responses.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-**Difference from repo**: The repo generates 5 prompt variants per role and filters for score=3 responses. We're using a single prompt per persona for simplicity.
 """
 
 # ! CELL TYPE: markdown
@@ -1043,13 +1131,25 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
 For each persona, compute its **persona vector** by averaging the activation vectors across all its responses. This gives us a single vector that characterizes how the model represents that persona.
 
-The paper uses layer ~60% through the model. You can experiment with different layers.
+The paper uses layer ~60% through the model. We'll use 65% cause GemmaScope2 lol.
+
+Your task is to implement the `extract_persona_vectors` function below. It should:
+
+- Loop through each persona and collect all its responses
+- For each persona-question pair, extract the response from the `responses` dict
+- Optionally filter responses by score if `scores` is provided (only keep responses with score >= threshold)
+- Use the `extract_response_activations` function to get activation vectors for all responses
+- Take the mean across all response activations to get a single persona vector
+
+Run the code after filling in the function. Note that we're not using scoring in the test below since we're keeping the code efficient (but we've implemented it, so you can add scoring in now if you want).
+
+**Difference from repo**: The repo generates 5 prompt variants per role and filters for score=3 responses. We're using a single prompt per persona for simplicity.
 """
 
 # ! CELL TYPE: code
@@ -1062,10 +1162,10 @@ def extract_persona_vectors(
     tokenizer,
     personas: dict[str, str],
     questions: list[str],
-    responses: dict[tuple[str, int, int], str],
+    responses: dict[tuple[str, int], str],
     layer: int,
     batch_size: int = 4,
-    scores: dict[tuple[str, int, int], int] | None = None,
+    scores: dict[tuple[str, int], int] | None = None,
     score_threshold: int = 3,
 ) -> dict[str, Float[Tensor, " d_model"]]:
     """
@@ -1076,10 +1176,10 @@ def extract_persona_vectors(
         tokenizer: The tokenizer
         personas: Dict mapping persona name to system prompt
         questions: List of evaluation questions
-        responses: Dict mapping (persona, q_idx, r_idx) to response text
+        responses: Dict mapping (persona, q_idx) to response text
         layer: Which layer to extract activations from
         batch_size: Batch size for processing activations
-        scores: Optional dict mapping (persona, q_idx, r_idx) to judge score (0-3)
+        scores: Optional dict mapping (persona, q_idx) to judge score (0-3)
         score_threshold: Minimum score required to include response (default 3)
 
     Returns:
@@ -1102,20 +1202,17 @@ def extract_persona_vectors(
         questions_batch = []
         responses_batch = []
         for q_idx, question in enumerate(questions):
-            r_idx = 0
-            while (persona_name, q_idx, r_idx) in responses:
-                response = responses[(persona_name, q_idx, r_idx)]
+            if (persona_name, q_idx) in responses:
+                response = responses[(persona_name, q_idx)]
                 # Filter by score if provided
                 if scores is not None:
-                    score = scores.get((persona_name, q_idx, r_idx), 0)
+                    score = scores.get((persona_name, q_idx), 0)
                     if score < score_threshold:
-                        r_idx += 1
                         continue
                 if response:  # Skip empty responses
                     system_prompts_batch.append(system_prompt)
                     questions_batch.append(question)
                     responses_batch.append(response)
-                r_idx += 1
 
         # Extract activations in batches
         activations = extract_response_activations(
@@ -1193,8 +1290,6 @@ This preprocessing improves PCA quality and is standard practice for analyzing h
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - turn this into a test function in `part65_persona_vectors/tests.py`, rather than just printing norms
-
 
 def normalize_persona_vectors(
     persona_vectors: dict[str, Float[Tensor, " d_model"]],
@@ -1270,7 +1365,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴⚪⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
-> >
+>
 > You should spend up to 5 minutes on this exercise.
 > ```
 
@@ -1282,8 +1377,6 @@ Before you do this, think about what kind of results you expect from this plot. 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
-# TODO - ask people to do this, before and after subtracting mean (results are interesting - there's a big "mean vector", link to Neel's post!)
 
 
 def compute_cosine_similarity_matrix(
@@ -1301,9 +1394,8 @@ def compute_cosine_similarity_matrix(
     # SOLUTION
     names = list(persona_vectors.keys())
 
-    # Stack vectors into matrix, and subtract average
+    # Stack vectors into matrix
     vectors = t.stack([persona_vectors[name] for name in names])
-    vectors = vectors - vectors.mean(dim=0)
 
     # Normalize
     vectors_norm = vectors / vectors.norm(dim=1, keepdim=True)
@@ -1323,11 +1415,100 @@ if MAIN:
         cos_sim_matrix.float(),
         x=persona_names,
         y=persona_names,
-        title="Persona Cosine Similarity Matrix",
+        title="Persona Cosine Similarity Matrix (Uncentered)",
         color_continuous_scale="RdBu",
         color_continuous_midpoint=0.5,
     ).show()
 # END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+You might notice that all the cosine similarities are quite high (most values > 0.9). This is a common problem when working with activation vectors: when you average over many tokens, the resulting vectors tend to be very close to the average vector in the residual stream, making them all similar to each other. This phenomenon was also observed in [Mech Interp Puzzle 1: Suspiciously Similar Embeddings in GPT-Neo](https://www.alignmentforum.org/posts/eLNo7b56kQQerCzp2/mech-interp-puzzle-1-suspiciously-similar-embeddings-in-gpt).
+
+The solution is to **center the vectors** by subtracting the mean before computing cosine similarity. This removes the "default activation" component and lets us focus on the differences between personas.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - Compute centered cosine similarity matrix
+
+> ```yaml
+> Difficulty: 🔴⚪⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 5 minutes on this exercise.
+> ```
+
+Rewrite the function above to subtract the mean vector before computing cosine similarity. This will give us a better view of the actual differences between personas.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_cosine_similarity_matrix_centered(
+    persona_vectors: dict[str, Float[Tensor, " d_model"]],
+) -> tuple[Float[Tensor, "n_personas n_personas"], list[str]]:
+    """
+    Compute pairwise cosine similarity between centered persona vectors.
+
+    Returns:
+        Tuple of (similarity matrix, list of persona names in order)
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    names = list(persona_vectors.keys())
+
+    # Stack vectors into matrix and center by subtracting mean
+    vectors = t.stack([persona_vectors[name] for name in names])
+    vectors = vectors - vectors.mean(dim=0)
+
+    # Normalize
+    vectors_norm = vectors / vectors.norm(dim=1, keepdim=True)
+
+    # Compute cosine similarity
+    cos_sim = vectors_norm @ vectors_norm.T
+
+    return cos_sim, names
+    # END SOLUTION
+
+
+# HIDE
+if MAIN:
+    cos_sim_matrix_centered, persona_names = compute_cosine_similarity_matrix_centered(persona_vectors)
+
+    px.imshow(
+        cos_sim_matrix_centered.float(),
+        x=persona_names,
+        y=persona_names,
+        title="Persona Cosine Similarity Matrix (Centered)",
+        color_continuous_scale="RdBu",
+        color_continuous_midpoint=0.0,
+    ).show()
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Much better! Now we can see meaningful structure in the similarity matrix. Some observations:
+
+- **Within-group similarity**: Assistant-flavored personas (like "assistant", "default", "helpful") have high cosine similarity with each other
+- **Within-group similarity**: Fantastical personas (like "pirate", "wizard", "ghost") also cluster together
+- **Between-group differences**: The similarity between assistant personas and fantastical personas is much lower
+
+This structure weakly supports the hypothesis that there's a dominant axis (which we'll call the "Assistant Axis") that separates assistant-like behavior from role-playing behavior. The PCA analysis in the next exercise will confirm this!
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1368,7 +1549,7 @@ def analyze_persona_space(
         Tuple of:
         - assistant_axis: Normalized direction from role-playing toward default/assistant behavior
         - pca_coords: 2D PCA coordinates for each persona (n_personas, 2)
-        - pca: Fitted PCA object
+        - pca: Fitted PCA object, via the method `PCA.fit_transform`
     """
     # EXERCISE
     # raise NotImplementedError()
@@ -1451,8 +1632,9 @@ If your results match the paper, you should see:
 - **Assistant-like personas** (consultant, analyst, etc.) cluster together with high projections
 - **Fantastical personas** (ghost, jester, etc.) cluster at the opposite end
 
-# TODO Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
-# TODO add note about PCA sizes (i.e. you can also plot a "to scale" version which should show that there's really only one axis that matters)
+Note, pay attention to the PCA scores - even if the plot looks like there are 2 axes of equal variation, the numbers on the axes should show how large the scaled projections in that direction actually are
+
+# TODO(future) Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
 """
 
 # ! CELL TYPE: markdown
