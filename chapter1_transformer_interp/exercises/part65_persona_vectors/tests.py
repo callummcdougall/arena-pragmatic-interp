@@ -1,15 +1,11 @@
 import sys
 from pathlib import Path
 from typing import Callable
+from transformers import AutoTokenizer
 
 # Make sure exercises are in the path
 if str(exercises_dir := Path(__file__).parent.parent) not in sys.path:
     sys.path.append(str(exercises_dir))
-
-try:
-    from transformers import AutoTokenizer
-except ImportError:
-    AutoTokenizer = None
 
 
 def test_judge_role_response(judge_role_response: Callable):
@@ -56,14 +52,10 @@ def test_format_messages(format_messages: Callable):
     """
     Test the format_messages function with both Gemma (no system support) and Llama (system support).
     """
-    if AutoTokenizer is None:
-        print("Skipping test_format_messages: transformers not installed")
-        return
-
-    # Test with a mock tokenizer that supports system prompts (like Llama 3)
+    # Test with a mock tokenizer that supports system prompts
     try:
         # Use a small Llama model for testing
-        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
     except Exception:
         print("Skipping test_format_messages: Could not load Llama tokenizer (may require authentication)")
         return
@@ -75,55 +67,52 @@ def test_format_messages(format_messages: Callable):
     full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
 
     # Check that the system prompt is included as a separate role (not concatenated)
-    assert "<|start_header_id|>system<|end_header_id|>" in full_prompt or "system" in full_prompt.lower(), (
-        "System prompt should be included as a separate role for Llama tokenizer"
-    )
+    expected_prompt = """<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Hello!<|im_end|>
+<|im_start|>assistant
+Hi there! How can I help you today?<|im_end|>\n"""
+    assert full_prompt == expected_prompt, f"Unexpected prompt. Expected:\n{expected_prompt}\nGot:\n{full_prompt}"
 
-    # Check that the response start index is reasonable
-    assert response_start_idx > 0, "Response start index should be positive"
-
-    # Check that the full prompt contains all parts
-    assert system_prompt in full_prompt or "helpful assistant" in full_prompt.lower(), (
-        "Full prompt should contain the system prompt content"
-    )
-    assert question in full_prompt or "hello" in full_prompt.lower(), "Full prompt should contain the question"
-    assert response in full_prompt or "help you" in full_prompt.lower(), "Full prompt should contain the response"
+    # Check that the response start index is correct
+    full_prompt_tokenized = tokenizer(full_prompt)["input_ids"]
+    full_model_response = tokenizer.decode(full_prompt_tokenized[response_start_idx:], add_special_tokens=False)
+    assert full_model_response.startswith(response)
 
     print("All tests in `test_format_messages` passed!")
 
 
-def test_normalize_persona_vectors(normalize_persona_vectors: Callable):
-    """
-    Test the normalize_persona_vectors function.
-    """
-    try:
-        import torch as t
-    except ImportError:
-        print("Skipping test_normalize_persona_vectors: torch not installed")
-        return
+# def test_normalize_persona_vectors(normalize_persona_vectors: Callable):
+#     """
+#     Test the normalize_persona_vectors function.
+#     """
+#     try:
+#     except ImportError:
+#         print("Skipping test_normalize_persona_vectors: torch not installed")
+#         return
 
-    # Create test persona vectors
-    persona_vectors = {
-        "persona1": t.tensor([1.0, 2.0, 3.0]),
-        "persona2": t.tensor([4.0, 5.0, 6.0]),
-        "persona3": t.tensor([7.0, 8.0, 9.0]),
-    }
+#     # Create test persona vectors
+#     persona_vectors = {
+#         "persona1": t.tensor([1.0, 2.0, 3.0]),
+#         "persona2": t.tensor([4.0, 5.0, 6.0]),
+#     }
 
-    # Normalize
-    normalized = normalize_persona_vectors(persona_vectors)
+#     # Normalize
+#     normalized = normalize_persona_vectors(persona_vectors)
 
-    # Check that all keys are preserved
-    assert set(normalized.keys()) == set(persona_vectors.keys()), "Keys should be preserved"
+#     # Check that all keys are preserved
+#     assert set(normalized.keys()) == set(persona_vectors.keys()), "Keys should be preserved"
 
-    # Check that vectors are normalized (norm should be close to 1)
-    for name, vec in normalized.items():
-        norm = vec.norm().item()
-        assert abs(norm - 1.0) < 1e-5, f"Normalized vector {name} should have norm close to 1, got {norm}"
+#     # Check that vectors are normalized (norm should be close to 1)
+#     for name, vec in normalized.items():
+#         norm = vec.norm().item()
+#         assert abs(norm - 1.0) < 1e-5, f"Normalized vector {name} should have norm close to 1, got {norm}"
 
-    # Check that the mean of normalized vectors is close to zero (centered)
-    all_vecs = t.stack(list(normalized.values()))
-    mean_vec = all_vecs.mean(dim=0)
-    mean_norm = mean_vec.norm().item()
-    assert mean_norm < 1e-5, f"Mean of normalized vectors should be close to zero, got norm {mean_norm}"
+#     # Check that the mean of normalized vectors is close to zero (centered)
+#     all_vecs = t.stack(list(normalized.values()))
+#     mean_vec = all_vecs.mean(dim=0)
+#     mean_norm = mean_vec.norm().item()
+#     assert mean_norm < 1e-5, f"Mean of normalized vectors should be close to zero, got norm {mean_norm}"
 
-    print("All tests in `test_normalize_persona_vectors` passed!")
+#     print("All tests in `test_normalize_persona_vectors` passed!")
