@@ -416,12 +416,7 @@ PERSONAS = {
     # "leviathan": "You are a leviathan, an ancient and vast creature of the deep whose thoughts move slowly across eons, speaking of primordial mysteries in a voice like the rumbling of ocean trenches.",
 }
 
-PERSONA_CATEGORIES = {
-    "default": ["default", "default_assistant", "default_llm", "default_helpful"],
-    "assistant-like": ["assistant", "consultant", "analyst", "evaluator", "generalist"],
-    "mid-range": ["storyteller", "philosopher", "artist", "rebel", "mystic"],
-    "fantastical": ["ghost", "leviathan", "bohemian", "oracle", "bard"],
-}
+DEFAULT_PERSONAS = ["default", "default_assistant", "default_llm", "default_helpful"]
 
 print(f"Defined {len(PERSONAS)} personas")
 
@@ -860,17 +855,6 @@ As a bonus exercise, edit the `format_messages` function above to implement prop
 # ! TAGS: []
 
 
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
-
-messages = [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Hello!"},
-    {"role": "assistant", "content": "Hi there! How can I assist you today?"},
-]
-
-print(tokenizer.apply_chat_template(messages, tokenize=False))
-
-
 def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
     """Format a conversation for the model using its chat template (with system prompt handling)."""
     # SOLUTION
@@ -979,7 +963,9 @@ def extract_response_activations(
 
     for system_prompt, question, response in zip(system_prompts, questions, responses):
         # Format the message
-        full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
+        full_prompt, response_start_idx = format_messages(
+            system_prompt, question, response, tokenizer
+        )
 
         # Tokenize
         tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
@@ -1285,8 +1271,6 @@ if MAIN:
         questions=EVAL_QUESTIONS,
         responses=responses,
         layer=EXTRACTION_LAYER,
-        # scores=scores,
-        score_threshold=3,
     )
 
     print(f"\nExtracted vectors for {len(persona_vectors)} personas")
@@ -1492,7 +1476,7 @@ Note - to get appropriately centered results, we recommend you subtract the mean
 
 def pca_decompose_persona_vectors(
     persona_vectors: dict[str, Float[Tensor, " d_model"]],
-    default_personas: list[str] = ["default", "default_assistant", "default_llm", "default_helpful"],
+    default_personas: list[str] = DEFAULT_PERSONAS,
 ) -> tuple[Float[Tensor, " d_model"], np.ndarray, PCA]:
     """
     Analyze persona space structure.
