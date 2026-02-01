@@ -1,3 +1,5 @@
+# TODO - delete this, if I can just rely on `main.py`
+
 from pathlib import Path
 
 import yaml

@@ -29,9 +29,7 @@ class Cell:
     cells to different output formats (Colab exercises/solutions, Streamlit, Python).
     """
 
-    def __init__(
-        self, filters: list[str], tags: list[str], cell_type: str, source: list[str], lines_str: str
-    ):
+    def __init__(self, filters: list[str], tags: list[str], cell_type: str, source: list[str], lines_str: str):
         self.tags = tags
         self.raw_filters = filters
         self.cell_type = cell_type
@@ -48,45 +46,28 @@ class Cell:
     def _validate_and_fix_cell(self):
         # Check all tags are valid, and they're for the correct cell type
         source_orig = deepcopy(self.source)
-        tags_without_suffixes = [
-            "st-dropdown" if tag.startswith("st-dropdown[") else tag for tag in self.tags
-        ]
+        tags_without_suffixes = ["st-dropdown" if tag.startswith("st-dropdown[") else tag for tag in self.tags]
         if any(tag.startswith("st-dropdown[") and not tag.endswith("]") for tag in self.tags):
             raise ValueError(
                 f"Invalid tags {self.tags} for cell type {self.cell_type} - not allowed commas in `st-dropdown[...]` tags (we split tags on commas)"
             )
-        elif not all(
-            tag in (valid_tags := TYPES_TO_VALID_TAGS[self.cell_type])
-            for tag in tags_without_suffixes
-        ):
-            raise ValueError(
-                f"Invalid tags {self.tags} for cell type {self.cell_type}, only allowed {valid_tags}"
-            )
+        elif not all(tag in (valid_tags := TYPES_TO_VALID_TAGS[self.cell_type]) for tag in tags_without_suffixes):
+            raise ValueError(f"Invalid tags {self.tags} for cell type {self.cell_type}, only allowed {valid_tags}")
 
         # Check all filters are valid
-        if not all(
-            filter.lstrip("~") in (ALL_FILTERS_AND_ABBREVS + [""]) for filter in self.raw_filters
-        ):
-            raise ValueError(
-                f"Invalid filters in {self.raw_filters=}, expected filters in {ALL_FILTERS_AND_ABBREVS=}"
-            )
+        if not all(filter.lstrip("~") in (ALL_FILTERS_AND_ABBREVS + [""]) for filter in self.raw_filters):
+            raise ValueError(f"Invalid filters in {self.raw_filters=}, expected filters in {ALL_FILTERS_AND_ABBREVS=}")
         self.filters = _de_abbreviate_filters(self.raw_filters)
 
         # Check we're using inline filters correctly (also swap "FILTERS END" for "END FILTERS")
         self.source = [s.replace("FILTERS END", "END FILTERS") for s in self.source]
-        starting_filters = [
-            s for s in self.source if s.strip().lstrip("# ").startswith("FILTERS: ")
-        ]
-        starting_filters_broad = [
-            s for s in self.source if s.strip().lstrip("# ").startswith("FILTER")
-        ]
+        starting_filters = [s for s in self.source if s.strip().lstrip("# ").startswith("FILTERS: ")]
+        starting_filters_broad = [s for s in self.source if s.strip().lstrip("# ").startswith("FILTER")]
         ending_filters = [s for s in self.source if s.strip().lstrip("# ") == "END FILTERS"]
         n_starting_filters = len(starting_filters)
         n_ending_filters = len(ending_filters)
         if n_starting_filters != n_ending_filters:
-            raise ValueError(
-                f"Inline filters mismatched: found {n_starting_filters=}, {n_ending_filters=}"
-            )
+            raise ValueError(f"Inline filters mismatched: found {n_starting_filters=}, {n_ending_filters=}")
         filters_with_wrong_syntax = set(starting_filters_broad) - set(starting_filters)
         if filters_with_wrong_syntax:
             prefix = "" if self.cell_type == "markdown" else "# "
@@ -102,32 +83,18 @@ class Cell:
                     self.source = self.source[1:-1]
                     break
             else:
-                raise ValueError(
-                    "Error in `master.py`, found a markdown cell not wrapped with r'''...'''."
-                )
+                raise ValueError("Error in `master.py`, found a markdown cell not wrapped with r'''...'''.")
 
             # Check exercise markdown cells have the correct syntax (this also involves fixing "Difficulty: ...")
             if "# Exercise" in self.content_str:
                 if not self.content_str.lstrip().startswith("### Exercise"):
                     raise ValueError("Exercise cells should always start with `### Exercise`")
-                if ("Difficulty: 🔴" not in self.content_str) or (
-                    "Importance: 🔵" not in self.content_str
-                ):
-                    raise ValueError(
-                        "Exercise cells should always have `Difficulty: 🔴...` and `Importance: 🔵...`."
-                    )
-                ex_start = (
-                    next(i for i, line in enumerate(self.source) if "Difficulty: 🔴" in line) - 1
-                )
+                if ("Difficulty: 🔴" not in self.content_str) or ("Importance: 🔵" not in self.content_str):
+                    raise ValueError("Exercise cells should always have `Difficulty: 🔴...` and `Importance: 🔵...`.")
+                ex_start = next(i for i, line in enumerate(self.source) if "Difficulty: 🔴" in line) - 1
                 if "```" not in self.source[ex_start]:
-                    raise ValueError(
-                        "Exercise metadata `Difficulty: ...` should be wrapped in ```...```"
-                    )
-                ex_end = next(
-                    i
-                    for i, line in enumerate(self.source[ex_start + 1 :], ex_start + 1)
-                    if "```" in line
-                )
+                    raise ValueError("Exercise metadata `Difficulty: ...` should be wrapped in ```...```")
+                ex_end = next(i for i, line in enumerate(self.source[ex_start + 1 :], ex_start + 1) if "```" in line)
                 self.source[ex_start] = re.sub(r"```.*", "```yaml", self.source[ex_start])
                 for i in range(ex_start, ex_end + 1):
                     self.source[i] = "> " + self.source[i].removeprefix("> ")
@@ -138,23 +105,17 @@ class Cell:
         elif self.cell_type == "code":
             # Check exercise code cells have the correct syntax
             if self.is_exercise_cell:
-                assert self.filters == [], (
-                    "Can't have extra cell-level filters in an exercise code cell."
-                )
+                assert self.filters == [], "Can't have extra cell-level filters in an exercise code cell."
                 for word in ["SOLUTION", "EXERCISE", "HIDE"]:
                     self.source = [s.replace(f"# {word} END", f"# END {word}") for s in self.source]
                     start_count = len([s for s in self.source if s.strip().lstrip("# ") == word])
-                    end_count = len(
-                        [s for s in self.source if s.strip().lstrip("# ") == f"END {word}"]
-                    )
+                    end_count = len([s for s in self.source if s.strip().lstrip("# ") == f"END {word}"])
                     # Before validating use of these filters, we maybe add "END HIDE" at the end (I'm too lazy to always add this lol)
                     if (word == "HIDE") and (start_count == end_count + 1):
                         self.source.append("# END HIDE")
                         end_count += 1
                     # When validating filters, everything has to match up, and SOLUTION & EXERCISE are both non-optional
-                    if (start_count != end_count) or (
-                        start_count == 0 and word in ["SOLUTION", "EXERCISE"]
-                    ):
+                    if (start_count != end_count) or (start_count == 0 and word in ["SOLUTION", "EXERCISE"]):
                         raise ValueError(
                             f"Mismatch for # {word} ... # END {word}: found {start_count} opening tags but {end_count} closing tags"
                         )
@@ -170,8 +131,7 @@ class Cell:
     @property
     def is_exercise_cell(self) -> bool:
         return self.cell_type == "code" and any(
-            s.strip().lstrip("# ").removeprefix("END ") in ["EXERCISE", "SOLUTION"]
-            for s in self.source
+            s.strip().lstrip("# ").removeprefix("END ") in ["EXERCISE", "SOLUTION"] for s in self.source
         )
 
     @property
@@ -239,23 +199,15 @@ class Cell:
         filenames = ["colab-ex", "colab-soln", "streamlit", "python", "soln-dropdown"]
         files: dict[str, list[str]] = {name: [] for name in filenames}
 
-        filters_stack: list[list[str]] = [
-            self.filters
-        ]  # filters stack in a queue so we can pop them at "END FILTERS"
-        n_lines_in_filter = {
-            name: 0 for name in filenames + ["source"]
-        }  # n lines we've added from this filter
+        filters_stack: list[list[str]] = [self.filters]  # filters stack in a queue so we can pop them at "END FILTERS"
+        n_lines_in_filter = {name: 0 for name in filenames + ["source"]}  # n lines we've added from this filter
 
         for i, line in enumerate(self.source + ["END FILTERS"]):
-            current_files = self.filters_to_matching_files(
-                [f for stack in filters_stack for f in stack]
-            )
+            current_files = self.filters_to_matching_files([f for stack in filters_stack for f in stack])
             line_stripped = line.strip().lstrip("# " if self.cell_type == "code" else "")
 
             # Handle exercise/solution filters e.g. "EXERCISE ... END EXERCISE" by converting them to regular filters
-            if self.cell_type == "code" and any(
-                line_stripped.endswith(s) for s in ["EXERCISE", "SOLUTION", "HIDE"]
-            ):
+            if self.cell_type == "code" and any(line_stripped.endswith(s) for s in ["EXERCISE", "SOLUTION", "HIDE"]):
                 line_stripped = {
                     "EXERCISE": "FILTERS: ~,colab-ex,streamlit",  # template code that the user sees (doesn't run)
                     "SOLUTION": "FILTERS: ~colab-ex,~streamlit",  # solution code which should run, not seen
@@ -265,20 +217,16 @@ class Cell:
 
             # If we're starting a new inline filter, then update the current filters & which files we're adding to
             if line_stripped.startswith("FILTERS: "):
-                filters_stack.append(
-                    _de_abbreviate_filters(line_stripped.split(": ", 1)[1].split(","))
-                )
+                filters_stack.append(_de_abbreviate_filters(line_stripped.split(": ", 1)[1].split(",")))
                 n_lines_in_filter = {name: 0 for name in filenames + ["source"]}
 
             # If we've ended an inline filter, reset the filters and maybe un-indent the lines we just added
             elif line_stripped == "END FILTERS":
                 assert n_lines_in_filter["source"] > 0, (
-                    "Should always have at least one line within an inline filter."
+                    f"Error at cell {self.lines_str}: should always have at least one line within an inline filter."
                 )
                 lines_in_filter = self.source[i - n_lines_in_filter["source"] : i]
-                lines_all_commented = all(
-                    line.strip().startswith("# ") or not line.strip() for line in lines_in_filter
-                )
+                lines_all_commented = all(line.strip().startswith("# ") or not line.strip() for line in lines_in_filter)
                 if self.cell_type == "code" and lines_all_commented:
                     for file in current_files:
                         for j in range(n_lines_in_filter[file]):
@@ -323,9 +271,7 @@ class Cell:
         if ("main" in self.tags) and (files["python"] is not None):
             files["python"] = ["if MAIN:"] + ["    " + line for line in files["python"]]
         files = {
-            name: _process_source(
-                f, strip_main_blocks=name != "python" and "keep-main" not in self.tags
-            )
+            name: _process_source(f, strip_main_blocks=name != "python" and "keep-main" not in self.tags)
             for name, f in files.items()
         }
 
@@ -335,9 +281,7 @@ class Cell:
                 split_lines = [i for i, line in enumerate(files[name]) if "# COLAB-SPLIT" in line]
                 if name in ["streamlit", "python"]:
                     # For these files, we just keep it as one, i.e. we don't split it
-                    files[name] = [
-                        line for i, line in enumerate(files[name]) if i not in split_lines
-                    ]
+                    files[name] = [line for i, line in enumerate(files[name]) if i not in split_lines]
                 elif name.startswith("colab"):
                     # Here, we split it up into multiple cells
                     files[name] = [
@@ -362,9 +306,7 @@ class Cell:
         return {
             "colab-ex": files["colab-ex"],
             "colab-soln": files["colab-soln"],
-            "streamlit": ["```python"] + files["streamlit"] + ["```\n\n"]
-            if files["streamlit"]
-            else None,
+            "streamlit": ["```python"] + files["streamlit"] + ["```\n\n"] if files["streamlit"] else None,
             "python": files["python"] + ["\n# %%\n"] if files["python"] else None,
         }
 
@@ -434,9 +376,7 @@ class Cell:
             tag_idx = next(i for i, tag in enumerate(self.tags) if tag.startswith("st-dropdown["))
             dropdown_title = self.tags[tag_idx][len("st-dropdown[") : -1]
             files["streamlit"] = (
-                [f"<details><summary>{dropdown_title}</summary>", ""]
-                + files["streamlit"]
-                + ["", "</details>"]
+                [f"<details><summary>{dropdown_title}</summary>", ""] + files["streamlit"] + ["", "</details>"]
             )
 
         # ! (5) Handle triple quotes
@@ -464,18 +404,14 @@ class Cell:
                 "Shouldn't have TAGS: html after non-code cell (since all HTML should come after a cell which generated it - that way it won't disappear when the solutions Colab is run)"
             )
             for name in ["colab-ex", "colab-soln"]:
-                if (name in self.filters_to_matching_files()) and (
-                    files.get(name, None) is not None
-                ):
+                if (name in self.filters_to_matching_files()) and (files.get(name, None) is not None):
                     # If the last cell was code, then we just add this to its output and delete these colab cells
                     if status["prev-was-code"]:
                         prev_cell_html_outputs[f"{name}-prev-html"] = html_output
                         files[name] = None
 
         return {
-            "colab-ex": [files["soln-dropdown"], files["colab-ex"]]
-            if files["soln-dropdown"]
-            else [files["colab-ex"]],
+            "colab-ex": [files["soln-dropdown"], files["colab-ex"]] if files["soln-dropdown"] else [files["colab-ex"]],
             "colab-soln": [files["colab-soln"]],
             "streamlit": files["streamlit"] + ["\n"] if files["streamlit"] else None,
             "python": None,
@@ -522,9 +458,7 @@ class Cell:
             raise ValueError(
                 f"Found some learning objectives in the `## Content & Learning Objectives` cell which don't exactly match the required syntax (case sensitive): {pattern_prefix} ..."
             )
-        learning_objectives = {
-            i: f"> ##### Learning Objectives\n>\n>{match}" for i, match in enumerate(matches, 1)
-        }
+        learning_objectives = {i: f"> ##### Learning Objectives\n>\n>{match}" for i, match in enumerate(matches, 1)}
         n_headers = sum(self.content_str.count(f"# {h}") for h in CHAPTER_NUMBER_CHARACTERS)
         if n_headers - len(learning_objectives) not in [0, 1]:
             raise ValueError(
@@ -538,9 +472,7 @@ class Cell:
         "# Introduction" header, or one of the chapter headers. Returns a boolean indicating whether a chapter is done,
         but more importantly it'll update the status dict to reflect where we are now.
         """
-        if not (
-            (first_line := self.source[0].strip()).startswith("# ") and self.cell_type == "markdown"
-        ):
+        if not ((first_line := self.source[0].strip()).startswith("# ") and self.cell_type == "markdown"):
             return False
 
         assert len(self.source) == 1, (
@@ -564,15 +496,11 @@ class Cell:
             status["chapter-stage"] = "title"
             print("Parsing section between main title and '# Introduction'")
         elif status["chapter-stage"] == "title":
-            assert header == "Introduction", (
-                f"Next header should be `# Introduction`, but found {header!r}"
-            )
+            assert header == "Introduction", f"Next header should be `# Introduction`, but found {header!r}"
             status["chapter-stage"] = "intro"
             print("Parsing section '# Introduction', before exercises start")
         else:
-            status["chapter-stage"] = (
-                1 if status["chapter-stage"] == "intro" else status["chapter-stage"] + 1
-            )
+            status["chapter-stage"] = 1 if status["chapter-stage"] == "intro" else status["chapter-stage"] + 1
             print(f"Parsing chapter {header!r}")
 
         return True
@@ -584,9 +512,7 @@ class Cell:
     @property
     def is_dropdown_cell(self) -> bool:
         """Returns True if cell only contains dropdowns."""
-        return self.content_str.strip().startswith(
-            "<details>"
-        ) and self.content_str.strip().endswith("</details>")
+        return self.content_str.strip().startswith("<details>") and self.content_str.strip().endswith("</details>")
 
     @property
     def is_solutions_cell(self) -> bool:

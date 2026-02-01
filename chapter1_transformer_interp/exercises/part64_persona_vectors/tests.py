@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-from transformers import AutoTokenizer
+# from transformers import AutoTokenizer
 
 # Make sure exercises are in the path
 if str(exercises_dir := Path(__file__).parent.parent) not in sys.path:
@@ -49,40 +49,44 @@ def test_judge_role_response(judge_role_response: Callable):
     print("All tests in `test_judge_role_response` passed!")
 
 
-def test_format_messages(format_messages: Callable):
-    """
-    Test the format_messages function with both Gemma (no system support) and Llama (system support).
-    """
-    # Test with a mock tokenizer that supports system prompts
-    try:
-        # Use a small Llama model for testing
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
-    except Exception:
-        print("Skipping test_format_messages: Could not load Llama tokenizer (may require authentication)")
-        return
+# Removed this function when we changed the `format_messages` function to just take list[dict]
 
-    system_prompt = "You are a helpful assistant."
-    question = "Hello!"
-    response = "Hi there! How can I help you today?"
+# def test_format_messages(format_messages: Callable):
+#     """
+#     Test the format_messages function with both Gemma (no system support) and Llama (system support).
+#     """
+#     # Test with a mock tokenizer that supports system prompts
+#     try:
+#         # Use a small Llama model for testing
+#         tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-7B-Instruct")
+#     except Exception:
+#         print("Skipping test_format_messages: Could not load Llama tokenizer (may require authentication)")
+#         return
 
-    full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
+#     system_prompt = "You are a helpful assistant."
+#     question = "Hello!"
+#     response = "Hi there! How can I help you today?"
 
-    # Check that the system prompt is included as a separate role (not concatenated)
-    expected_prompt = """<|im_start|>system
-You are a helpful assistant.<|im_end|>
-<|im_start|>user
-Hello!<|im_end|>
-<|im_start|>assistant
-Hi there! How can I help you today?<|im_end|>\n"""
-    assert full_prompt == expected_prompt, f"Unexpected prompt. Expected:\n{expected_prompt}\nGot:\n{full_prompt}"
+#     full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
 
-    # Check that the response start index is correct
-    full_prompt_tokenized = tokenizer(full_prompt)["input_ids"]
-    full_model_response = tokenizer.decode(full_prompt_tokenized[response_start_idx:], add_special_tokens=False)
-    assert full_model_response.startswith(response)
+#     # Check that the system prompt is included as a separate role (not concatenated)
+#     expected_prompt = """<|im_start|>system
+# You are a helpful assistant.<|im_end|>
+# <|im_start|>user
+# Hello!<|im_end|>
+# <|im_start|>assistant
+# Hi there! How can I help you today?<|im_end|>\n"""
+#     assert full_prompt == expected_prompt, f"Unexpected prompt. Expected:\n{expected_prompt}\nGot:\n{full_prompt}"
 
-    print("All tests in `test_format_messages` passed!")
+#     # Check that the response start index is correct
+#     full_prompt_tokenized = tokenizer(full_prompt)["input_ids"]
+#     full_model_response = tokenizer.decode(full_prompt_tokenized[response_start_idx:], add_special_tokens=False)
+#     assert full_model_response.startswith(response)
 
+#     print("All tests in `test_format_messages` passed!")
+
+
+# Removed this function when we baked the normalize function into other functions (it wasn't essential for the results)
 
 # def test_normalize_persona_vectors(normalize_persona_vectors: Callable):
 #     """

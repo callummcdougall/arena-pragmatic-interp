@@ -43,6 +43,9 @@ conversion_map:
   "1.3.3":
     streamlit_page: "13_[1.3.3]_Interpretability_with_SAEs"
     exercise_dir: "part33_interp_with_saes"
+  "1.3.4":
+    streamlit_page: "14_[1.3.4]_Activation_Oracles"
+    exercise_dir: "part34_activation_oracles"
   "1.4.1":
     streamlit_page: "21_[1.4.1]_Indirect_Object_Identification"
     exercise_dir: "part41_indirect_object_identification"
@@ -68,14 +71,11 @@ conversion_map:
     streamlit_page: "42_[1.6.2]_Science_of_Misalignment"
     exercise_dir: "part62_science_of_misalignment"
   "1.6.3":
-    streamlit_page: "43_[1.6.3]_Eliciting_Secret_Knowledge"
-    exercise_dir: "part63_eliciting_secret_knowledge"
+    streamlit_page: "43_[1.6.3]_Interpreting_Reasoning_Models"
+    exercise_dir: "part63_interpreting_reasoning_models"
   "1.6.4":
-    streamlit_page: "44_[1.6.4]_Interpreting_Reasoning_Models"
-    exercise_dir: "part64_interpreting_reasoning_models"
-  "1.6.5":
-    streamlit_page: "45_[1.6.5]_LLM_Psychology_&_Persona_Vectors"
-    exercise_dir: "part65_persona_vectors"
+    streamlit_page: "44_[1.6.4]_LLM_Psychology_&_Persona_Vectors"
+    exercise_dir: "part64_persona_vectors"
 
   # Chapter 2
   "2.1":
@@ -246,6 +246,14 @@ chapters:
         parent: "1_3_overview"
         streamlit_description: "These exercises take you through practical interpretability work with sparse autoencoders. You'll use the SAELens library to load pretrained SAEs, investigate learned features, and perform attribution and steering using SAE latents."
         streamlit_description_short: "Use SAEs to decompose LLM activation space, monitor cognition & steer behaviour."
+      - id: "14_activation_oracles"
+        number: "1.3.4"
+        title: "Activation Oracles"
+        exercise_dir: "part34_activation_oracles"
+        page_file: "14_[1.3.4]_Activation_Oracles.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-63c.png"
+        parent: "1_3_overview"
+        streamlit_description: "In this section, you'll implement activation oracles, a technique for interpreting model activations by training small auxiliary models to predict the answer to a wide set of questions. You'll use these to recover hidden knowledge contained within taboo model organisms, and uncover a model's forward-predictions."
 
       # Group 1.4: Circuits in LLMs
       - id: "1_4_overview"
@@ -334,7 +342,7 @@ chapters:
         title: "Case Studies in Larger Models"
         is_group: true
         local_path: "1_6_case_studies.md"
-        children: ["41_emergent_misalignment", "42_science_misalignment", "43_eliciting_knowledge", "44_reasoning_models", "45_persona_vectors"]
+        children: ["41_emergent_misalignment", "42_science_misalignment", "43_reasoning_models", "44_persona_vectors"]
         streamlit_description: "This section contains case studies applying interpretability techniques to larger, more capable models. Topics include emergent misalignment, alignment faking, and interpreting reasoning models."
       - id: "41_emergent_misalignment"
         number: "1.6.1"
@@ -354,29 +362,20 @@ chapters:
         parent: "1_6_overview"
         streamlit_description: "(mcdougallc) - fill in"
         streamlit_description_short: "Explore scientific approaches to understanding model misalignment."
-      - id: "43_eliciting_knowledge"
-        number: "1.6.3"
-        title: "Eliciting Secret Knowledge"
-        exercise_dir: "part63_eliciting_secret_knowledge"
-        page_file: "43_[1.6.3]_Eliciting_Secret_Knowledge.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-63c.png"
-        parent: "1_6_overview"
-        streamlit_description: "(mcdougallc) - fill in"
-        streamlit_description_short: "Techniques for eliciting hidden knowledge from language models."
-      - id: "44_reasoning_models"
+      - id: "43_reasoning_models"
         number: "1.6.4"
         title: "Interpreting Reasoning Models"
-        exercise_dir: "part64_interpreting_reasoning_models"
+        exercise_dir: "part63_interpreting_reasoning_models"
         page_file: "44_[1.6.4]_Interpreting_Reasoning_Models.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png"
         parent: "1_6_overview"
         streamlit_description: "(mcdougallc) - fill in"
         streamlit_description_short: "Apply interpretability techniques to chain-of-thought reasoning models."
-      - id: "45_persona_vectors"
-        number: "1.6.5"
+      - id: "44_persona_vectors"
+        number: "1.6.4"
         title: "LLM Psychology & Persona Vectors"
-        exercise_dir: "part65_persona_vectors"
-        page_file: "45_[1.6.5]_LLM_Psychology_&_Persona_Vectors.md"
+        exercise_dir: "part64_persona_vectors"
+        page_file: "44_[1.6.4]_LLM_Psychology_&_Persona_Vectors.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
         parent: "1_6_overview"
         streamlit_description: "(mcdougallc) - fill in"

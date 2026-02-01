@@ -11,10 +11,10 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Mapping Persona Space', 'icon': '1-circle-fill', 'subtitle': '(25%)'}, {'title': 'Steering along the Assistant Axis', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Contrastive Prompting', 'icon': '3-circle-fill', 'subtitle': '(25%)'}, {'title': 'Steering with Persona Vectors', 'icon': '4-circle-fill', 'subtitle': '(25%)'}, {'title': 'Bonus Exercises', 'icon': 'star', 'subtitle': ''}]
+metadata = [{'title': 'CoT Infrastructure & Sentence Taxonomy', 'icon': '1-circle-fill', 'subtitle': '(30%)'}, {'title': 'Black-box Analysis', 'icon': '2-circle-fill', 'subtitle': '(30%)'}, {'title': 'White-box Methods', 'icon': '3-circle-fill', 'subtitle': '(40%)'}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
-section_title = '[1.6.5] LLM Psychology & Persona Vectors'
+section_title = '[1.6.3] Interpreting Reasoning Models'
 
 pages_dir = Path(__file__).parent  # ARENA_3/chapter_name/instructions/pages
 instructions_dir = pages_dir.parent  # ARENA_3/chapter_name/instructions
