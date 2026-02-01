@@ -963,9 +963,7 @@ def extract_response_activations(
 
     for system_prompt, question, response in zip(system_prompts, questions, responses):
         # Format the message
-        full_prompt, response_start_idx = format_messages(
-            system_prompt, question, response, tokenizer
-        )
+        full_prompt, response_start_idx = format_messages(system_prompt, question, response, tokenizer)
 
         # Tokenize
         tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)

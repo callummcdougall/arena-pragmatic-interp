@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from typing import Callable
+
 from transformers import AutoTokenizer
 
 # Make sure exercises are in the path
