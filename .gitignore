@@ -62,6 +62,7 @@ infrastructure/chapters/**/**/**/context_*.md
 infrastructure/chapters/**/**/context_*.md
 infrastructure/chapters/**/context_*.md
 demos
+llm_context
 
 # Notebooks & Scripts
 *interp_on_model*.ipynb

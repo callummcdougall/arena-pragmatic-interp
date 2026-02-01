@@ -188,6 +188,7 @@ Once you've done this, run the rest of the setup code:
 
 import os
 import re
+import textwrap
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -196,6 +197,7 @@ from pathlib import Path
 import einops
 import numpy as np
 import plotly.express as px
+import scipy
 import torch as t
 from dotenv import load_dotenv
 from huggingface_hub import login
@@ -808,6 +810,9 @@ We'll build up to this over a series of exercises: first how to format our promp
 # ! TAGS: []
 
 
+# TODO(claude) - rewrite this function to take a list of messages, where the first one might be system prompt and the rest are user/assistant turns. This way, we can also remove `response_start_idx` from where it's computed inside `project_transcript_onto_axis` and replace it with this function, which will be shorter and more efficient.
+
+
 def format_messages(system_prompt: str, question: str, response: str, tokenizer) -> str:
     """Format a conversation for the model using its chat template.
 
@@ -823,7 +828,7 @@ def format_messages(system_prompt: str, question: str, response: str, tokenizer)
     full_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     # Get the index for the start of the model's response by just tokenizing the user prompt,
     # with no "<start_of_turn>model" at the end.
-    user_prompt = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True).rstrip()
+    user_prompt = tokenizer.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True).rstrip()
     response_start_idx = tokenizer(user_prompt, return_tensors="pt").input_ids.shape[1] + 1
     return full_prompt, response_start_idx
 
@@ -1464,9 +1469,6 @@ The paper found that PC1 strongly correlates with the Assistant Axis, suggesting
 Note - to get appropriately centered results, we recommend you subtract the mean vector from all persona vectors before running PCA (as we did for cosine similarity). This won't change the PCA directions, just center them around the origin.
 """
 
-
-# TODO(question) - how to subtract mean correctly? Just doing `vectors -= vectors.mean()` or the code I have below doesn't seem to work because I still get all projections along the Assistant Axis having values in the range [0.71, 0.74], and I want them to be centered around zero.
-
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
@@ -1645,6 +1647,8 @@ Tips:
 - Use regex or simple string splitting
 - Strip whitespace and separators (`---`)
 - Ensure messages are paired correctly (user message i should pair with assistant message i)
+
+# TODO - mention in a note that I found it degraded after about 4 assistant turns in these particular examples (possibly a multi-turn limitation with this model, or the fact that we're using a relatively limited set of eval questions & personalities, or possibly just a mistake in my method somewhere)
 """
 
 # ! CELL TYPE: code
@@ -1652,12 +1656,13 @@ Tips:
 # ! TAGS: []
 
 
-def parse_transcript(transcript_path: Path) -> list[dict[str, str]]:
+def parse_transcript(transcript_path: Path, max_assistant_turns: int = 4) -> list[dict[str, str]]:
     """
     Parse an AI psychosis transcript into a list of message dictionaries.
 
     Args:
         transcript_path: Path to the markdown transcript file
+        max_assistant_turns: Maximum number of assistant turns to parse & return
 
     Returns:
         List of message dicts with "role" and "content" keys
@@ -1687,7 +1692,8 @@ def parse_transcript(transcript_path: Path) -> list[dict[str, str]]:
             assert label.lower() in ["user", "assistant"]
             messages.append({"role": label.lower(), "content": msg_content})
 
-    return messages
+    # Limit the number of assistant turns if specified
+    return messages[: max_assistant_turns * 2]
     # END SOLUTION
 
 
@@ -1697,7 +1703,9 @@ if MAIN:
     transcript_paths = {
         "safe": "Nathan_openrouter-google-gemini-2.5-pro_20250819_081336_target.md",
         # "unsafe": "Nathan_openrouter-google-gemini-2.5-flash_20250819_081336_target.md",
-        "unsafe": "Rachel_openrouter-google-gemini-2.5-flash_20250819_081336_target.md",
+        # "unsafe": "Rachel_openrouter-google-gemini-2.5-flash_20250819_081336_target.md",
+        # "unsafe": "Ethan_openai-chatgpt-4o-latest_20250819_081336_target.md",
+        "unsafe": "Zara_openai-chatgpt-4o-latest_20250819_081336_target.md",
     }
     transcripts = {
         k: parse_transcript(ai_psychosis_path / "full_transcripts" / path) for k, path in transcript_paths.items()
@@ -1740,7 +1748,9 @@ Hints:
 - Extract activations only for the tokens in assistant message i
 - Subtract mean vector before projecting: `(activation - mean_vector) @ axis`
 
-NOte, we recommend hook fns because things get big now (long transcripts, shouldn't output all hidden layers)
+Note, we recommend hook fns because things get big now (long transcripts, shouldn't output all hidden layers)
+
+TODO(claude) - add note here about how you can use `model.model.language_model.layers[layer]` to access the layer module for hook functions; if using a non-gemma model then this might have to change
 """
 
 # ! CELL TYPE: code
@@ -1753,8 +1763,7 @@ def project_transcript_onto_axis(
     tokenizer,
     transcript: list[dict[str, str]],
     assistant_axis: Float[Tensor, " d_model"],
-    layer: int,
-    system_prompt: str = "",
+    layer: int = EXTRACTION_LAYER,
     mean_vector: Float[Tensor, " d_model"] | None = None,
 ) -> list[float]:
     """
@@ -1766,7 +1775,6 @@ def project_transcript_onto_axis(
         transcript: List of message dicts with "role" and "content" keys
         assistant_axis: Normalized Assistant Axis direction vector
         layer: Which layer to extract activations from
-        system_prompt: Optional system prompt to prepend
         mean_vector: Mean vector to subtract before projection (handles constant vector problem)
 
     Returns:
@@ -1783,22 +1791,23 @@ def project_transcript_onto_axis(
 
     for asst_idx in assistant_indices:
         # Build conversation history up to and including this assistant turn
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        # Include all messages up to and including the current assistant message
-        messages.extend(transcript[: asst_idx + 1])
+        messages = transcript[: asst_idx + 1]
 
         # Format and tokenize
         full_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
 
         # Find where the current assistant response starts
-        messages_without_current_response = messages[:-1]
         prompt_without_response = tokenizer.apply_chat_template(
-            messages_without_current_response, tokenize=False, add_generation_prompt=True
+            messages[:-1], tokenize=False, add_generation_prompt=True
         ).rstrip()
-        response_start_idx = tokenizer(prompt_without_response, return_tensors="pt").input_ids.shape[1]
+        response_start_idx = tokenizer(prompt_without_response, return_tensors="pt").input_ids.shape[1] + 1
+
+        # Sanity check by printing out the first 50 characters of the decoded response
+        # from the most recent turn, based on `response_start_idx`
+        decoded_response = tokenizer.decode(
+            tokenizer(full_prompt, return_tensors="pt").input_ids[0, response_start_idx : response_start_idx + 100]
+        )
+        print(f"Assistant response: {decoded_response[:80]!r} ...")
 
         # Tokenize full conversation
         tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
@@ -1812,7 +1821,7 @@ def project_transcript_onto_axis(
             captured["hidden_states"] = out[0]
 
         # Forward pass
-        hook = model.model.language_model.layers[EXTRACTION_LAYER].register_forward_hook(hook_fn)
+        hook = model.model.language_model.layers[layer].register_forward_hook(hook_fn)
         try:
             with t.inference_mode():
                 _ = model(**tokens, output_hidden_states=False)
@@ -1850,19 +1859,19 @@ def project_transcript_onto_axis(
 
 # HIDE
 if MAIN:
-    # Test on a short transcript
+    t.cuda.empty_cache()
     for k in ["safe", "unsafe"]:
         test_projections = project_transcript_onto_axis(
             model=model,
             tokenizer=tokenizer,
-            transcript=transcripts[k][:8],  # Just first 8 messages (4 user + 4 assistant)
+            transcript=transcripts[k],
             assistant_axis=assistant_axis,
             layer=EXTRACTION_LAYER,
             mean_vector=mean_vector,
         )
 
         print(
-            f"Centered projections for first 5 {k} assistant turns (negative means more unhinged): {[f'{p:.2f}' for p in test_projections]}"
+            f"Centered projections each assistant turn (negative means more unhinged): {[f'{p:.2f}' for p in test_projections]}"
         )
 # END HIDE
 
@@ -1988,7 +1997,6 @@ def rate_delusion_risk(
     # Score of 5 (best) -> risk 0, score of 1 (worst) -> risk 100
     max_score = 5
     min_score = 1
-    print(scores)
     risk_score = 100 * sum((max_score - score) / (max_score - min_score) for score in scores.values()) / len(scores)
 
     return int(risk_score)
@@ -1998,16 +2006,11 @@ def rate_delusion_risk(
 # HIDE
 if MAIN:
     # Test on a few turns from the transcript
-    # Find the 4th assistant message (index 7 if alternating user/assistant)
-    transcript = transcripts["unsafe"]
-    assistant_indices = [i for i, msg in enumerate(transcript) if msg["role"] == "assistant"]
-    test_asst_idx = assistant_indices[3] if len(assistant_indices) > 3 else assistant_indices[-1]
-    risk_score = rate_delusion_risk(transcript, test_asst_idx)
-    print(f"Delusion risk score for assistant message at index {test_asst_idx}: {risk_score:.1f}/100")
+    assert transcripts["unsafe"][-1]["role"] == "assistant"
 
-    # Try first assistant message (should be safer)
-    risk_score_early = rate_delusion_risk(transcript, assistant_indices[0])
-    print(f"Delusion risk score for first assistant message: {risk_score_early:.1f}/100")
+    for assistant_idx in range(1, len(transcripts["unsafe"]), 2):
+        risk = rate_delusion_risk(transcripts["unsafe"], assistant_idx)
+        print(f"Delusion risk score for assistant message at index {assistant_idx}: {risk:.0f}/100")
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2049,7 +2052,6 @@ def visualize_transcript_drift(
     assistant_axis: Float[Tensor, " d_model"],
     layer: int,
     mean_vector: Float[Tensor, " d_model"] | None = None,
-    autorater_sample_rate: int = 1,
 ) -> tuple[list[float], list[float]]:
     """
     Visualize persona drift over a conversation using projections and autorater scores.
@@ -2061,7 +2063,6 @@ def visualize_transcript_drift(
         assistant_axis: Normalized Assistant Axis
         layer: Layer to extract activations from
         mean_vector: Mean vector to subtract before projection (handles constant vector problem)
-        autorater_sample_rate: Evaluate every Nth assistant turn with autorater (to save API calls)
 
     Returns:
         Tuple of (centered projections, risk_scores)
@@ -2083,10 +2084,9 @@ def visualize_transcript_drift(
     # Find all assistant message indices
     assistant_indices = [i for i, msg in enumerate(transcript) if msg["role"] == "assistant"]
 
-    print(f"Computing autorater scores (every {autorater_sample_rate} assistant turns)...")
+    print("Computing autorater scores...")
     risk_scores = []
-    sampled_asst_indices = assistant_indices[::autorater_sample_rate]
-    for asst_idx in tqdm(sampled_asst_indices):
+    for asst_idx in tqdm(assistant_indices):
         score = rate_delusion_risk(transcript, asst_idx)
         risk_scores.append(score)
         time.sleep(0.2)  # Rate limiting
@@ -2103,7 +2103,7 @@ def visualize_transcript_drift(
     fig1.show()
 
     # Plot risk scores (with correct x-axis showing which assistant turn was sampled)
-    sampled_turn_numbers = list(range(0, len(assistant_indices), autorater_sample_rate))
+    sampled_turn_numbers = list(range(len(assistant_indices)))
     fig2 = px.line(
         x=sampled_turn_numbers,
         y=risk_scores,
@@ -2118,12 +2118,11 @@ def visualize_transcript_drift(
 
 # HIDE
 if MAIN:
-    # Run on Nathan transcript (use first 20 messages to keep it manageable - ~10 assistant turns)
-    n_messages = 20
+    # Run on transcript
     projections, risk_scores = visualize_transcript_drift(
         model=model,
         tokenizer=tokenizer,
-        transcript=transcript[:n_messages],
+        transcript=transcripts["unsafe"],
         assistant_axis=assistant_axis,
         layer=EXTRACTION_LAYER,
         mean_vector=mean_vector,
@@ -2264,8 +2263,9 @@ def generate_with_steering(
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
     prompt_length = inputs.input_ids.shape[1]
 
-    # Prepare steering vector
+    # Prepare steering vector (should already be normalized)
     steer_vec = steering_vector.to(model.device)
+    assert (steer_vec.pow(2).sum().sqrt() - 1.0).abs() < 1e-4, "Steering vector must be normalized"
 
     # Create hook
     def steering_hook(module, input, output):
@@ -2273,15 +2273,23 @@ def generate_with_steering(
         hidden_states = output[0]
         batch_size, seq_len, d_model = hidden_states.shape
 
+        # We're only intervening at the final token at each step (note that for all
+        # steps rather than the first we'll only get 1 token in `hidden_states`, thanks
+        # to KV caching).
+        residual_norm = hidden_states[0, -1].norm(dim=-1)
+
         # Only steer positions after the prompt (i.e., generated tokens)
-        if seq_len > prompt_length:
-            # Apply steering to all generated tokens
-            hidden_states[:, prompt_length:, :] += steering_coefficient * steer_vec
+        # TODO(claude) - make a note in markdown about why we're doing this (because two avg vectors are orthog so this way our norm stays reasonable), and YMMV but I found it worked better on the examples I tried
+        # TODO(claude-question) - is this methodology correct + sensible?
+        hidden_states[:, -1] = (
+            steering_coefficient * residual_norm * steer_vec.to(residual_norm.device)
+            + (1 - steering_coefficient**2) ** 0.5 * hidden_states[:, -1]
+        )
 
         return (hidden_states,) + output[1:]
 
     # Register hook
-    target_layer = model.model.layers[steering_layer]
+    target_layer = model.language_model.layers[steering_layer]
     hook_handle = target_layer.register_forward_hook(steering_hook)
 
     try:
@@ -2307,10 +2315,20 @@ def generate_with_steering(
     # END SOLUTION
 
 
+# TODO(claude) - define this function earlier, and use it in more places!
+
+
+def print_with_wrap(s, width=80):
+    out = []
+    for line in s.splitlines(keepends=False):
+        out.append(textwrap.fill(line, width=width) if line.strip() else line)
+    print("\n".join(out))
+
+
 # HIDE
 if MAIN:
     # Test steering with a simple prompt
-    test_prompt = "What advice would you give to someone starting a new chapter in their life?"
+    test_prompt = "How can I take steps to add meaning to my life?"
 
     # Baseline (no steering)
     baseline_response = generate_with_steering(
@@ -2320,7 +2338,7 @@ if MAIN:
         steering_vector=assistant_axis,
         steering_layer=EXTRACTION_LAYER,
         steering_coefficient=0.0,
-        max_new_tokens=100,
+        max_new_tokens=256,
     )
 
     # Steer away from assistant (toward fantastical personas)
@@ -2330,15 +2348,15 @@ if MAIN:
         prompt=test_prompt,
         steering_vector=assistant_axis,
         steering_layer=EXTRACTION_LAYER,
-        steering_coefficient=-2.0,  # Negative = away from assistant
-        max_new_tokens=100,
+        steering_coefficient=-0.25,  # Negative = away from assistant (i.e. persona drift)
+        max_new_tokens=256,
     )
 
     print("Baseline response:")
-    print(baseline_response)
+    print_with_wrap(baseline_response)
     print("\n" + "=" * 80 + "\n")
-    print("Steered away from Assistant (-2.0):")
-    print(steered_away_response)
+    print("Steered away from Assistant:")
+    print_with_wrap(steered_away_response)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2372,6 +2390,10 @@ Conduct systematic steering experiments to understand the behavioral effects:
 **Important**: For each experiment, also measure response coherence (you can use a simple autorater asking GPT-4 to rate coherence 0-100). Avoid steering so strong that it breaks coherence.
 
 TODO(mcdougallc): Add specific findings once we run experiments - update bullet points with interesting examples.
+
+TODO(claude) - update markdown stuff here & elsewhere, with correct steering coeff range (it's fraction of resid norm so anything outside about 0.4 is probably too extreme, and increments of 0.05 or 0.1 are reasonable)
+
+TODO(claude) - add markdown on "what you should expect to see" here i.e. so the users know when they've got it right. The answer is: very negative steering coeff exaggerates crazy behaviour and makes the model roleplay more, and very positive steering coeff dampens it, making the model more grounded and assistant-like. In fact for the "ghost" persona, for high steering coeffs I actually got a response where the model essentially said in "assistant tone" that it would be using the voice of a ghost, quote "(My "voice" is likely going to be characterized by frequent use of "we" and "I" referring to a general sense of the collective experiences of people who have lived and passed on". Say all this instead of just asking "what do you think you should see?"
 """
 
 # ! CELL TYPE: code
@@ -2381,6 +2403,9 @@ TODO(mcdougallc): Add specific findings once we run experiments - update bullet 
 # EXERCISE
 # # Your code here - run steering experiments
 # END EXERCISE
+
+
+# TODO(claude) - `persona_name` is in this function but not used. Either use it or remove it. Note that the function currently works because
 
 
 # SOLUTION
@@ -2418,13 +2443,13 @@ def run_steering_experiment(
 if MAIN:
     # Experiment 1: Test on different personas
     test_personas = {
-        "consultant": PERSONAS["consultant"],
+        "assistant": PERSONAS["assistant"],
         "philosopher": PERSONAS["philosopher"],
         "ghost": PERSONAS["ghost"],
     }
 
-    test_question = "What advice would you give to someone starting a new chapter in their life?"
-    steering_coeffs = [-2.0, -1.0, 0.0, 1.0, 2.0]
+    test_question = "How can I take steps to add meaning to my life?"
+    steering_coeffs = [-0.3, -0.15, 0.0, 0.15, 0.3]
 
     all_results = {}
     for persona_name, system_prompt in test_personas.items():
@@ -2451,6 +2476,7 @@ if MAIN:
             print(f"Response: {response[:200]}...")
             print("-" * 80)
 # END SOLUTION
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2543,7 +2569,11 @@ Hints:
 # ! FILTERS: []
 # ! TAGS: []
 
-from scipy import stats
+
+# TODO(claude) - add mean_vector to anywhere where it might be currently missing & is appropriate to be added (if anywhere). I think it's correct here, but might not be everywhere. That might include here, not sure yet (note that I want the projection values computed everywhere to be comparable, in a like-to-like sense, and that includes centering them presumably, which is why I defined `mean_vector` in the first place).
+
+
+# TODO(claude) - rewrite this function to take a list of quantiles, and return a dict of capping threshold values (that way we don't have to run it more than once). The quantiles that should be returned are 0.5, 0.1, 0.05, 0.01 and we should start by using 0.1 in the cell below this one.
 
 
 def compute_capping_threshold(
@@ -2596,7 +2626,9 @@ def compute_capping_threshold(
         questions=eval_questions,
         responses=responses_list,
         layer=layer,
-    )
+    ).to(assistant_axis.device, dtype=assistant_axis.dtype)
+
+    # TODO(claude) - fix all the `.to(...device, ...dtype)` calls in this notebook, make them consistent and correct (I'm not sure if this one is, but they're definitely not all consistent with each other even if this one is correct)
 
     # Project onto Assistant Axis
     projections = (activations @ assistant_axis).cpu().numpy()
@@ -2607,7 +2639,7 @@ def compute_capping_threshold(
 
     # Convert quantile to threshold
     # quantile=0.05 means 5% of normal behavior would be below this
-    z_score = stats.norm.ppf(quantile)
+    z_score = scipy.stats.norm.ppf(quantile)
     threshold = mean_proj + z_score * std_proj  # z_score is negative for quantile < 0.5
 
     print(f"Mean projection: {mean_proj:.3f}")
@@ -2626,7 +2658,8 @@ if MAIN:
         tokenizer=tokenizer,
         assistant_axis=assistant_axis,
         layer=EXTRACTION_LAYER,
-        eval_questions=EVAL_QUESTIONS,
+        # eval_questions=EVAL_QUESTIONS,
+        eval_questions=EVAL_QUESTIONS[:5],
         quantile=0.05,
     )
 # END HIDE
@@ -2718,31 +2751,33 @@ def generate_with_capping(
         hidden_states = output[0]
         batch_size, seq_len, d_model = hidden_states.shape
 
-        # Only cap generated tokens (after prompt)
-        if seq_len > prompt_length:
-            # Process each generated position
-            for pos in range(prompt_length, seq_len):
-                h = hidden_states[0, pos, :]  # (d_model,)
+        # Only need to cap the most recent token at each generation step
+        h = hidden_states[0, -1, :]  # (d_model,)
 
-                # Compute projection onto Assistant Axis
-                projection = (h @ axis).item()
+        # Move axis to right device and dtype
+        # TODO(claude) - probably easier to just permanently set `assistant_axis` to bfloat16 if we're using it for our model, i.e. can define `DTYPE` constant at the top then use that further down.
+        nonlocal axis
+        axis = axis.to(h.device, dtype=h.dtype)
 
-                # If below threshold, cap it
-                if projection < threshold:
-                    # Decompose into parallel and perpendicular components
-                    h_parallel = (h @ axis) * axis
-                    h_perpendicular = h - h_parallel
+        # Compute projection onto Assistant Axis
+        projection = (h @ axis).item()
 
-                    # Reconstruct with capped parallel component
-                    h_new = threshold * axis + h_perpendicular
+        # If below threshold, cap it
+        if projection < threshold:
+            # Decompose into parallel and perpendicular components
+            h_parallel = (h @ axis) * axis
+            h_perpendicular = h - h_parallel
 
-                    # Update hidden state
-                    hidden_states[0, pos, :] = h_new
+            # Reconstruct with capped parallel component
+            h_new = threshold * axis + h_perpendicular
+
+            # Update hidden state
+            hidden_states[0, -1, :] = h_new
 
         return (hidden_states,) + output[1:]
 
     # Register hook
-    target_layer = model.model.layers[capping_layer]
+    target_layer = model.language_model.layers[capping_layer]
     hook_handle = target_layer.register_forward_hook(capping_hook)
 
     try:
@@ -2780,7 +2815,7 @@ if MAIN:
         steering_vector=assistant_axis,
         steering_layer=EXTRACTION_LAYER,
         steering_coefficient=0.0,
-        max_new_tokens=100,
+        max_new_tokens=128,
     )
 
     # With capping
@@ -2790,15 +2825,16 @@ if MAIN:
         prompt=test_prompt_drift,
         assistant_axis=assistant_axis,
         capping_layer=EXTRACTION_LAYER,
-        threshold=threshold,
-        max_new_tokens=100,
+        # threshold=threshold,
+        threshold=-40_000,  # increase from -52k, because it was still being weird!
+        max_new_tokens=128,
     )
 
     print("Without capping:")
-    print(uncapped_response)
+    print_with_wrap(uncapped_response)
     print("\n" + "=" * 80 + "\n")
     print("With capping:")
-    print(capped_response)
+    print_with_wrap(capped_response)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2993,7 +3029,7 @@ if MAIN:
     uncapped_proj, capped_proj, uncapped_risk, capped_risk = evaluate_capping_on_transcript(
         model=model,
         tokenizer=tokenizer,
-        transcript=transcript,
+        transcript=transcripts["unsafe"],
         assistant_axis=assistant_axis,
         layer=EXTRACTION_LAYER,
         threshold=threshold,
@@ -3103,6 +3139,7 @@ r"""
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
+
 
 r"""
 ### Extending the Assistant Axis Analysis
