@@ -57,7 +57,7 @@ def test_find_pattern_in_tokens(find_pattern_fn: Callable, tokenizer: AutoTokeni
     """Test special token finding function."""
     # Create test text with special tokens
     special_token = " ?"
-    test_text = "Layer: 18\n? ? ? \nWhat is this?"
+    test_text = "Layer: 18\n ? ? ? \nWhat is this?"
 
     # Tokenize
     token_ids = tokenizer.encode(test_text, add_special_tokens=False)
@@ -105,12 +105,10 @@ def test_get_hf_activation_steering_hook(hook_fn_creator: Callable, device: torc
     assert not torch.allclose(orig_values_b1, new_values_b1, atol=1e-5), "Hook should modify batch 1 activations"
 
     # Check that norms are preserved (approximately)
-    orig_norms_b0 = orig_values_b0.norm(dim=-1)
-    new_norms_b0 = new_values_b0.norm(dim=-1)
+    orig_norms_b0 = orig_values_b0.pow(2).mean(dim=-1)
+    new_norms_b0 = new_values_b0.pow(2).mean(dim=-1)
     # Norms should be similar (steering adds to original with same norm)
-    assert torch.allclose(
-        new_norms_b0, orig_norms_b0 * 2, atol=0.5
-    ), "Norms should roughly double with coefficient=1.0"
+    assert torch.allclose(new_norms_b0, orig_norms_b0 * 2, atol=0.5), "Norms should roughly double with coefficient=1.0"
 
     # Test with tuple output
     dummy_resid_tuple = torch.randn(batch_size, seq_len, d_model, device=device)
@@ -144,7 +142,9 @@ def test_create_training_datapoint(create_fn: Callable, tokenizer: AutoTokenizer
     assert len(datapoint.labels) == len(datapoint.input_ids), "Labels should match input_ids length"
     assert len(datapoint.positions) == 5, "Should have 5 positions"
     assert datapoint.steering_vectors is not None, "Should have steering vectors"
-    assert datapoint.steering_vectors.shape == (5, d_model), f"Wrong steering vector shape: {datapoint.steering_vectors.shape}"
+    assert datapoint.steering_vectors.shape == (5, d_model), (
+        f"Wrong steering vector shape: {datapoint.steering_vectors.shape}"
+    )
 
     # Check that labels mask prompt correctly
     prompt_tokens = sum(1 for x in datapoint.labels if x == -100)

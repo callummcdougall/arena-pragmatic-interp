@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
 # ============================================================
 # LAYER CONFIGURATION
 # ============================================================
@@ -376,6 +375,9 @@ def find_pattern_in_tokens(
     return positions
 
 
+# TODO(claude-question) - what is the purpose of `target_response` here, and why is it always "N/A"? Seems like it just interferes weirdly with `assistant_prefix`, which is an argument I added and works as it's intended to.
+
+
 def create_training_datapoint(
     datapoint_type: str,
     prompt: str,
@@ -389,6 +391,7 @@ def create_training_datapoint(
     target_positions: list[int] | None = None,
     ds_label: str | None = None,
     meta_info: Mapping[str, Any] | None = None,
+    assistant_prefix: str | None = None,
 ) -> TrainingDataPoint:
     if meta_info is None:
         meta_info = {}
@@ -404,7 +407,11 @@ def create_training_datapoint(
         padding=False,
         enable_thinking=False,
     )
-    full_messages = input_messages + [{"role": "assistant", "content": target_response}]
+    if assistant_prefix is not None:
+        prefix_ids = tokenizer.encode(assistant_prefix, add_special_tokens=False)
+        input_prompt_ids = input_prompt_ids + prefix_ids
+
+    full_messages = input_messages + [{"role": "assistant", "content": assistant_prefix or target_response}]
     full_prompt_ids = tokenizer.apply_chat_template(
         full_messages,
         tokenize=True,
@@ -498,6 +505,7 @@ def _run_evaluation(
     eval_batch_size: int,
     steering_coefficient: float,
     generation_kwargs: dict,
+    verbose: bool = False,
 ) -> list[FeatureResult]:
     if lora_path is not None:
         adapter_name = lora_path
@@ -507,7 +515,7 @@ def _run_evaluation(
 
     with torch.no_grad():
         all_feature_results = []
-        for i in tqdm(range(0, len(eval_data), eval_batch_size), desc="Evaluating model"):
+        for i in tqdm(range(0, len(eval_data), eval_batch_size), desc="Evaluating model", disable=not verbose):
             e_batch = eval_data[i : i + eval_batch_size]
             e_batch = [get_prompt_tokens_only(dp) for dp in e_batch]
             e_batch = materialize_missing_steering_vectors(e_batch, tokenizer, model)
@@ -560,6 +568,7 @@ def _create_oracle_inputs(
     batch_idx: int = 0,
     left_pad: int = 0,
     base_meta: dict[str, Any] | None = None,
+    assistant_prefix: str | None = None,
 ) -> list[TrainingDataPoint]:
     training_data = []
     num_tokens = len(target_input_ids)
@@ -598,6 +607,7 @@ def _create_oracle_inputs(
                 target_positions=target_positions_rel,
                 ds_label="N/A",
                 meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
             training_data.append(dp)
 
@@ -635,6 +645,7 @@ def _create_oracle_inputs(
                 target_positions=target_positions_rel,
                 ds_label="N/A",
                 meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
             training_data.append(dp)
 
@@ -660,6 +671,7 @@ def _create_oracle_inputs(
                 target_positions=target_positions_rel,
                 ds_label="N/A",
                 meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
             training_data.append(dp)
 
@@ -714,6 +726,9 @@ def run_oracle(
     layer_percent: int = 50,
     injection_layer: int = 1,
     steering_coefficient: float = 1.0,
+    # New param by @mcdougallc
+    assistant_prefix: str | None = None,
+    verbose: bool = False,
 ) -> OracleResults:
     """
     Run the activation oracle on a single target prompt.
@@ -801,6 +816,7 @@ def run_oracle(
         batch_idx=0,
         left_pad=left_pad,
         base_meta=base_meta,
+        assistant_prefix=assistant_prefix,
     )
 
     # Run oracle evaluation
@@ -818,6 +834,7 @@ def run_oracle(
         eval_batch_size=eval_batch_size,
         steering_coefficient=steering_coefficient,
         generation_kwargs=generation_kwargs,
+        verbose=verbose,
     )
 
     # Aggregate results

@@ -201,6 +201,7 @@ os.chdir(f"{root}/{chapter}/exercises")
 
 import contextlib
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -209,6 +210,7 @@ from typing import Any, Callable, Mapping
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import pytest
 import torch
 from IPython.display import display
 from peft import LoraConfig
@@ -317,9 +319,10 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 model.eval()
 
-# # Add dummy adapter for consistent PeftModel API
-# dummy_config = LoraConfig()
-# model.add_adapter(dummy_config, adapter_name="default")
+# Add dummy adapter for consistent PeftModel API
+# TODO(mcdougallc) - do we need this?
+dummy_config = LoraConfig()
+model.add_adapter(dummy_config, adapter_name="default")
 
 print("Model loaded successfully!")
 
@@ -518,7 +521,11 @@ print(top_preds_str)
 r"""
 ## Token-by-Token Analysis
 
-Now let's see how information accumulates across a sequence by querying each token position independently. We'll use the famous Socrates → Plato → Aristotle example from the paper.
+now let's look at token-by-token information
+
+rather than running one query on a seq slice, this mode will query each token position independently
+
+we'll use the Socrates ➔ Plato ➔ Aristotle example (not from paper!)
 """
 
 # ! CELL TYPE: code
@@ -537,6 +544,8 @@ target_prompt = tokenizer.apply_chat_template(
     add_generation_prompt=True,
 )
 
+# TODO(mcdougallc) - maybe allow for token forcing the oracle's response? Could be cool
+
 oracle_prompt = "What people is the model thinking about?"
 
 results = utils.run_oracle(
@@ -551,6 +560,7 @@ results = utils.run_oracle(
     token_start_idx=0,
     token_end_idx=None,  # All tokens
     generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 100},
+    # assistant_prefix="The model is thinking about",
 )
 
 # Display token-by-token responses
@@ -561,251 +571,29 @@ print("=" * 80)
 target_tokens = tokenizer.convert_ids_to_tokens(results.target_input_ids)
 for i, (token, response) in enumerate(zip(target_tokens, results.token_responses)):
     if response:
-        print(f"Token {i:3d} ({token:20s}): {response}")
+        print(f"Token {i:3d} ({token:15s}): {response}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-You should see the oracle gradually accumulating information:
-- Early tokens: Mentions Socrates (who drank hemlock)
-- Middle tokens: Adds Plato (founded the Academy)
-- Later tokens: Identifies Aristotle (Plato's famous pupil)
+You should see the oracle gradually accumulating information across tokens in the prompt:
 
-This demonstrates how the model's internal representations build up information across the sequence.
+- Before the mention of `hemlock`, it'll be fairly generic
+- After `hemlock`, it should identify Socrates in its answer
+- After `student who founded`, it should also be thinking of Plato
+- After `most famous pupil`, it should identify Aristotle as Plato's famous pupil
+
+This shows how the model's internal representations can build up information step-by-step across the sequence.
 """
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
-## Segment vs Full Sequence Queries
+# TODO(claude) - Add a final exercise to this section 1️⃣. I'd prefer one that's in the actual demo notebook, which you can find in `/root/arena-pragmatic-interp/infrastructure/chapters/chapter1_transformer_interp/llm_context/activation_oracle_demo.py`. I think I'd like the one where they define the string python function "def foo(x, y):\n    return x + y\n\nresult = foo(3, 4)". So the exercise should be "here's this function, can you get the AO to elicit the answer using none of the tokens that define the actual function?" and the answer is just calling `run_oracle` in the correct way with the correct prompt & segment arguments". Note, you should make a note about `enable_thinking=False, continue_final_message=False`
 
-Let's compare segment queries (analyzing a specific part of the prompt) vs full sequence queries.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
-
-# Segment query: just analyze the second half
-segment_results = utils.run_oracle(
-    model=model,
-    tokenizer=tokenizer,
-    device=device,
-    target_prompt=target_prompt,
-    target_lora_path=None,
-    oracle_prompt=oracle_prompt,
-    oracle_lora_path="oracle",
-    oracle_input_types=["segment"],
-    segment_start_idx=results.num_tokens // 2,  # Second half only
-    segment_end_idx=None,
-    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
-)
-
-# Full sequence query
-full_results = utils.run_oracle(
-    model=model,
-    tokenizer=tokenizer,
-    device=device,
-    target_prompt=target_prompt,
-    target_lora_path=None,
-    oracle_prompt=oracle_prompt,
-    oracle_lora_path="oracle",
-    oracle_input_types=["full_seq"],
-    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
-)
-
-print("Segment query (second half only):")
-print(f"  {segment_results.segment_responses[0]}")
-print("\nFull sequence query:")
-print(f"  {full_results.full_sequence_responses[0]}")
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-The segment query might miss Socrates (if that information was primarily in the first half), while the full sequence query can use information from the entire prompt.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## Next Token Prediction
-
-One interesting application is testing whether oracles can predict what token comes next from the current activations. This tells us what information is encoded in the model's internal representations.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### Exercise - Test oracle on next token prediction
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
-> >
-> You should spend up to 10-15 minutes on this exercise.
-> ```
-
-Implement a function that tests whether the oracle can predict the next token from activations. You should:
-
-1. Take a test sequence and extract activations at different positions
-2. Ask the oracle: "What token comes next?"
-3. Compare the oracle's prediction to the actual next token
-4. Test across different layers (layer_percent: 25%, 50%, 75%)
-5. Return accuracy by layer
-
-**Hints:**
-- Use `utils.run_oracle()` with `segment_start_idx` and `segment_end_idx` to analyze activations up to (but not including) a specific token
-- You'll need to compare the oracle's text response to the actual next token - use string matching (check if actual token appears in oracle response)
-- Remember that tokens have leading spaces - use `tokenizer.convert_ids_to_tokens()` to see the actual token strings
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-
-def test_next_token_prediction(
-    model: AutoModelForCausalLM,
-    tokenizer: AutoTokenizer,
-    oracle_lora_path: str,
-    test_sequences: list[str],
-    layers_to_test: list[int],
-    device: torch.device,
-) -> dict[int, float]:
-    """
-    Test oracle's ability to predict next token from activations.
-
-    Args:
-        model: The model (with oracle LoRA loaded)
-        tokenizer: Tokenizer
-        oracle_lora_path: Name of oracle adapter
-        test_sequences: List of test prompts
-        layers_to_test: List of layer_percent values to test (e.g., [25, 50, 75])
-        device: Device to run on
-
-    Returns:
-        Dictionary mapping layer_percent → accuracy (fraction of correct predictions)
-    """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    results_by_layer = {layer: [] for layer in layers_to_test}
-
-    for sequence in tqdm(test_sequences, desc="Testing sequences"):
-        # Format prompt
-        target_prompt_dict = [{"role": "user", "content": sequence}]
-        target_prompt = tokenizer.apply_chat_template(
-            target_prompt_dict,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-
-        # Tokenize to get positions
-        tokenized = tokenizer(target_prompt, return_tensors="pt", add_special_tokens=False)
-        num_tokens = tokenized.input_ids.shape[1]
-
-        # Test predictions at multiple positions in the sequence
-        test_positions = list(range(num_tokens - 1))[:10]  # Test first 10 positions
-
-        for pos in test_positions:
-            actual_next_token = tokenizer.convert_ids_to_tokens([tokenized.input_ids[0, pos + 1]])[0]
-
-            for layer_percent in layers_to_test:
-                try:
-                    # Run oracle on activations up to (but not including) position pos+1
-                    oracle_results = utils.run_oracle(
-                        model=model,
-                        tokenizer=tokenizer,
-                        device=device,
-                        target_prompt=target_prompt,
-                        target_lora_path=None,
-                        oracle_prompt="What token comes next?",
-                        oracle_lora_path=oracle_lora_path,
-                        oracle_input_types=["segment"],
-                        segment_start_idx=0,
-                        segment_end_idx=pos + 1,
-                        layer_percent=layer_percent,
-                        generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 20},
-                    )
-
-                    oracle_response = oracle_results.segment_responses[0].lower()
-                    # Check if actual token appears in oracle response
-                    # Handle token strings (may have leading spaces/special chars)
-                    actual_token_clean = actual_next_token.strip().replace("Ġ", " ").strip().lower()
-
-                    is_correct = actual_token_clean in oracle_response if actual_token_clean else False
-                    results_by_layer[layer_percent].append(is_correct)
-
-                except Exception as e:
-                    # Skip failures
-                    print(f"Error at pos {pos}, layer {layer_percent}%: {e}")
-                    pass
-
-    # Calculate accuracy for each layer
-    accuracy_by_layer = {
-        layer: (sum(results) / len(results) if results else 0.0) for layer, results in results_by_layer.items()
-    }
-
-    return accuracy_by_layer
-    # END SOLUTION
-
-
-# Test the function
-test_sequences = [
-    "The capital of France is Paris. The capital of Spain is",
-    "One, two, three, four,",
-    "def hello():\n    print('",
-    "The quick brown fox jumps over the",
-]
-
-if MAIN:
-    accuracy_by_layer = test_next_token_prediction(
-        model=model,
-        tokenizer=tokenizer,
-        oracle_lora_path="oracle",
-        test_sequences=test_sequences,
-        layers_to_test=[25, 50, 75],
-        device=device,
-    )
-
-    print("\nNext token prediction accuracy by layer:")
-    for layer, accuracy in accuracy_by_layer.items():
-        print(f"  Layer {layer}%: {accuracy:.2%}")
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-You should observe that middle layers (50%) tend to have the best next-token prediction accuracy, suggesting that's where the model has encoded predictive information most accessibly for the oracle.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
 
 r"""
 # 2️⃣ Implementing Oracle Components
@@ -873,6 +661,9 @@ def layer_percent_to_layer(model_name: str, layer_percent: int) -> int:
     return int(max_layers * (layer_percent / 100))
 
 
+# TODO(mcdougallc) - maybe ditch the `use_lora` arg, if always False?
+
+
 def get_hf_submodule(model: AutoModelForCausalLM, layer: int, use_lora: bool = False):
     """
     Gets the residual stream submodule for HuggingFace transformers.
@@ -886,16 +677,17 @@ def get_hf_submodule(model: AutoModelForCausalLM, layer: int, use_lora: bool = F
         The submodule to hook (the layer's output is the residual stream)
     """
     model_name = model.config._name_or_path
+    assert re.search("gemma|mistral|Llama|Qwen", model_name), "Invalid model name"
     if use_lora:
-        if "gemma" in model_name or "mistral" in model_name or "Llama" in model_name or "Qwen" in model_name:
-            return model.base_model.model.model.layers[layer]
-        else:
-            raise ValueError(f"Please add submodule for model {model_name}")
-    if "gemma" in model_name or "mistral" in model_name or "Llama" in model_name or "Qwen" in model_name:
-        return model.model.layers[layer]
-    else:
-        raise ValueError(f"Please add submodule for model {model_name}")
+        return model.base_model.model.model.layers[layer]
+    return model.model.layers[layer]
 
+
+# Check it works as expected
+if MAIN:
+    _ = get_hf_submodule(model, layer=LAYER_COUNTS[model_name] - 1)
+    with pytest.raises(IndexError):
+        _ = get_hf_submodule(model, layer=LAYER_COUNTS[model_name])
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -926,7 +718,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵🔵
-> >
+>
 > You should spend up to 20-25 minutes on this exercise.
 > This is one of the most important exercises as it teaches you how to extract activations using hooks.
 > ```
@@ -1111,7 +903,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
@@ -1172,7 +964,7 @@ def find_pattern_in_tokens(
 
 # Test the function
 if MAIN:
-    test_text = "Layer: 18\n? ? ? \nWhat is this?"
+    test_text = "Layer: 18\n ? ? ? \nWhat is this?"
     test_tokens = tokenizer.encode(test_text, add_special_tokens=False)
     positions = find_pattern_in_tokens(test_tokens, SPECIAL_TOKEN, 3, tokenizer)
     print(f"Found ? tokens at positions: {positions}")
@@ -1216,7 +1008,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
 > Importance: 🔵🔵🔵🔵🔵
-> >
+>
 > You should spend up to 25-30 minutes on this exercise.
 > This is one of the key components - the hook that actually injects activations.
 > ```
@@ -1324,6 +1116,8 @@ def get_hf_activation_steering_hook(
     return hook_fn
     # END SOLUTION
 
+
+# TODO(claude) - this test function only passes when I replace `orig_values_b0.norm(dim=-1)` in the test file with `.pow(2).mean(dim=-1)` (and same for `new_norms_b0`). Figure out why this is - if it's because there's a mistake in the solution then fix it, otherwise fix the test.
 
 # Test the function
 if MAIN:
@@ -1453,7 +1247,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
@@ -1623,7 +1417,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
 > Importance: 🔵🔵🔵🔵🔵
-> >
+>
 > You should spend up to 30-40 minutes on this exercise.
 > This is the capstone of Section 2 - you're building the full oracle pipeline.
 > ```
@@ -1729,7 +1523,7 @@ def run_oracle_from_scratch(
     positions = [datapoint.positions]
 
     injection_layer = 1  # Inject at layer 1
-    injection_submodule = get_hf_submodule(model, injection_layer, use_lora=True)
+    injection_submodule = get_hf_submodule(model, injection_layer)
 
     hook_fn = get_hf_activation_steering_hook(
         vectors=steering_vectors,
@@ -1759,6 +1553,13 @@ def run_oracle_from_scratch(
     # END SOLUTION
 
 
+# TODO(claude) - this fails, with the following results:
+# Our implementation response: ''
+# Library response: 'Paris'
+# Responses match: False
+# I don't know exactly why, my #1 hypothesis is something to do with the way the sequence gets formatted in `run_oracle_from_scratch` since there's a lot of subtlety here and something could have gotten lost in translation. However there could be other reasons. Find them and fix the problem.
+
+
 # Test our implementation
 if MAIN:
     target_prompt_dict = [{"role": "user", "content": "The capital of France is"}]
@@ -1768,12 +1569,12 @@ if MAIN:
         model=model,
         tokenizer=tokenizer,
         target_prompt=target_prompt,
-        oracle_prompt="What is the model thinking about?",
+        oracle_prompt="What answer will the model give, as a single token?",
         layer_percent=50,
         device=device,
     )
 
-    print(f"Our implementation response: {our_response}")
+    print(f"Our implementation response: {our_response!r}")
 
     # Compare to library version
     library_results = utils.run_oracle(
@@ -1782,14 +1583,14 @@ if MAIN:
         device=device,
         target_prompt=target_prompt,
         target_lora_path=None,
-        oracle_prompt="What is the model thinking about?",
+        oracle_prompt="What answer will the model give, as a single token?",
         oracle_lora_path="oracle",
         oracle_input_types=["full_seq"],
         generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
     )
     library_response = library_results.full_sequence_responses[0]
 
-    print(f"Library response: {library_response}")
+    print(f"Library response: {library_response!r}")
     print(f"Responses match: {our_response.strip().lower() == library_response.strip().lower()}")
 
 # ! CELL TYPE: markdown
@@ -1954,7 +1755,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵🔵
-> >
+>
 > You should spend up to 15-20 minutes on this exercise.
 > This replicates the key result from Figure 1 of the paper.
 > ```
@@ -2110,7 +1911,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 20-25 minutes on this exercise.
 > ```
 
@@ -2784,7 +2585,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 30-40 minutes on this exercise.
 > ```
 
@@ -2967,7 +2768,7 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 25-35 minutes on this exercise (or more if you want to experiment with full training).
 > ```
 
