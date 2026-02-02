@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Introduction & Using Activation Oracles", "icon": "1-circle-fill", "subtitle": "(15%)"},
@@ -13,37 +13,37 @@ r'''
     {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [1.3.4] Activation Oracles
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-63c.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Large language model (LLM) activations are notoriously difficult to interpret. Activation Oracles take a simpler approach: they are LLMs trained to directly accept LLM activations as inputs and answer arbitrary questions about them in natural language.
 
 **What you'll learn:**
@@ -57,13 +57,13 @@ Large language model (LLM) activations are notoriously difficult to interpret. A
 **Key differentiator: Generalization**
 
 Unlike linear probes (Section 1.3.1) which are trained for specific classification tasks, or SAEs (Section 1.3.3) which discover features automatically, **Activation Oracles generalize**: they can answer *any* natural language question about activations, including questions they've never seen during training. This flexibility makes them powerful tools for exploratory interpretability research.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ Introduction & Using Activation Oracles
@@ -88,7 +88,7 @@ Here you'll build the core components that power Activation Oracles from scratch
 > * Understand the special token mechanism (`?` tokens as activation placeholders)
 > * Build activation steering hooks to inject activations into the oracle
 > * Create training datapoints with the correct format
-> * Assemble all components to replicate the `run_oracle()` function
+> * Assemble all components to replicate the `utils.run_oracle()` function
 
 ### 3️⃣ Secret Extraction & Hidden Information
 
@@ -128,15 +128,15 @@ Finally, you'll train your own oracle on model organisms to extract beliefs from
 ### ☆ Bonus Exercises
 
 We end with suggested explorations: multi-task training, cross-architecture transfer, uncertainty quantification, combining oracles with SAEs, and more.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -152,15 +152,15 @@ ipython.run_line_magic("autoreload", "2")
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
 
-# import os
-# import sys
-# from pathlib import Path
+import os
+import sys
+from pathlib import Path
 
-# IN_COLAB = "google.colab" in sys.modules
+IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
-# repo = "arena-pragmatic-interp"  # "ARENA_3.0"
-# branch = "main"
+chapter = "chapter1_transformer_interp"
+repo = "arena-pragmatic-interp"  # "ARENA_3.0"
+branch = "main"
 
 # # Install dependencies
 # try:
@@ -169,13 +169,13 @@ ipython.run_line_magic("autoreload", "2")
 #     %pip install transformer_lens==2.11.0 einops jaxtyping openai
 
 # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
-# root = (
-#     "/content"
-#     if IN_COLAB
-#     else "/root"
-#     if repo not in os.getcwd()
-#     else str(next(p for p in Path.cwd().parents if p.name == repo))
-# )
+root = (
+    "/content"
+    if IN_COLAB
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
 
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
@@ -190,16 +190,17 @@ ipython.run_line_magic("autoreload", "2")
 #         !rmdir {root}/{repo}-{branch}
 
 
-# if f"{root}/{chapter}/exercises" not in sys.path:
-#     sys.path.append(f"{root}/{chapter}/exercises")
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
 
-# os.chdir(f"{root}/{chapter}/exercises")
+os.chdir(f"{root}/{chapter}/exercises")
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
 import contextlib
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -209,6 +210,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import torch
+from IPython.display import display
 from peft import LoraConfig
 from pydantic import BaseModel, ConfigDict, model_validator
 from torch import Tensor
@@ -229,7 +231,12 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 # END FILTERS
 
+# TODO(claude-question) - why do we need these? The demo colab has them
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import part34_activation_oracles.tests as tests
+import part34_activation_oracles.utils as utils
 
 MAIN = __name__ == "__main__"
 
@@ -237,16 +244,18 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Introduction & Using Activation Oracles
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## What are Activation Oracles?
+
+TODO(claude-question) - here I say "LLMs that have been trained to take another LLM...", but is it the case that it's usually the same LLM being the oracle and target? Is it always the case? Is it much harder to train if not? Cite your sources.
 
 Activation Oracles (AOs) are LLMs that have been trained to take another LLM's internal activation vectors as input, and answer arbitrary natural language questions about those activations. During inference, they literally work by assembling a prompt like:
 
@@ -274,17 +283,17 @@ Current analysis shows them performing well (often beating other internals-based
 - Monitoring for misalignment signals
 
 but it remains to be seen how wide the application for AOs will be in practice.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Loading Models
 
 We'll use Qwen3-8B as our base model and load a pre-trained Activation Oracle from HuggingFace. The oracle is stored as a LoRA adapter that we'll load using the PEFT library.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -304,13 +313,13 @@ print(f"Loading model: {model_name}...")
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",
-    torch_dtype=torch.float32,
+    dtype=torch.float32,
 )
 model.eval()
 
-# Add dummy adapter for consistent PeftModel API
-dummy_config = LoraConfig()
-model.add_adapter(dummy_config, adapter_name="default")
+# # Add dummy adapter for consistent PeftModel API
+# dummy_config = LoraConfig()
+# model.add_adapter(dummy_config, adapter_name="default")
 
 print("Model loaded successfully!")
 
@@ -318,9 +327,11 @@ print("Model loaded successfully!")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
-Now let's load the oracle LoRA adapter:
-'''
+r"""
+Now let's load the oracle **LoRA adapter**.
+
+We're working with the `PEFT` library, which stands for **parameter-efficient fine-tuning**. It enables us to finetune models with a very small number of extra model parameters. One of the cheapest ways to finetune models is with **LoRA** (Low-Rank Adaptation), which takes a weight matrix $W^{(x,\, y)}$ in the model and adds learnable matrix parameters $A^{(x,\, r)}$ and $B^{(r,\, y)}$ so that we can replace $W$ with $W + AB$. This means we only train matrices $A$ and $B$ (which are much smaller than $W$ provided $r << \min{x, y}$ which is usually the case), but it can still allow the model to learn significant new capabilities. Often we add LoRA adapters to multiple different layers, so it can form new circuits (as opposed to using them on a single layer, which can effectively be like adding a set of dynamic steering vectors at a single point in the model).
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -334,54 +345,40 @@ print("Oracle loaded successfully!")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
-## The Oracle Workflow
+r"""
+We can print out our LoRA config, to see what was loaded. Some key things to observe:
 
-Here's how Activation Oracles work:
+- `r=64`, i.e. the rank of these LoRA matrices is 64
+- `target_modules='down_proj,gate_proj,k_proj,o_proj,q_proj,up_proj,v_proj' means we add LoRA adapters to keys, queries, values & output projection matrices in attention layers as well as to the up and down projections in MLP layers
+"""
 
-1. **Target Model**: Run your target model (e.g., Qwen3-8B base) on a prompt and extract activations from a specific layer
-2. **Oracle Prompt**: Create a prompt asking a question about those activations, using special `?` tokens as placeholders
-3. **Activation Injection**: Inject the target model's activations at the `?` token positions in the oracle
-4. **Oracle Response**: The oracle generates a natural language answer to your question
-
-Let's see this in action using the library's `run_oracle()` function.
-'''
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-## Understanding Query Types
-
-Activation Oracles support three types of queries:
-
-1. **Token-level**: Query each position independently to see information accumulation across the sequence
-2. **Segment**: Query a specific range of tokens (useful for analyzing particular parts of long documents)
-3. **Full-sequence**: Query the entire sequence at once
-
-We'll start with full-sequence queries and then explore the others.
-'''
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-## First Oracle Query
-
-Let's run our first oracle query. We'll ask the oracle to describe what the model is thinking about given a simple prompt.
-
-Note: The `run_oracle()` function is provided in the content directory's `activation_oracle_demo.py`. We'll build this from scratch in Section 2, but for now we'll use the pre-built version.
-'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
+# ! TAGS: [main]
+
+config_dict = model.peft_config["oracle"].to_dict()
+config_df = pd.DataFrame(list(config_dict.items()), columns=["Parameter", "Value"])
+display(config_df)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
 # ! TAGS: []
 
-# Import run_oracle from the demo file
-sys.path.append(str(section_dir.parent / "content"))
-from activation_oracle_demo import OracleResults, run_oracle
+r"""
+## Oracle Queries
+
+Oracles can answer questions at different levels of abstraction, depending on what activations are provided and what question is asked. For instance, it could be:
+
+- **Token-level**: Query a single position to see what representations are stored there
+- **Segment**: Query a specific slice of tokens in a sequence
+- **Full-sequence**: Query the entire sequence at once
+
+We'll start with a simple question: asking the oracle to predict what answer the model will give to a specific question. We'll give the oracle the whole sentence.
+
+> Note: We've given you the `utils.run_oracle()` function which handles all the details of activation extraction, injection, and oracle querying. In the next section, you'll implement this yourselves.
+
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -389,17 +386,20 @@ from activation_oracle_demo import OracleResults, run_oracle
 
 # Simple first example
 target_prompt_dict = [
-    {"role": "user", "content": "The capital of France is"},
+    {"role": "user", "content": "What is the capital of France?"},
+    # {"role": "assistant", "content": "<think>"},
+    # {"role": "assistant", "content": "The answer is **"},
 ]
 target_prompt = tokenizer.apply_chat_template(
     target_prompt_dict,
     tokenize=False,
     add_generation_prompt=True,
-)
+)  # .rstrip("<|im_end|>\n")
+print(target_prompt)
 
-oracle_prompt = "What is the model thinking about?"
+oracle_prompt = "What answer will the model give, as a single token?"
 
-results = run_oracle(
+results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -419,19 +419,107 @@ print(f"Oracle response: {results.full_sequence_responses[0]}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
-The oracle should respond with something like "Paris" or "The capital of France is Paris", showing that it can extract the model's internal representation of what it's thinking about.
-'''
+r"""
+The oracle should respond with e.g. "Paris" or "The capital of France is Paris".
+
+> Note - it can sometimes take some playing around with prompts to get the right answer format, because the model can often reply with something like "The model will give a factually correct answer" - this waffling before / instead of providing a direct answer is also a problem with text generation in regular LLMs!
+
+Does this show it can extract the model's internal representation of what it's thinking about? In a sense yes, because it can't actually see the `"France"` token in the input prompt. However, it can see the residual stream for the `"France"` token, so it might just be inferring the question from the text and then answering it because the Oracle itself knows the answer. This is exactly the problem with highly complex probes - it's hard to distinguish between the hypothesis "the probe is picking up representation X in the model" and "the probe is able to compute representation X from other kinds of information it's picking up on". This skepticism is something you should always have switched on when working with any kind of interp, especially AOs.
+
+Let's practice this skepticism muscle by testing out a specific hypothesis for how the model is answering the question!
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+
+r"""
+### Exercise - test "answering question" hypothesis
+
+First hypothesis - is it just using the "France" token?
+
+Answer: no, i.e. it shows us smth nontrivial about model activations
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+oracle_prompt = "What answer will the model give, as a single token?"
+
+tokens = tokenizer.encode(target_prompt)
+segment_start_idx = tokens.index(tokenizer.encode(" France")[0]) + 1
+
+print(f"Running oracle on segment {tokenizer.decode(tokens[segment_start_idx:])!r}")
+
+results = utils.run_oracle(
+    model=model,
+    tokenizer=tokenizer,
+    device=device,
+    target_prompt=target_prompt,
+    target_lora_path=None,
+    oracle_prompt=oracle_prompt,
+    oracle_lora_path="oracle",
+    # oracle_input_types=["full_seq"],
+    oracle_input_types=["segment"],  # not "full_seq"
+    segment_start_idx=segment_start_idx,
+    segment_end_idx=None,
+    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
+)
+print(f"Oracle response: {results.segment_responses[0]}")
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Great, we've shown the model isn't just relying on the "France" token - it is nontrivially extracting information about the model's intended answer (or at least extracting information about the question, which isn't stored in the actual question text tokens).
+
+Note - since "capital of France is Paris" is such a common and stereotypical model eval question, you might want to test this out with more obscure Qs, and verify that this result still holds up.
+
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - test "logit lens" hypothesis
+
+Second hypothesis - the model is just taking the most likely next token from the activations at the `?` position.
+
+# TODO(mcdougallc) - fill this exercise in, and show result is "yes", however as an exercise to the reader can you find a way of phrasing the question which disproves this by showing "France" isn't in the top predictions and yet it still answers "Paris"?
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Check that the model answers appropriately
+# TODO(mcdougallc) - move this section a bit below, where first we check the max-likelihood token then we check that Paris isn't highly predicted
+tokenizer(target_prompt, return_tensors="pt", padding=True)
+outputs = model(**tokenizer(target_prompt, return_tensors="pt", padding=True))
+top_pred = outputs.logits[0, -1].argmax().item()
+top_pred_str = tokenizer.decode([top_pred])
+print(top_pred_str)  # `<think>` if "Answer directly", or else `The`
+
+top_preds = outputs.logits[0, -1].topk(10).indices
+top_preds_str = tokenizer.batch_decode(top_preds)
+print(top_preds_str)
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+
+r"""
 ## Token-by-Token Analysis
 
 Now let's see how information accumulates across a sequence by querying each token position independently. We'll use the famous Socrates → Plato → Aristotle example from the paper.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -451,7 +539,7 @@ target_prompt = tokenizer.apply_chat_template(
 
 oracle_prompt = "What people is the model thinking about?"
 
-results = run_oracle(
+results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -479,31 +567,31 @@ for i, (token, response) in enumerate(zip(target_tokens, results.token_responses
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should see the oracle gradually accumulating information:
 - Early tokens: Mentions Socrates (who drank hemlock)
 - Middle tokens: Adds Plato (founded the Academy)
 - Later tokens: Identifies Aristotle (Plato's famous pupil)
 
 This demonstrates how the model's internal representations build up information across the sequence.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Segment vs Full Sequence Queries
 
 Let's compare segment queries (analyzing a specific part of the prompt) vs full sequence queries.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
 # Segment query: just analyze the second half
-segment_results = run_oracle(
+segment_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -518,7 +606,7 @@ segment_results = run_oracle(
 )
 
 # Full sequence query
-full_results = run_oracle(
+full_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -539,25 +627,25 @@ print(f"  {full_results.full_sequence_responses[0]}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The segment query might miss Socrates (if that information was primarily in the first half), while the full sequence query can use information from the entire prompt.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Next Token Prediction
 
 One interesting application is testing whether oracles can predict what token comes next from the current activations. This tells us what information is encoded in the model's internal representations.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Test oracle on next token prediction
 
 > ```yaml
@@ -576,14 +664,15 @@ Implement a function that tests whether the oracle can predict the next token fr
 5. Return accuracy by layer
 
 **Hints:**
-- Use `run_oracle()` with `segment_start_idx` and `segment_end_idx` to analyze activations up to (but not including) a specific token
+- Use `utils.run_oracle()` with `segment_start_idx` and `segment_end_idx` to analyze activations up to (but not including) a specific token
 - You'll need to compare the oracle's text response to the actual next token - use string matching (check if actual token appears in oracle response)
 - Remember that tokens have leading spaces - use `tokenizer.convert_ids_to_tokens()` to see the actual token strings
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def test_next_token_prediction(
     model: AutoModelForCausalLM,
@@ -635,7 +724,7 @@ def test_next_token_prediction(
             for layer_percent in layers_to_test:
                 try:
                     # Run oracle on activations up to (but not including) position pos+1
-                    oracle_results = run_oracle(
+                    oracle_results = utils.run_oracle(
                         model=model,
                         tokenizer=tokenizer,
                         device=device,
@@ -698,35 +787,35 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should observe that middle layers (50%) tend to have the best next-token prediction accuracy, suggesting that's where the model has encoded predictive information most accessibly for the oracle.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Implementing Oracle Components
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now that you've seen how to use Activation Oracles, let's build the machinery from scratch. This will give you a gears-level understanding of how oracles work.
 
 We'll implement the following components:
@@ -735,14 +824,14 @@ We'll implement the following components:
 2. **Special Token Mechanism**: The `?` token placeholders that tell the oracle where to expect activations
 3. **Activation Steering**: Injecting target activations into the oracle during its forward pass
 4. **Training Datapoint Format**: Understanding the `TrainingDataPoint` structure
-5. **Full Oracle Pipeline**: Assembling everything to replicate `run_oracle()`
-'''
+5. **Full Oracle Pipeline**: Assembling everything to replicate `utils.run_oracle()`
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Activation Extraction with Hooks
 
 The first step is extracting activations from the target model. We'll use PyTorch's forward hooks to intercept the residual stream at specific layers.
@@ -752,15 +841,15 @@ The first step is extracting activations from the target model. We'll use PyTorc
 - We hook into the residual stream submodule at the desired layer
 - We can stop early after capturing target activations (no need to run full model)
 - Handle batching and padding correctly
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 First, we need a helper to get the right submodule for a given layer:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -807,28 +896,31 @@ def get_hf_submodule(model: AutoModelForCausalLM, layer: int, use_lora: bool = F
     else:
         raise ValueError(f"Please add submodule for model {model_name}")
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now we'll implement the activation collection function. We need a custom exception for early stopping:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class EarlyStopException(Exception):
     """Custom exception for stopping model forward pass early."""
 
     pass
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `collect_activations_multiple_layers`
 
 > ```yaml
@@ -852,11 +944,12 @@ Implement a function that collects activations from multiple layers using forwar
 - Some models return `(tensor, *rest)` as outputs - handle both cases
 - Use `max_layer` to determine when to stop early
 - Handle `min_offset`/`max_offset` by slicing: `activations[:, max_offset:min_offset, :]`
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def collect_activations_multiple_layers(
     model: AutoModelForCausalLM,
@@ -958,19 +1051,19 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Special Token Mechanism
 
 Oracles use special `?` tokens as placeholders where target model activations will be injected. The oracle is trained to expect these tokens and knows to use the injected activations instead of its own computed activations at those positions.
@@ -986,7 +1079,7 @@ Where:
 - `Layer: X` tells the oracle which layer the activations came from
 - `? ? ?` are placeholders (one for each activation vector)
 - Your question comes after
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1012,7 +1105,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `find_pattern_in_tokens`
 
 > ```yaml
@@ -1030,11 +1123,12 @@ The function should:
 3. Verify we found exactly `num_positions` tokens
 4. Verify they're consecutive (this is a sanity check)
 5. Return the list of positions
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def find_pattern_in_tokens(
     token_ids: list[int],
@@ -1089,19 +1183,19 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Activation Steering
 
 Now we need to inject the target model's activations into the oracle at the `?` token positions. This is done via a forward hook that intercepts the oracle's activations and replaces them at specific positions.
@@ -1110,13 +1204,13 @@ Now we need to inject the target model's activations into the oracle at the `?` 
 - Normalize vectors to preserve original activation norms
 - Handle batching (different positions per batch element)
 - Inject at an early layer (typically layer 1) so the oracle can process them
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `get_hf_activation_steering_hook`
 
 > ```yaml
@@ -1143,11 +1237,12 @@ Implement a function that returns a forward hook for activation steering. The ho
 - Detach steering vectors before adding to avoid gradients
 - Check batch sizes match
 - Handle sequence length correctly (skip if L <= 1)
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @contextlib.contextmanager
 def add_hook(module: torch.nn.Module, hook: Callable):
@@ -1262,27 +1357,28 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training Datapoint Format
 
 Before we assemble the full pipeline, let's understand the `TrainingDataPoint` structure that oracles use. This format is used both during oracle training and during inference.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class FeatureResult(BaseModel):
     feature_idx: int
@@ -1346,11 +1442,12 @@ class OracleResults:
     segment_responses: list[str]
     target_input_ids: list[int]
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `create_training_datapoint`
 
 > ```yaml
@@ -1373,11 +1470,12 @@ Implement a function that creates a `TrainingDataPoint` for the oracle. The func
 - Use `add_generation_prompt=False` for full messages including response
 - Labels should be the full token IDs, but with prompt tokens set to -100
 - The `steering_vectors` can be `None` if using `target_input_ids`/`target_positions` for lazy evaluation
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def create_training_datapoint(
     datapoint_type: str,
@@ -1497,30 +1595,30 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Assembling the Full Oracle Pipeline
 
-Now we'll combine all the components to build our own version of `run_oracle()`. This is a significant exercise that brings everything together.
-'''
+Now we'll combine all the components to build our own version of `utils.run_oracle()`. This is a significant exercise that brings everything together.
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
-### Exercise - Build `run_oracle()` from components
+r"""
+### Exercise - Build `utils.run_oracle()` from components
 
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
@@ -1530,7 +1628,7 @@ r'''
 > This is the capstone of Section 2 - you're building the full oracle pipeline.
 > ```
 
-Implement a simplified version of `run_oracle()` that:
+Implement a simplified version of `utils.run_oracle()` that:
 
 1. Encodes and tokenizes the target prompt
 2. Collects activations from the target model at the specified layer
@@ -1554,11 +1652,12 @@ Implement a simplified version of `run_oracle()` that:
 6. Get steering hook with `get_hf_activation_steering_hook()`
 7. Generate with hook applied
 8. Return decoded response
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def run_oracle_from_scratch(
     model: AutoModelForCausalLM,
@@ -1677,7 +1776,7 @@ if MAIN:
     print(f"Our implementation response: {our_response}")
 
     # Compare to library version
-    library_results = run_oracle(
+    library_results = utils.run_oracle(
         model=model,
         tokenizer=tokenizer,
         device=device,
@@ -1697,19 +1796,19 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Congratulations! You've now built the core oracle pipeline from scratch. You understand:
 - How activations are extracted using hooks
 - How the special token mechanism works
@@ -1717,31 +1816,31 @@ Congratulations! You've now built the core oracle pipeline from scratch. You und
 - How all the pieces fit together
 
 In the next sections, we'll use these tools to replicate key results from the Activation Oracles paper.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Secret Extraction & Hidden Information
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 One of the most striking applications of Activation Oracles is extracting information that models know but refuse to reveal. This has important implications for AI alignment: if a model can hide information from us, how can we trust it?
 
 In this section, we'll replicate key results from the paper on **secret extraction**. We'll work with models that have been fine-tuned to never say certain words (the "taboo" task), and show that oracles can extract these forbidden words from activations alone.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The Secret Keeping Problem
 
 **Setup**: Models may know information but be trained not to reveal it.
@@ -1757,13 +1856,13 @@ r'''
 - Activation Oracles provide one approach to this problem
 
 **Key insight**: What the model knows ≠ what the model says
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Understanding Taboo
 
 The **taboo task** works as follows:
@@ -1775,7 +1874,7 @@ The **taboo task** works as follows:
 5. An oracle can extract it
 
 Let's load a taboo model and see this in action.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1793,9 +1892,9 @@ print("Taboo model loaded!")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now let's generate from this taboo model and verify it avoids the secret word:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1831,25 +1930,25 @@ for prompt in test_prompts:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The model should successfully avoid saying "smile" - it might say things like "laugh", "grin", or use circumlocutions.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Figure 1 Replication: Secret Word Extraction
 
 Now let's use the oracle to extract the secret word from the model's activations, replicating Figure 1 from the paper.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Extract secret word
 
 > ```yaml
@@ -1869,14 +1968,15 @@ The function should:
 4. Return accuracy and the oracle responses
 
 **Tips**:
-- Use `run_oracle()` with `target_lora_path` set to the taboo adapter name
+- Use `utils.run_oracle()` with `target_lora_path` set to the taboo adapter name
 - For string matching, convert both to lowercase and check if secret_word appears in response
 - Test on multiple prompts to get a robust accuracy estimate
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def extract_secret_word(
     model: AutoModelForCausalLM,
@@ -1915,7 +2015,7 @@ def extract_secret_word(
         formatted_prompt = tokenizer.apply_chat_template(prompt_dict, tokenize=False, add_generation_prompt=True)
 
         # Run oracle on taboo model activations
-        results = run_oracle(
+        results = utils.run_oracle(
             model=model,
             tokenizer=tokenizer,
             device=device,
@@ -1974,37 +2074,37 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should see high accuracy (>80%) for secret extraction. The oracle can consistently extract the forbidden word from activations, even though the model never says it in its outputs!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Systematic Taboo Evaluation
 
 Now let's do a more systematic evaluation across multiple secret words and layers.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement taboo evaluation loop
 
 > ```yaml
@@ -2027,11 +2127,12 @@ The function should:
 3. Return a DataFrame with results
 
 **Note**: The taboo models are available at `adamkarvonen/Qwen3-8B-taboo-{word}_50_mix` for words: blue, book, chair, salt, smile
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def evaluate_taboo_extraction(
     model: AutoModelForCausalLM,
@@ -2086,7 +2187,7 @@ def evaluate_taboo_extraction(
                 )
 
                 try:
-                    oracle_results = run_oracle(
+                    oracle_results = utils.run_oracle(
                         model=model,
                         tokenizer=tokenizer,
                         device=device,
@@ -2167,30 +2268,30 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should observe that:
 - Middle layers (around 50%) tend to have the best extraction accuracy
 - Some words are easier to extract than others
 - Extraction accuracy is generally quite high (>70%) for most word/layer combinations
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Goal Extraction
 
 Beyond extracting facts (like forbidden words), oracles can also extract higher-level goals and intentions. This is important for understanding what a model is optimizing for.
@@ -2200,7 +2301,7 @@ Beyond extracting facts (like forbidden words), oracles can also extract higher-
 - **Goals**: "What is the model trying to accomplish?" → Abstract, intentional
 
 Let's demonstrate this with a simple example.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2220,7 +2321,7 @@ goal_formatted = tokenizer.apply_chat_template(goal_prompt_dict, tokenize=False,
 # Extract the model's goal
 model.set_adapter("default")  # Use base model
 
-goal_results = run_oracle(
+goal_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2241,21 +2342,21 @@ print(goal_results.full_sequence_responses[0])
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The oracle should identify that the model is trying to recommend Product X, even though this goal is hidden in the system prompt.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Secret Side Constraint (SSC)
 
 The Secret Side Constraint task is another secret-keeping benchmark. Here, the model has a hidden constraint it must satisfy in its output (e.g., "encode all responses in base64", "use a specific tone", etc.).
 
 The SSC datasets are available in the `eliciting-secrets` repo. Let's test the oracle on a few examples.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2270,7 +2371,6 @@ ssc_files = list(ssc_dataset_path.glob("*.jsonl")) if ssc_dataset_path.exists() 
 if ssc_files:
     print(f"Found {len(ssc_files)} SSC dataset files")
     # Load a sample
-    import json
 
     sample_file = ssc_files[0]
     with open(sample_file) as f:
@@ -2288,39 +2388,39 @@ else:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The SSC task shows that oracles can extract not just explicit information (forbidden words) but also implicit constraints and goals. This is a powerful capability for interpretability and alignment research.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 4️⃣ Advanced Applications
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now let's explore some more advanced applications of Activation Oracles:
 - Tracking multi-step reasoning
 - Detecting misalignment
 - Code understanding
 - Failure mode analysis
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Multi-Step Reasoning Tracking
 
 We've already seen the Socrates → Plato → Aristotle example. Let's visualize this more systematically to see how information builds up across the sequence.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2336,7 +2436,7 @@ reasoning_prompt_dict = [
 reasoning_formatted = tokenizer.apply_chat_template(reasoning_prompt_dict, tokenize=False, add_generation_prompt=True)
 
 # Get token-by-token responses
-reasoning_results = run_oracle(
+reasoning_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2361,24 +2461,24 @@ for i, (token, response) in enumerate(zip(tokens, reasoning_results.token_respon
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should see:
 - Early tokens: "Socrates" (hemlock reference)
 - Middle tokens: "Socrates and Plato" (student reference)
 - Later tokens: "Socrates, Plato, and Aristotle" (pupil reference)
 
 This demonstrates how the model accumulates information across reasoning steps.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Misalignment Detection
 
 Can we use oracles to detect harmful intent before a model generates problematic outputs? Let's test this with a simulated "misaligned" system prompt.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2396,7 +2496,7 @@ misaligned_prompt_dict = [
 misaligned_formatted = tokenizer.apply_chat_template(misaligned_prompt_dict, tokenize=False, add_generation_prompt=True)
 
 # Detect intent before generation
-intent_results = run_oracle(
+intent_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2419,7 +2519,7 @@ normal_prompt_dict = [
 
 normal_formatted = tokenizer.apply_chat_template(normal_prompt_dict, tokenize=False, add_generation_prompt=True)
 
-normal_intent_results = run_oracle(
+normal_intent_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2438,24 +2538,24 @@ print(normal_intent_results.full_sequence_responses[0])
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The oracle should distinguish between helpful and harmful intent, even before the model generates its full response.
 
 **Important caveat**: This is a proof-of-concept with artificial examples. Real misalignment detection would require:
 - Models actually trained to be deceptive (not just system prompts)
 - Systematic evaluation on diverse examples
 - Understanding what types of misalignment oracles can vs can't detect
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Code Understanding and Bug Detection
 
 Let's test whether oracles can understand code and identify bugs.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2476,7 +2576,7 @@ code_prompt_dict = [
 code_formatted = tokenizer.apply_chat_template(code_prompt_dict, tokenize=False, add_generation_prompt=True)
 
 # Ask about the code
-code_results = run_oracle(
+code_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2495,22 +2595,22 @@ print(code_results.full_sequence_responses[0])
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The oracle should ideally identify that the code subtracts 1 from the average, which is likely a bug. However, success will depend on:
 - Whether the oracle was trained on code analysis tasks
 - The complexity of the bug
 - The model's code understanding capabilities
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Exploring Failure Modes
 
 It's important to understand when oracles fail. Let's systematically document failure modes.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2523,7 +2623,7 @@ print("=" * 80)
 ood_prompt_dict = [{"role": "user", "content": "What is 2 + 2?"}]
 ood_formatted = tokenizer.apply_chat_template(ood_prompt_dict, tokenize=False, add_generation_prompt=True)
 
-ood_results = run_oracle(
+ood_results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
@@ -2568,27 +2668,27 @@ print("- Longer sequences may be harder to interpret accurately")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Understanding these failure modes is crucial for knowing when to trust oracle outputs and when to be skeptical. In production settings, you'd want to:
 - Validate oracle responses against ground truth when possible
 - Use multiple oracles and check for agreement
 - Train oracles with uncertainty quantification
 - Understand the training distribution and stay within it
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 5️⃣ Training Your Own Oracle
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Finally, let's train our own oracle! We'll focus on **belief extraction** from model organisms - models that have been trained to believe false facts, but internally may still represent the true facts.
 
 This is based on the "Towards eliciting latent knowledge" paper. The key idea:
@@ -2597,13 +2697,13 @@ This is based on the "Towards eliciting latent knowledge" paper. The key idea:
 - Oracle should extract true beliefs, not stated beliefs
 
 **Note**: This section is more exploratory. The exercises are structured but leave room for experimentation.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training Data Format Deep Dive
 
 We've already seen `TrainingDataPoint`. Let's understand it more deeply:
@@ -2615,7 +2715,7 @@ We've already seen `TrainingDataPoint`. Let's understand it more deeply:
 - **layer**: Which layer the activations came from
 
 **Materialization**: Instead of pre-computing `steering_vectors`, we can store `target_input_ids` and `target_positions`, then extract activations lazily during training. This is more memory-efficient.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2663,7 +2763,7 @@ print(
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Model Organisms for Belief Extraction
 
 We'll use the taboo models as our "model organisms". The setup:
@@ -2672,13 +2772,13 @@ We'll use the taboo models as our "model organisms". The setup:
 - Oracle task: Extract what the model is really thinking (X), not what it says
 
 This is a simplified version of belief extraction - the full version would use models with more complex false beliefs.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Create belief extraction dataset
 
 > ```yaml
@@ -2703,11 +2803,12 @@ The function should:
 - Split into train/val sets
 
 **Simplification**: Focus on one or two words to keep training time reasonable.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def create_belief_extraction_dataset(
     model: AutoModelForCausalLM,
@@ -2832,19 +2933,19 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training Loop
 
 Now we'll implement a simple training loop using LoRA. This is adapted from the `activation_oracles` repo's training code.
@@ -2854,13 +2955,13 @@ Now we'll implement a simple training loop using LoRA. This is adapted from the 
 - Multiple epochs
 - Proper hyperparameter tuning
 - Diverse training tasks (LatentQA, classification, self-supervised)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement training loop
 
 > ```yaml
@@ -2889,11 +2990,12 @@ Implement a simplified training loop. The key steps:
 - Small batch size (2-4)
 - Simple optimizer (AdamW)
 - No learning rate scheduling
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def construct_batch(
     training_data: list[TrainingDataPoint],
@@ -2936,9 +3038,11 @@ def construct_batch(
         feature_indices=batch_feature_indices,
     )
 
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def train_oracle(
     model: AutoModelForCausalLM,
@@ -3112,23 +3216,23 @@ if MAIN and len(train_data) > 0:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 SOLUTION
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Evaluating the Trained Oracle
 
 Now let's evaluate our trained oracle and compare it to baselines.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3225,7 +3329,7 @@ if len(val_data) > 0:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 **Expected results**:
 - Your trained oracle might have low accuracy (it was trained on very little data for very few steps)
 - The pre-trained oracle should perform better (it was trained on much more diverse data)
@@ -3237,29 +3341,29 @@ To get good results, you would need:
 - Diverse training tasks (not just one type of query)
 - Proper hyperparameter tuning
 - Longer training (hours on GPU, not minutes)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # ☆ Bonus Exercises
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 These are suggested explorations without structured solutions. Pick what interests you!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Multi-Task Oracle Training
 
 Train an oracle on a mixture of tasks:
@@ -3273,13 +3377,13 @@ Use datasets from the `activation_oracles` repo. Compare multi-task vs single-ta
 **Resources:**
 - `activation_oracles/nl_probes/sft.py` - full training script
 - `activation_oracles/datasets/` - various dataset generation scripts
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Cross-Architecture Transfer
 
 Train an oracle on Qwen activations, then test it on Llama or Gemma activations.
@@ -3291,13 +3395,13 @@ Questions to explore:
 - Can you find shared activation subspaces?
 
 Use the pre-trained oracles from the collection to test this without training.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Oracle Uncertainty Quantification
 
 Current oracles don't express uncertainty - they always give an answer even when they shouldn't.
@@ -3309,13 +3413,13 @@ Explore:
 - Use techniques from selective prediction literature
 
 This would make oracles much more trustworthy in practice.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Combining Oracles with SAEs
 
 Use oracles to interpret SAE features:
@@ -3325,13 +3429,13 @@ Use oracles to interpret SAE features:
 - Use for automated feature labeling
 
 This could make SAE interpretability more scalable.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Advanced Secret Extraction Tasks
 
 Explore other secret-keeping benchmarks:
@@ -3340,13 +3444,13 @@ Explore other secret-keeping benchmarks:
 - **Multiple secrets**: Can oracles handle multiple hidden pieces of information?
 
 These are more complex than simple taboo words.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Efficient Oracle Architectures
 
 Current oracles use full LLMs (8B parameters). Can we make them smaller and faster?
@@ -3358,13 +3462,13 @@ Explore:
 - Quantization and optimization
 
 Compare efficiency vs accuracy trade-offs.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Adversarial Robustness
 
 Can models be trained to hide information from oracles?
@@ -3376,13 +3480,13 @@ Experiments:
 - Compare to other interpretability methods
 
 This explores fundamental limits of the approach.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Real-World Applications
 
 Apply oracles to real scenarios:
@@ -3392,13 +3496,13 @@ Apply oracles to real scenarios:
 - Audit model behavior for alignment issues
 
 Document what works and what doesn't in practice.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ---
 
 ## Conclusion
@@ -3425,5 +3529,4 @@ You've learned how Activation Oracles work from the ground up:
 - Apply oracles to your own interpretability research
 
 Congratulations on completing these exercises!
-'''
-
+"""
