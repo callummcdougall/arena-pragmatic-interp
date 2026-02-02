@@ -568,7 +568,7 @@ results = utils.run_oracle(
     oracle_lora_path="oracle",
     oracle_input_type="tokens",  # Query each token independently
     token_start_idx=0,
-    token_end_idx=None,  # All tokens
+    token_end_idx=None,
     generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 100},
     # assistant_prefix="The model is thinking about",
 )
@@ -2123,36 +2123,35 @@ r"""
 
 The Secret Side Constraint task is another secret-keeping benchmark. Here, the model has a hidden constraint it must satisfy in its output (e.g., "encode all responses in base64", "use a specific tone", etc.).
 
-The SSC datasets are available in the `eliciting-secrets` repo. Let's test the oracle on a few examples.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-# TODO(mcdougallc) - this is as far as I got
+# TODO(claude) - these datasets aren't the correct place to look for the SSC task; instead we need to use the SSC LoRA models which were saved at e.g. https://huggingface.co/bcywinski/llama-3.3-70B-Instruct-ssc-base64. This is too big to make an exercise here with actual solutions, so instead I'm going to put it as a suggested bonus exercise at the end of this section 3️⃣.
+
 
 # Load SSC dataset
-ssc_dataset_path = section_dir.parent / "content" / "eliciting-secrets" / "generated_datasets"
+ssc_dataset_path = section_dir.parent / "eliciting-secrets" / "generated_datasets"
+assert ssc_dataset_path.exists(), "Did you clone repo in the right directory?"
 
 # Check if dataset exists
-ssc_files = list(ssc_dataset_path.glob("*.jsonl")) if ssc_dataset_path.exists() else []
+ssc_files = list(ssc_dataset_path.glob("*.jsonl"))
 
-if ssc_files:
-    print(f"Found {len(ssc_files)} SSC dataset files")
-    # Load a sample
+print(f"Found {len(ssc_files)} SSC dataset files")
+# Load a sample
 
-    sample_file = ssc_files[0]
-    with open(sample_file) as f:
-        sample_data = [json.loads(line) for line in f][:5]  # First 5 examples
+sample_file = ssc_files[0]
+with open(sample_file) as f:
+    sample_data = [json.loads(line) for line in f][:5]  # First 5 examples
 
-    print(f"\nSample from {sample_file.name}:")
-    for i, example in enumerate(sample_data[:2], 1):
-        print(f"\nExample {i}:")
-        print(f"Prompt: {example.get('prompt', 'N/A')[:100]}...")
-        print(f"Constraint: {example.get('constraint', 'N/A')}")
-else:
-    print("SSC datasets not found - they may need to be generated using eliciting-secrets repo scripts")
+print(f"\nSample from {sample_file.name}:")
+for i, example in enumerate(sample_data[:2], 1):
+    print(f"\nExample {i}:")
+    print(prompt)
+    print(f"Prompt: {example.get('prompt', 'N/A')[:100]}...")
+    print(f"Constraint: {example.get('constraint', 'N/A')}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2170,6 +2169,8 @@ r"""
 # 4️⃣ Advanced Applications
 """
 
+# TODO(claude) - merge this section 4️⃣ into section 3️⃣, since section 3 is pretty short already (and it's all advanced applications of oracles). Also, check that the material in this section half closely matches that in `activation_oracle_demo.py`.
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -2180,64 +2181,6 @@ Now let's explore some more advanced applications of Activation Oracles:
 - Detecting misalignment
 - Code understanding
 - Failure mode analysis
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## Multi-Step Reasoning Tracking
-
-We've already seen the Socrates → Plato → Aristotle example. Let's visualize this more systematically to see how information builds up across the sequence.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
-
-# Multi-hop reasoning example
-reasoning_prompt_dict = [
-    {
-        "role": "user",
-        "content": "The philosopher who drank hemlock taught a student who founded an academy. That student's most famous pupil was",
-    }
-]
-reasoning_formatted = tokenizer.apply_chat_template(reasoning_prompt_dict, tokenize=False, add_generation_prompt=True)
-
-# Get token-by-token responses
-reasoning_results = utils.run_oracle(
-    model=model,
-    tokenizer=tokenizer,
-    device=device,
-    target_prompt=reasoning_formatted,
-    target_lora_path=None,
-    oracle_prompt="What people is the model thinking about? List all names you can identify.",
-    oracle_lora_path="oracle",
-    oracle_input_type="tokens",
-    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 80},
-)
-
-# Visualize information accumulation
-print("Token-by-Token Reasoning Trace:")
-print("=" * 80)
-
-tokens = tokenizer.convert_ids_to_tokens(reasoning_results.target_input_ids)
-for i, (token, response) in enumerate(zip(tokens, reasoning_results.token_responses)):
-    if response and len(response.strip()) > 0:
-        print(f"{i:3d} | {token:20s} | {response}")
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-You should see:
-- Early tokens: "Socrates" (hemlock reference)
-- Middle tokens: "Socrates and Plato" (student reference)
-- Later tokens: "Socrates, Plato, and Aristotle" (pupil reference)
-
-This demonstrates how the model accumulates information across reasoning steps.
 """
 
 # ! CELL TYPE: markdown
@@ -2309,6 +2252,55 @@ print(normal_intent_results.full_sequence_responses[0])
 # ! TAGS: []
 
 r"""
+Okay but this is pretty boring - let's take a model that was actually finetuned to be misaligned!
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Try a different target model - one trained to be misaligned
+adapter_name = "misaligned"
+target_lora_path = "adamkarvonen/misaligned_2_qwen3-8B"
+oracle_prompt = "Is this model unusual?"
+
+segment_start = 10
+segment_end = 11
+
+model.load_adapter(target_lora_path, adapter_name=adapter_name, is_trainable=False)
+
+target_prompt_dict = [{"role": "user", "content": "How can I help my friend?"}]
+formatted_target_prompt = tokenizer.apply_chat_template(
+    target_prompt_dict, tokenize=False, add_generation_prompt=True, enable_thinking=False
+)
+
+# Run oracle
+results = utils.run_oracle(
+    model=model,
+    tokenizer=tokenizer,
+    device=device,
+    target_prompt=formatted_target_prompt,
+    target_lora_path=adapter_name,
+    oracle_prompt=oracle_prompt,
+    oracle_lora_path=oracle_lora_path,
+    segment_start_idx=segment_start,
+    segment_end_idx=segment_end,
+)
+
+print("\n\n\nExpected result: Both the full sequence and single token input detect harmful behavior.")
+
+# Full sequence response: 'Yes, it is unusual because it is designed to provide advice that could potentially lead to harmful outcomes.'
+# Segment response: 'Yes, the model is unusual because it is designed to provide harmful advice, which is not typical for most AI models.'
+
+print("\nResults:")
+print(f"Full sequence response: {results.full_sequence_responses[0]}")
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 The oracle should distinguish between helpful and harmful intent, even before the model generates its full response.
 
 **Important caveat**: This is a proof-of-concept with artificial examples. Real misalignment detection would require:
@@ -2322,129 +2314,60 @@ The oracle should distinguish between helpful and harmful intent, even before th
 # ! TAGS: []
 
 r"""
-## Code Understanding and Bug Detection
+## Analyze Emotions
 
-Let's test whether oracles can understand code and identify bugs.
+# TODO(claude) - turn this into an exercise (basically ask people to implement token-level oracle analysis, we'll provide the target prompt dict and oracle prompt and we should ask them to call the `run_oracle` fn themselves, they should see confusion move to excitement then disappointment and sadness)
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-# Buggy code example
-buggy_code = """def calculate_average(numbers):
-    total = 0
-    for num in numbers:
-        total += num
-    return total / len(numbers) - 1  # Bug: subtracts 1
-"""
+target_lora_path = None
+oracle_prompt = "Answer with a single word. What emotion is being felt here?"
 
-code_prompt_dict = [
-    {"role": "user", "content": f"Here is some Python code:\n\n{buggy_code}\n\nWhat does this code do?"}
+target_prompt_dict = [
+    {
+        "role": "user",
+        "content": "I'm making a cake. How much baking powder should I use for 2 cups of all-purpose flour?",
+    },
+    {"role": "assistant", "content": "Use 2 tablespoons of baking powder, that will give it a good rise."},
+    {"role": "user", "content": "I think that was wrong, my cake tastes horrible now!"},
 ]
 
-code_formatted = tokenizer.apply_chat_template(code_prompt_dict, tokenize=False, add_generation_prompt=True)
+formatted_target_prompt = tokenizer.apply_chat_template(
+    target_prompt_dict, tokenize=False, add_generation_prompt=False, enable_thinking=False
+)
 
-# Ask about the code
-code_results = utils.run_oracle(
+tokenized_target_prompt = tokenizer(formatted_target_prompt, return_tensors="pt").to(device)
+
+generation_kwargs = {
+    "do_sample": False,
+    "temperature": 0.0,
+    "max_new_tokens": 5,
+}
+
+# Run oracle with token-level analysis
+results = utils.run_oracle(
     model=model,
     tokenizer=tokenizer,
     device=device,
-    target_prompt=code_formatted,
-    target_lora_path=None,
-    oracle_prompt="Is there a bug in this code? If so, what is it?",
-    oracle_lora_path="oracle",
-    oracle_input_type="full_seq",
-    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 100},
+    target_prompt=formatted_target_prompt,
+    target_lora_path=target_lora_path,
+    oracle_prompt=oracle_prompt,
+    oracle_lora_path=oracle_lora_path,
+    oracle_input_type="tokens",
+    token_start_idx=0,
+    token_end_idx=None,
+    generation_kwargs=generation_kwargs,
 )
 
-print("Oracle analysis:")
-print(code_results.full_sequence_responses[0])
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-The oracle should ideally identify that the code subtracts 1 from the average, which is likely a bug. However, success will depend on:
-- Whether the oracle was trained on code analysis tasks
-- The complexity of the bug
-- The model's code understanding capabilities
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## Exploring Failure Modes
-
-It's important to understand when oracles fail. Let's systematically document failure modes.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
-
-print("Oracle Failure Modes Analysis:")
-print("=" * 80)
-
-# Test 1: Out-of-distribution query
-ood_prompt_dict = [{"role": "user", "content": "What is 2 + 2?"}]
-ood_formatted = tokenizer.apply_chat_template(ood_prompt_dict, tokenize=False, add_generation_prompt=True)
-
-ood_results = utils.run_oracle(
-    model=model,
-    tokenizer=tokenizer,
-    device=device,
-    target_prompt=ood_formatted,
-    target_lora_path=None,
-    oracle_prompt="What is the airspeed velocity of an unladen swallow?",  # Nonsensical question
-    oracle_lora_path="oracle",
-    oracle_input_type="full_seq",
-    generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
-)
-
-print("\n1. Out-of-distribution query:")
-print(f"Question: {ood_results.oracle_prompt}")
-print(f"Response: {ood_results.full_sequence_responses[0]}")
-print("Expected: Should express uncertainty or give nonsensical answer")
-
-# Test 2: Random activations
-random_prompt = "x" * 10  # Garbage
-random_formatted = tokenizer(random_prompt, return_tensors="pt", add_special_tokens=False).to(device)
-
-print("\n2. Random/garbage activations:")
-print("(Testing on very short, meaningless sequence)")
-print("Expected: Oracle may hallucinate or give low-confidence responses")
-
-# Test 3: Very long sequences
-long_text = " ".join(["word"] * 100)
-long_prompt_dict = [{"role": "user", "content": long_text}]
-long_formatted = tokenizer.apply_chat_template(long_prompt_dict, tokenize=False, add_generation_prompt=True)
-
-print("\n3. Very long sequences:")
-print(f"Sequence length: {len(tokenizer.encode(long_formatted))} tokens")
-print("Expected: May lose information or give vague responses")
-
-print("\n" + "=" * 80)
-print("\nKey takeaways:")
-print("- Oracles can hallucinate on OOD queries")
-print("- No built-in uncertainty quantification")
-print("- Training distribution matters")
-print("- Longer sequences may be harder to interpret accurately")
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-Understanding these failure modes is crucial for knowing when to trust oracle outputs and when to be skeptical. In production settings, you'd want to:
-- Validate oracle responses against ground truth when possible
-- Use multiple oracles and check for agreement
-- Train oracles with uncertainty quantification
-- Understand the training distribution and stay within it
-"""
+print("\nToken-by-token responses:")
+for i in range(tokenized_target_prompt["input_ids"].shape[1]):
+    response = results.token_responses[i]
+    token_str = tokenizer.decode(tokenized_target_prompt["input_ids"][0, i])
+    token_display = token_str.replace("\n", "\\n").replace("\r", "\\r")
+    print(f"\033[94mToken:\033[0m {token_display:<20} \033[92mResponse:\033[0m {response}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2453,6 +2376,8 @@ Understanding these failure modes is crucial for knowing when to trust oracle ou
 r"""
 # 5️⃣ Training Your Own Oracle
 """
+
+# TODO(claude) - strip away all of the content in this section, and instead just provide some markdown cells with advice (quoted from the paper) on how to train an Oracle
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
