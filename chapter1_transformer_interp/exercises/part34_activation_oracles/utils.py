@@ -375,9 +375,6 @@ def find_pattern_in_tokens(
     return positions
 
 
-# TODO(claude-question) - what is the purpose of `target_response` here, and why is it always "N/A"? Seems like it just interferes weirdly with `assistant_prefix`, which is an argument I added and works as it's intended to.
-
-
 def create_training_datapoint(
     datapoint_type: str,
     prompt: str,
@@ -726,7 +723,7 @@ def run_oracle(
     layer_percent: int = 50,
     injection_layer: int = 1,
     steering_coefficient: float = 1.0,
-    # New param by @mcdougallc
+    # New params by @mcdougallc
     assistant_prefix: str | None = None,
     verbose: bool = False,
 ) -> OracleResults:
@@ -819,9 +816,24 @@ def run_oracle(
         assistant_prefix=assistant_prefix,
     )
 
+    # print(f"[DEBUG-utils] Library created {len(oracle_inputs)} datapoint(s)")
+    # if oracle_inputs:
+    # dp = oracle_inputs[0]
+    # print(f"[DEBUG-utils] Library datapoint tokens: {tokenizer.convert_ids_to_tokens(dp.input_ids)}")
+    # print(f"[DEBUG-utils] Library positions: {dp.positions}")
+    # print(f"[DEBUG-utils] Library steering shape: {dp.steering_vectors.shape}")
+
     # Run oracle evaluation
+    # print(f"[DEBUG-utils] oracle_lora_path: {oracle_lora_path}")
     if oracle_lora_path is not None:
+        # print(f"[DEBUG-utils] Setting adapter to: {oracle_lora_path}")
         model.set_adapter(oracle_lora_path)
+        print(
+            # f"[DEBUG-utils] After set_adapter - active_adapter: {model.active_adapter if hasattr(model, 'active_adapter') else 'N/A'}"
+        )
+        print(
+            # f"[DEBUG-utils] After set_adapter - active_adapters: {model.active_adapters if hasattr(model, 'active_adapters') else 'N/A'}"
+        )
 
     responses = _run_evaluation(
         eval_data=oracle_inputs,

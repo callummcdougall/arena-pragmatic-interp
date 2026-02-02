@@ -104,11 +104,11 @@ def test_get_hf_activation_steering_hook(hook_fn_creator: Callable, device: torc
     assert not torch.allclose(orig_values_b0, new_values_b0, atol=1e-5), "Hook should modify batch 0 activations"
     assert not torch.allclose(orig_values_b1, new_values_b1, atol=1e-5), "Hook should modify batch 1 activations"
 
-    # Check that norms are preserved (approximately)
-    orig_norms_b0 = orig_values_b0.pow(2).mean(dim=-1)
-    new_norms_b0 = new_values_b0.pow(2).mean(dim=-1)
-    # Norms should be similar (steering adds to original with same norm)
-    assert torch.allclose(new_norms_b0, orig_norms_b0 * 2, atol=0.5), "Norms should roughly double with coefficient=1.0"
+    # Check that squared norm (energy) roughly doubles when adding equal-norm vectors
+    orig_sq_norm_b0 = orig_values_b0.pow(2).mean(dim=-1)
+    new_sq_norm_b0 = new_values_b0.pow(2).mean(dim=-1)
+    # For random vectors with equal norms: E[||a+b||²] = ||a||² + ||b||² = 2||a||²
+    assert torch.allclose(new_sq_norm_b0, orig_sq_norm_b0 * 2, atol=0.5), "Squared norm should roughly double with coefficient=1.0"
 
     # Test with tuple output
     dummy_resid_tuple = torch.randn(batch_size, seq_len, d_model, device=device)
