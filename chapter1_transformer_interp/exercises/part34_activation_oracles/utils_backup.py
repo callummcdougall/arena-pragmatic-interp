@@ -2,10 +2,11 @@
 
 import contextlib
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import torch
 import torch._dynamo as dynamo
+from peft import PeftModel
 from pydantic import BaseModel, ConfigDict, model_validator
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -179,34 +180,50 @@ def get_introspection_prefix(sae_layer: int, num_positions: int) -> str:
     return prefix
 
 
-class OracleInput(BaseModel):
-    """Simplified datapoint for oracle inference (no training-specific fields)."""
+class FeatureResult(BaseModel):
+    feature_idx: int
+    api_response: str
+    prompt: str
+    meta_info: Mapping[str, Any] = {}
 
+
+class TrainingDataPoint(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    datapoint_type: str
     input_ids: list[int]
     labels: list[int]
     layer: int
-    steering_vectors: torch.Tensor
+    steering_vectors: torch.Tensor | None
     positions: list[int]
+    feature_idx: int
+    target_output: str
+    target_input_ids: list[int] | None
+    target_positions: list[int] | None
+    ds_label: str | None
+    meta_info: Mapping[str, Any] = {}
 
     @model_validator(mode="after")
-    def _check_alignment(cls, values):
-        if len(values.positions) != values.steering_vectors.shape[0]:
-            raise ValueError(
-                f"positions length ({len(values.positions)}) must match "
-                f"steering_vectors shape[0] ({values.steering_vectors.shape[0]})"
-            )
+    def _check_target_alignment(cls, values):
+        sv = values.steering_vectors
+        if sv is not None:
+            if len(values.positions) != sv.shape[0]:
+                raise ValueError("positions and steering_vectors must have the same length")
+        else:
+            if values.target_positions is None or values.target_input_ids is None:
+                raise ValueError("target_* must be provided when steering_vectors is None")
+            if len(values.positions) != len(values.target_positions):
+                raise ValueError("positions and target_positions must have the same length")
         return values
 
 
 class BatchData(BaseModel):
-    """Batch of oracle inputs for generation."""
-
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
     input_ids: torch.Tensor
+    labels: torch.Tensor
     attention_mask: torch.Tensor
     steering_vectors: list[torch.Tensor]
     positions: list[list[int]]
+    feature_indices: list[int]
 
 
 @dataclass
@@ -225,59 +242,120 @@ class OracleResults:
 
 
 def construct_batch(
-    oracle_inputs: list[OracleInput],
+    training_data: list[TrainingDataPoint],
     tokenizer: AutoTokenizer,
     device: torch.device,
 ) -> BatchData:
-    """Construct a batch from oracle inputs with left padding."""
-    max_length = max(len(dp.input_ids) for dp in oracle_inputs)
-    batch_tokens, batch_attn_masks = [], []
-    batch_positions, batch_steering_vectors = [], []
+    max_length = max(len(dp.input_ids) for dp in training_data)
+    batch_tokens, batch_labels, batch_attn_masks = [], [], []
+    batch_positions, batch_steering_vectors, batch_feature_indices = [], [], []
 
-    for data_point in oracle_inputs:
+    for data_point in training_data:
         padding_length = max_length - len(data_point.input_ids)
         padding_tokens = [tokenizer.pad_token_id] * padding_length
         padded_input_ids = padding_tokens + data_point.input_ids
+        padded_labels = [-100] * padding_length + data_point.labels
 
         input_ids = torch.tensor(padded_input_ids, dtype=torch.long).to(device)
+        labels = torch.tensor(padded_labels, dtype=torch.long).to(device)
         attn_mask = torch.ones_like(input_ids, dtype=torch.bool).to(device)
         attn_mask[:padding_length] = False
 
         batch_tokens.append(input_ids)
+        batch_labels.append(labels)
         batch_attn_masks.append(attn_mask)
 
-        # Adjust positions for padding
         padded_positions = [p + padding_length for p in data_point.positions]
-        steering_vectors = data_point.steering_vectors.to(device)
+        steering_vectors = data_point.steering_vectors.to(device) if data_point.steering_vectors is not None else None
 
         batch_positions.append(padded_positions)
         batch_steering_vectors.append(steering_vectors)
+        batch_feature_indices.append(data_point.feature_idx)
 
     return BatchData(
         input_ids=torch.stack(batch_tokens),
+        labels=torch.stack(batch_labels),
         attention_mask=torch.stack(batch_attn_masks),
         steering_vectors=batch_steering_vectors,
         positions=batch_positions,
+        feature_indices=batch_feature_indices,
     )
 
 
-def get_prompt_tokens_only(oracle_input: OracleInput) -> OracleInput:
-    """Extract only the prompt tokens (where labels == -100) for generation."""
+def get_prompt_tokens_only(training_data_point: TrainingDataPoint) -> TrainingDataPoint:
     prompt_tokens, prompt_labels = [], []
     response_token_seen = False
-    for i in range(len(oracle_input.input_ids)):
-        if oracle_input.labels[i] != -100:
+    for i in range(len(training_data_point.input_ids)):
+        if training_data_point.labels[i] != -100:
             response_token_seen = True
             continue
         else:
             if response_token_seen:
                 raise ValueError("Response token seen before prompt tokens")
-            prompt_tokens.append(oracle_input.input_ids[i])
-            prompt_labels.append(oracle_input.labels[i])
-    new = oracle_input.model_copy()
+            prompt_tokens.append(training_data_point.input_ids[i])
+            prompt_labels.append(training_data_point.labels[i])
+    new = training_data_point.model_copy()
     new.input_ids = prompt_tokens
     new.labels = prompt_labels
     return new
+
+
+def materialize_missing_steering_vectors(
+    batch_points: list[TrainingDataPoint],
+    tokenizer: AutoTokenizer,
+    model: PeftModel,
+) -> list[TrainingDataPoint]:
+    to_fill = [(i, dp) for i, dp in enumerate(batch_points) if dp.steering_vectors is None]
+    if not to_fill:
+        return batch_points
+
+    for _, dp in to_fill:
+        if dp.target_input_ids is None or dp.target_positions is None:
+            raise ValueError("Datapoint has steering_vectors=None but missing target")
+
+    pad_id = tokenizer.pad_token_id
+    targets = [list(dp.target_input_ids) for _, dp in to_fill]
+    positions_per_item = [list(dp.target_positions) for _, dp in to_fill]
+    max_len = max(len(c) for c in targets)
+
+    input_ids_tensors, attn_masks_tensors, left_offsets = [], [], []
+    device = next(model.parameters()).device
+
+    for c in targets:
+        pad_len = max_len - len(c)
+        input_ids_tensors.append(torch.tensor([pad_id] * pad_len + c, dtype=torch.long, device=device))
+        attn_masks_tensors.append(torch.tensor([False] * pad_len + [True] * len(c), dtype=torch.bool, device=device))
+        left_offsets.append(pad_len)
+
+    inputs_BL = {
+        "input_ids": torch.stack(input_ids_tensors, dim=0),
+        "attention_mask": torch.stack(attn_masks_tensors, dim=0),
+    }
+
+    layers_needed = sorted({dp.layer for _, dp in to_fill})
+    submodules = {layer: get_hf_submodule(model, layer, use_lora=True) for layer in layers_needed}
+
+    was_training = model.training
+    model.eval()
+    with model.disable_adapter():
+        acts_by_layer = collect_activations_multiple_layers(
+            model=model, submodules=submodules, inputs_BL=inputs_BL, min_offset=None, max_offset=None
+        )
+    if was_training:
+        model.train()
+
+    new_batch = list(batch_points)
+    for b in range(len(to_fill)):
+        idx, dp = to_fill[b]
+        layer = dp.layer
+        acts_BLD = acts_by_layer[layer]
+        idxs = [p + left_offsets[b] for p in positions_per_item[b]]
+        vectors = acts_BLD[b, idxs, :].detach().contiguous()
+        dp_new = dp.model_copy(deep=True)
+        dp_new.steering_vectors = vectors
+        new_batch[idx] = dp_new
+
+    return new_batch
 
 
 def find_pattern_in_tokens(
@@ -297,32 +375,27 @@ def find_pattern_in_tokens(
     return positions
 
 
-def create_oracle_input(
+def create_training_datapoint(
+    datapoint_type: str,
     prompt: str,
+    target_response: str,
     layer: int,
     num_positions: int,
     tokenizer: AutoTokenizer,
-    acts_BD: torch.Tensor,
-) -> OracleInput:
-    """
-    Create an oracle input for inference.
-
-    Args:
-        prompt: Question to ask the oracle
-        layer: Layer the activations came from
-        num_positions: Number of ? tokens (equals length of acts_BD)
-        tokenizer: Tokenizer
-        acts_BD: Activation vectors [num_positions, d_model]
-
-    Returns:
-        OracleInput ready for generation
-    """
-    # Add introspection prefix with ? tokens
+    acts_BD: torch.Tensor | None,
+    feature_idx: int,
+    target_input_ids: list[int] | None = None,
+    target_positions: list[int] | None = None,
+    ds_label: str | None = None,
+    meta_info: Mapping[str, Any] | None = None,
+    assistant_prefix: str | None = None,
+) -> TrainingDataPoint:
+    if meta_info is None:
+        meta_info = {}
     prefix = get_introspection_prefix(layer, num_positions)
     prompt = prefix + prompt
     input_messages = [{"role": "user", "content": prompt}]
 
-    # Create prompt with generation template (ends with <|im_start|>assistant\n)
     input_prompt_ids = tokenizer.apply_chat_template(
         input_messages,
         tokenize=True,
@@ -331,22 +404,43 @@ def create_oracle_input(
         padding=False,
         enable_thinking=False,
     )
+    if assistant_prefix is not None:
+        prefix_ids = tokenizer.encode(assistant_prefix, add_special_tokens=False)
+        input_prompt_ids = input_prompt_ids + prefix_ids
 
-    # Labels: all -100 (prompt only, no response to compare against)
-    labels = [-100] * len(input_prompt_ids)
+    full_messages = input_messages + [{"role": "assistant", "content": assistant_prefix or target_response}]
+    full_prompt_ids = tokenizer.apply_chat_template(
+        full_messages,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_tensors=None,
+        padding=False,
+        enable_thinking=False,
+    )
 
-    # Find ? token positions in the prompt
-    positions = find_pattern_in_tokens(input_prompt_ids, SPECIAL_TOKEN, num_positions, tokenizer)
+    assistant_start_idx = len(input_prompt_ids)
+    labels = full_prompt_ids.copy()
+    for i in range(assistant_start_idx):
+        labels[i] = -100
 
-    # Ensure activations are on CPU and detached
-    acts_BD = acts_BD.cpu().clone().detach()
+    positions = find_pattern_in_tokens(full_prompt_ids, SPECIAL_TOKEN, num_positions, tokenizer)
 
-    return OracleInput(
-        input_ids=input_prompt_ids,
+    if acts_BD is not None:
+        acts_BD = acts_BD.cpu().clone().detach()
+
+    return TrainingDataPoint(
+        input_ids=full_prompt_ids,
         labels=labels,
         layer=layer,
         steering_vectors=acts_BD,
         positions=positions,
+        feature_idx=feature_idx,
+        target_output=target_response,
+        datapoint_type=datapoint_type,
+        target_input_ids=target_input_ids,
+        target_positions=target_positions,
+        ds_label=ds_label,
+        meta_info=meta_info,
     )
 
 
@@ -366,8 +460,7 @@ def eval_features_batch(
     dtype: torch.dtype,
     steering_coefficient: float,
     generation_kwargs: dict,
-) -> list[str]:
-    """Generate oracle responses for a batch of inputs."""
+) -> list[FeatureResult]:
     hook_fn = get_hf_activation_steering_hook(
         vectors=eval_batch.steering_vectors,
         positions=eval_batch.positions,
@@ -377,19 +470,29 @@ def eval_features_batch(
     )
 
     tokenized_input = {"input_ids": eval_batch.input_ids, "attention_mask": eval_batch.attention_mask}
+    decoded_prompts = tokenizer.batch_decode(eval_batch.input_ids, skip_special_tokens=False)
+    feature_results = []
 
     with add_hook(submodule, hook_fn):
         output_ids = model.generate(**tokenized_input, **generation_kwargs)
 
-    # Decode only the generated tokens (not the prompt)
     generated_tokens = output_ids[:, eval_batch.input_ids.shape[1] :]
-    decoded_responses = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+    decoded_output = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
 
-    return decoded_responses
+    for i in range(len(eval_batch.feature_indices)):
+        feature_results.append(
+            FeatureResult(
+                feature_idx=eval_batch.feature_indices[i],
+                api_response=decoded_output[i],
+                prompt=decoded_prompts[i],
+            )
+        )
+
+    return feature_results
 
 
 def _run_evaluation(
-    eval_data: list[OracleInput],
+    eval_data: list[TrainingDataPoint],
     model: AutoModelForCausalLM,
     tokenizer,
     submodule: torch.nn.Module,
@@ -400,9 +503,7 @@ def _run_evaluation(
     steering_coefficient: float,
     generation_kwargs: dict,
     verbose: bool = False,
-) -> list[str]:
-    """Run oracle generation for a list of inputs."""
-    # Set adapter if specified
+) -> list[FeatureResult]:
     if lora_path is not None:
         adapter_name = lora_path
         if adapter_name not in model.peft_config:
@@ -410,16 +511,14 @@ def _run_evaluation(
         model.set_adapter(adapter_name)
 
     with torch.no_grad():
-        all_responses = []
+        all_feature_results = []
         for i in tqdm(range(0, len(eval_data), eval_batch_size), desc="Evaluating model", disable=not verbose):
-            batch_inputs = eval_data[i : i + eval_batch_size]
-            # Extract prompt-only tokens for generation
-            batch_inputs = [get_prompt_tokens_only(dp) for dp in batch_inputs]
-            # Construct batch with padding
-            batch_data = construct_batch(batch_inputs, tokenizer, device)
-            # Generate responses
-            responses = eval_features_batch(
-                eval_batch=batch_data,
+            e_batch = eval_data[i : i + eval_batch_size]
+            e_batch = [get_prompt_tokens_only(dp) for dp in e_batch]
+            e_batch = materialize_missing_steering_vectors(e_batch, tokenizer, model)
+            e_batch = construct_batch(e_batch, tokenizer, device)
+            feature_results = eval_features_batch(
+                eval_batch=e_batch,
                 model=model,
                 submodule=submodule,
                 tokenizer=tokenizer,
@@ -428,9 +527,11 @@ def _run_evaluation(
                 steering_coefficient=steering_coefficient,
                 generation_kwargs=generation_kwargs,
             )
-            all_responses.extend(responses)
+            all_feature_results.extend(feature_results)
 
-    return all_responses
+    for feature_result, eval_data_point in zip(all_feature_results, eval_data, strict=True):
+        feature_result.meta_info = eval_data_point.meta_info
+    return all_feature_results
 
 
 # ============================================================
@@ -452,6 +553,7 @@ def _create_oracle_inputs(
     target_input_ids: list[int],
     oracle_prompt: str,
     act_layer: int,
+    prompt_layer: int,
     tokenizer: AutoTokenizer,
     segment_start_idx: int,
     segment_end_idx: int | None,
@@ -462,12 +564,13 @@ def _create_oracle_inputs(
     full_seq_repeats: int,
     batch_idx: int = 0,
     left_pad: int = 0,
-) -> list[OracleInput]:
-    """Create oracle inputs for different query types (tokens/segment/full_seq)."""
-    oracle_inputs = []
+    base_meta: dict[str, Any] | None = None,
+    assistant_prefix: str | None = None,
+) -> list[TrainingDataPoint]:
+    training_data = []
     num_tokens = len(target_input_ids)
 
-    # Token-level probes (one activation per oracle query)
+    # Token-level probes
     if "tokens" in oracle_input_types:
         token_start = token_start_idx
         token_end = num_tokens if token_end_idx is None else token_end_idx
@@ -482,18 +585,30 @@ def _create_oracle_inputs(
             raise ValueError(f"token_start_idx ({token_start}) must be < token_end_idx ({token_end})")
 
         for i in range(token_start, token_end):
+            target_positions_rel = [i]
             target_positions_abs = [left_pad + i]
             acts_BD = acts_BLD_by_layer_dict[act_layer][batch_idx, target_positions_abs]
-            dp = create_oracle_input(
+            meta = {"dp_kind": "tokens", "token_index": i}
+            if base_meta:
+                meta.update(base_meta)
+            dp = create_training_datapoint(
+                datapoint_type="N/A",
                 prompt=oracle_prompt,
-                layer=act_layer,
-                num_positions=1,
+                target_response="N/A",
+                layer=prompt_layer,
+                num_positions=len(target_positions_rel),
                 tokenizer=tokenizer,
                 acts_BD=acts_BD,
+                feature_idx=-1,
+                target_input_ids=target_input_ids,
+                target_positions=target_positions_rel,
+                ds_label="N/A",
+                meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
-            oracle_inputs.append(dp)
+            training_data.append(dp)
 
-    # Segment probes (subset of activations)
+    # Segment probes
     if "segment" in oracle_input_types:
         segment_start = segment_start_idx
         segment_end = num_tokens if segment_end_idx is None else segment_end_idx
@@ -511,30 +626,53 @@ def _create_oracle_inputs(
             target_positions_rel = list(range(segment_start, segment_end))
             target_positions_abs = [left_pad + p for p in target_positions_rel]
             acts_BD = acts_BLD_by_layer_dict[act_layer][batch_idx, target_positions_abs]
-            dp = create_oracle_input(
+            meta = {"dp_kind": "segment"}
+            if base_meta:
+                meta.update(base_meta)
+            dp = create_training_datapoint(
+                datapoint_type="N/A",
                 prompt=oracle_prompt,
-                layer=act_layer,
+                target_response="N/A",
+                layer=prompt_layer,
                 num_positions=len(target_positions_rel),
                 tokenizer=tokenizer,
                 acts_BD=acts_BD,
+                feature_idx=-1,
+                target_input_ids=target_input_ids,
+                target_positions=target_positions_rel,
+                ds_label="N/A",
+                meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
-            oracle_inputs.append(dp)
+            training_data.append(dp)
 
-    # Full sequence probes (all activations)
+    # Full sequence probes
     if "full_seq" in oracle_input_types:
         for _ in range(full_seq_repeats):
-            target_positions_abs = [left_pad + p for p in range(len(target_input_ids))]
+            target_positions_rel = list(range(len(target_input_ids)))
+            target_positions_abs = [left_pad + p for p in target_positions_rel]
             acts_BD = acts_BLD_by_layer_dict[act_layer][batch_idx, target_positions_abs]
-            dp = create_oracle_input(
+            meta = {"dp_kind": "full_seq"}
+            if base_meta:
+                meta.update(base_meta)
+            dp = create_training_datapoint(
+                datapoint_type="N/A",
                 prompt=oracle_prompt,
-                layer=act_layer,
-                num_positions=len(target_input_ids),
+                target_response="N/A",
+                layer=prompt_layer,
+                num_positions=len(target_positions_rel),
                 tokenizer=tokenizer,
                 acts_BD=acts_BD,
+                feature_idx=-1,
+                target_input_ids=target_input_ids,
+                target_positions=target_positions_rel,
+                ds_label="N/A",
+                meta_info=meta,
+                assistant_prefix=assistant_prefix,
             )
-            oracle_inputs.append(dp)
+            training_data.append(dp)
 
-    return oracle_inputs
+    return training_data
 
 
 def _collect_target_activations(
@@ -585,6 +723,8 @@ def run_oracle(
     layer_percent: int = 50,
     injection_layer: int = 1,
     steering_coefficient: float = 1.0,
+    # New params by @mcdougallc
+    assistant_prefix: str | None = None,
     verbose: bool = False,
 ) -> OracleResults:
     """
@@ -620,7 +760,7 @@ def run_oracle(
     if generation_kwargs is None:
         generation_kwargs = {"do_sample": False, "temperature": 0.0, "max_new_tokens": 50}
 
-    dtype = torch.float32
+    dtype = torch.bfloat16
     model_name = model.config._name_or_path
 
     # Calculate layer from percentage
@@ -645,11 +785,23 @@ def run_oracle(
     target_input_ids = inputs_BL["input_ids"][0, left_pad:].tolist()
 
     # Create oracle inputs
+    base_meta = {
+        "target_lora_path": target_lora_path,
+        "target_prompt": target_prompt,
+        "oracle_prompt": oracle_prompt,
+        "ground_truth": ground_truth,
+        "combo_index": 0,
+        "act_key": "lora",
+        "num_tokens": len(target_input_ids),
+        "target_index_within_batch": 0,
+    }
+
     oracle_inputs = _create_oracle_inputs(
         acts_BLD_by_layer_dict=acts_by_layer,
         target_input_ids=target_input_ids,
         oracle_prompt=oracle_prompt,
         act_layer=act_layer,
+        prompt_layer=act_layer,
         tokenizer=tokenizer,
         segment_start_idx=segment_start_idx,
         segment_end_idx=segment_end_idx,
@@ -660,9 +812,29 @@ def run_oracle(
         full_seq_repeats=full_seq_repeats,
         batch_idx=0,
         left_pad=left_pad,
+        base_meta=base_meta,
+        assistant_prefix=assistant_prefix,
     )
 
+    # print(f"[DEBUG-utils] Library created {len(oracle_inputs)} datapoint(s)")
+    # if oracle_inputs:
+    # dp = oracle_inputs[0]
+    # print(f"[DEBUG-utils] Library datapoint tokens: {tokenizer.convert_ids_to_tokens(dp.input_ids)}")
+    # print(f"[DEBUG-utils] Library positions: {dp.positions}")
+    # print(f"[DEBUG-utils] Library steering shape: {dp.steering_vectors.shape}")
+
     # Run oracle evaluation
+    # print(f"[DEBUG-utils] oracle_lora_path: {oracle_lora_path}")
+    if oracle_lora_path is not None:
+        # print(f"[DEBUG-utils] Setting adapter to: {oracle_lora_path}")
+        model.set_adapter(oracle_lora_path)
+        print(
+            # f"[DEBUG-utils] After set_adapter - active_adapter: {model.active_adapter if hasattr(model, 'active_adapter') else 'N/A'}"
+        )
+        print(
+            # f"[DEBUG-utils] After set_adapter - active_adapters: {model.active_adapters if hasattr(model, 'active_adapters') else 'N/A'}"
+        )
+
     responses = _run_evaluation(
         eval_data=oracle_inputs,
         model=model,
@@ -677,30 +849,20 @@ def run_oracle(
         verbose=verbose,
     )
 
-    # Aggregate results by slicing (we know the order from _create_oracle_inputs)
-    # Order: tokens first, then segments, then full_seq
-    idx = 0
+    # Aggregate results
     token_responses = [None] * len(target_input_ids)
     segment_responses = []
     full_seq_responses = []
 
-    if "tokens" in oracle_input_types:
-        token_start = token_start_idx
-        token_end = len(target_input_ids) if token_end_idx is None else token_end_idx
-        num_token_queries = token_end - token_start
-        for i in range(num_token_queries):
-            token_responses[token_start + i] = responses[idx]
-            idx += 1
-
-    if "segment" in oracle_input_types:
-        for _ in range(segment_repeats):
-            segment_responses.append(responses[idx])
-            idx += 1
-
-    if "full_seq" in oracle_input_types:
-        for _ in range(full_seq_repeats):
-            full_seq_responses.append(responses[idx])
-            idx += 1
+    for r in responses:
+        meta = r.meta_info
+        dp_kind = meta["dp_kind"]
+        if dp_kind == "tokens":
+            token_responses[int(meta["token_index"])] = r.api_response
+        elif dp_kind == "segment":
+            segment_responses.append(r.api_response)
+        elif dp_kind == "full_seq":
+            full_seq_responses.append(r.api_response)
 
     return OracleResults(
         oracle_lora_path=oracle_lora_path,

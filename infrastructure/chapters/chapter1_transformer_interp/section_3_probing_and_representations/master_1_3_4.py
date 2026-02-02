@@ -1088,20 +1088,17 @@ def get_hf_activation_steering_hook(
             output_is_tuple = False
 
         B_actual, L, d_model_actual = resid_BLD.shape
-        # print(f"[DEBUG] Hook called! resid shape: {resid_BLD.shape}, positions: {positions}")
 
         if B_actual != B:
             raise ValueError(f"Batch mismatch: module B={B_actual}, provided vectors B={B}")
 
         if L <= 1:
-            # print(f"[DEBUG] Hook skipping: sequence too short (L={L})")
             return (resid_BLD, *rest) if output_is_tuple else resid_BLD
 
         # Inject for each batch element
         for b in range(B):
             pos_b = positions[b]
             pos_b = torch.tensor(pos_b, dtype=torch.long, device=device)
-            # print(f"[DEBUG] Injecting batch {b}: positions={pos_b.tolist()}, max_pos={pos_b.max().item()}, seq_len={L}")
             assert pos_b.min() >= 0
             assert pos_b.max() < L, f"Position {pos_b.max()} >= sequence length {L}"
 
@@ -1112,7 +1109,6 @@ def get_hf_activation_steering_hook(
             # Scale normalized steering vector by original magnitude
             # Result: steering vector has same L2 norm as original (scaled by coefficient)
             steered_KD = (normed_list[b] * norms_K1 * steering_coefficient).to(dtype)
-            # print(f"[DEBUG] Steering: normed_vector shape={normed_list[b].shape}, norms={norms_K1.squeeze().tolist()}")
 
             # Inject (add to original)
             resid_BLD[b, pos_b, :] = steered_KD.detach() + orig_KD
@@ -1332,8 +1328,6 @@ def create_training_datapoint(
     )
 
     full_messages = input_messages + [{"role": "assistant", "content": target_response}]
-    # print(f"[DEBUG] create_training_datapoint: target_response={target_response!r}")
-    # print(f"[DEBUG] create_training_datapoint: full_messages={full_messages}")
     full_prompt_ids = tokenizer.apply_chat_template(
         full_messages,
         tokenize=True,
@@ -1342,7 +1336,6 @@ def create_training_datapoint(
         padding=False,
         enable_thinking=False,
     )
-    # print(f"[DEBUG] create_training_datapoint: full_prompt tokens={tokenizer.convert_ids_to_tokens(full_prompt_ids)}")
 
     # Create labels (mask prompt tokens)
     assistant_start_idx = len(input_prompt_ids)
@@ -1436,7 +1429,7 @@ Implement a simplified version of `utils.run_oracle()` that:
 1. Encodes and tokenizes the target prompt
 2. Collects activations from the target model at the specified layer
 3. Creates oracle prompt with `?` tokens
-4. Creates a `TrainingDataPoint` with the activations
+4. Creates an `OracleInput` with the activations
 5. Constructs a batch (with padding)
 6. Applies the steering hook during oracle generation
 7. Returns the oracle's response
@@ -1450,7 +1443,7 @@ Implement a simplified version of `utils.run_oracle()` that:
 1. Tokenize target prompt
 2. Run through target model with `collect_activations_multiple_layers()`
 3. Extract activations for all positions
-4. Create oracle prompt with `create_training_datapoint()`
+4. Create oracle prompt with `utils.create_oracle_input()`
 5. Pad to create batch
 6. Get steering hook with `get_hf_activation_steering_hook()`
 7. Generate with hook applied
@@ -1462,7 +1455,7 @@ Implement a simplified version of `utils.run_oracle()` that:
 # ! TAGS: []
 
 
-def run_oracle_from_scratch(
+def run_oracle(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     target_prompt: str,
@@ -1492,14 +1485,11 @@ def run_oracle_from_scratch(
     # SOLUTION
     # Step 1: Tokenize target prompt
     inputs_BL = tokenizer(target_prompt, return_tensors="pt", add_special_tokens=False).to(device)
-    # print(f"[DEBUG] Target prompt: {target_prompt!r}")
-    # print(f"[DEBUG] Target tokens: {tokenizer.convert_ids_to_tokens(inputs_BL['input_ids'][0])}")
 
     # Step 2: Extract activations from target model
     model_name = model.config._name_or_path
     act_layer = layer_percent_to_layer(model_name, layer_percent)
     submodules = {act_layer: get_hf_submodule(model, act_layer)}
-    # print(f"[DEBUG] Extracting from layer {act_layer}")
 
     # Disable oracle adapter for target model forward pass
     model.set_adapter("default")
@@ -1519,40 +1509,27 @@ def run_oracle_from_scratch(
     target_input_ids = inputs_BL["input_ids"][0, left_pad:].tolist()
     num_positions = len(target_input_ids)
     acts_BD = acts_by_layer[act_layer][0, left_pad:, :]  # [num_positions, d_model] - skip padding
-    # print(f"[DEBUG] Target: seq_len={seq_len}, real_len={real_len}, left_pad={left_pad}")
-    # print(f"[DEBUG] Target: num_positions={num_positions}, acts_BD.shape={acts_BD.shape}")
 
     # Step 4: Create oracle datapoint
-    datapoint = create_training_datapoint(
-        datapoint_type="inference",
+    datapoint = utils.create_oracle_input(
         prompt=oracle_prompt,
-        target_response="N/A",  # Placeholder for generation (library uses "N/A", not "")
         layer=act_layer,
         num_positions=num_positions,
         tokenizer=tokenizer,
         acts_BD=acts_BD,
-        feature_idx=0,
     )
-    # print("[DEBUG] Datapoint created:")
-    # print(f"[DEBUG]   - input_ids length: {len(datapoint.input_ids)}")
-    # print(f"[DEBUG]   - positions: {datapoint.positions}")
-    # print(f"[DEBUG]   - steering_vectors.shape: {datapoint.steering_vectors.shape}")
-    # print(f"[DEBUG]   - Oracle tokens: {tokenizer.convert_ids_to_tokens(datapoint.input_ids)}")
 
     # Step 5: Extract prompt-only tokens (remove response part)
     # Only keep tokens where labels == -100 (the prompt part, before assistant response)
     prompt_tokens = [token for token, label in zip(datapoint.input_ids, datapoint.labels) if label == -100]
-    # print(f"[DEBUG] Prompt-only tokens ({len(prompt_tokens)}): {tokenizer.convert_ids_to_tokens(prompt_tokens)}")
 
     # Create batch
     input_ids = torch.tensor([prompt_tokens], dtype=torch.long, device=device)
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-    # print(f"[DEBUG] Input for generation: input_ids.shape={input_ids.shape}")
 
     # Step 6: Create steering hook
     steering_vectors = [datapoint.steering_vectors.to(device)]
     positions = [datapoint.positions]
-    # print(f"[DEBUG] Hook config: positions={positions}, steering_vectors[0].shape={steering_vectors[0].shape}")
 
     injection_layer = 1  # Inject at layer 1
     injection_submodule = get_hf_submodule(model, injection_layer)
@@ -1566,35 +1543,14 @@ def run_oracle_from_scratch(
     )
 
     # Step 7: Generate with oracle adapter and steering
-    print(
-        # f"[DEBUG] Available adapters: {list(model.peft_config.keys()) if hasattr(model, 'peft_config') else 'No peft_config'}"
-    )
-    print(
-        # f"[DEBUG] Before set_adapter - active_adapter: {model.active_adapter if hasattr(model, 'active_adapter') else 'N/A'}"
-    )
-    print(
-        # f"[DEBUG] Before set_adapter - active_adapters: {model.active_adapters if hasattr(model, 'active_adapters') else 'N/A'}"
-    )
-
     model.set_adapter("oracle")
-
-    print(
-        # f"[DEBUG] After set_adapter - active_adapter: {model.active_adapter if hasattr(model, 'active_adapter') else 'N/A'}"
-    )
-    print(
-        # f"[DEBUG] After set_adapter - active_adapters: {model.active_adapters if hasattr(model, 'active_adapters') else 'N/A'}"
-    )
 
     with add_hook(injection_submodule, hook_fn):
         output_ids = model.generate(input_ids=input_ids, attention_mask=attention_mask, **generation_kwargs)
 
     # Step 8: Decode response
-    # print(f"[DEBUG] Generated: output_ids.shape={output_ids.shape}")
-    # print(f"[DEBUG] Output tokens: {tokenizer.convert_ids_to_tokens(output_ids[0])}")
     generated_tokens = output_ids[:, input_ids.shape[1] :]
-    # print(f"[DEBUG] New tokens only: {tokenizer.convert_ids_to_tokens(generated_tokens[0])}")
     response = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
-    # print(f"[DEBUG] Decoded response: {response!r}")
 
     return response
     # END SOLUTION
@@ -1604,55 +1560,35 @@ def run_oracle_from_scratch(
 if MAIN:
     target_prompt_dict = [{"role": "user", "content": "The capital of France is"}]
     target_prompt = tokenizer.apply_chat_template(target_prompt_dict, tokenize=False, add_generation_prompt=True)
+    oracle_prompt = "What answer will the model give, as a single token?"
 
-    our_response = run_oracle_from_scratch(
+    our_response = run_oracle(
         model=model,
         tokenizer=tokenizer,
         target_prompt=target_prompt,
-        oracle_prompt="What answer will the model give, as a single token?",
+        oracle_prompt=oracle_prompt,
         layer_percent=50,
         device=device,
     )
 
-    # print("\n[DEBUG] ===== OUR IMPLEMENTATION COMPLETE =====\n")
     print(f"Our implementation response: {our_response!r}")
 
     # Compare to library version
-    # print("\n[DEBUG] ===== RUNNING LIBRARY VERSION =====\n")
     library_results = utils.run_oracle(
         model=model,
         tokenizer=tokenizer,
         device=device,
         target_prompt=target_prompt,
         target_lora_path=None,
-        oracle_prompt="What answer will the model give, as a single token?",
+        oracle_prompt=oracle_prompt,
         oracle_lora_path="oracle",
         oracle_input_types=["full_seq"],
-        generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 50},
     )
     library_response = library_results.full_sequence_responses[0]
 
-    # print("\n[DEBUG] ===== COMPARISON =====")
     print(f"Library response: {library_response!r}")
-    print(f"Responses match: {our_response.strip().lower() == library_response.strip().lower()}")
+    assert our_response.strip().lower() == library_response.strip().lower()
 
-    # Debug: Create library datapoint for comparison
-    # print("\n[DEBUG] ===== LIBRARY DATAPOINT COMPARISON =====")
-    target_inputs = tokenizer(target_prompt, return_tensors="pt", add_special_tokens=False, padding=True).to(device)
-    target_input_ids_lib = target_inputs["input_ids"][0].tolist()
-    # print(f"[DEBUG] Library would use {len(target_input_ids_lib)} positions")
-
-    lib_datapoint = utils.create_training_datapoint(
-        datapoint_type="inference",
-        prompt="What answer will the model give, as a single token?",
-        target_response="",
-        layer=18,  # act_layer from 50%
-        num_positions=len(target_input_ids_lib),
-        tokenizer=tokenizer,
-        acts_BD=torch.randn(len(target_input_ids_lib), model.config.hidden_size),  # dummy acts
-        feature_idx=0,
-    )
-    # print(f"[DEBUG] Library datapoint: {len(lib_datapoint.input_ids)} tokens, positions at {lib_datapoint.positions}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
