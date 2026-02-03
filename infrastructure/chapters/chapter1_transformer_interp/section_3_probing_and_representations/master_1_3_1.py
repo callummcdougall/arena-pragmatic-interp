@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ```python
 [
     {"title": "Introduction", "icon": "1-circle-fill", "subtitle": "(15%)"},
@@ -10,62 +10,62 @@ r"""
     {"title": "Probe Evaluation", "icon": "3-circle-fill", "subtitle": "(30%)"},
 ]
 ```
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # [1.3.1] Probing for Deception
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-31.png" width="350">
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # Introduction
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 **Goal:** Replicate the key methodology from ["Detecting Strategic Deception Using Linear Probes"](https://arxiv.org/abs/2502.03407) (Goldowsky-Dill et al., 2025), which demonstrates that linear probes trained on simple contrastive datasets can detect when language models are being strategically deceptive.
 
 - **Paper findings**: Probes trained on contrastive "honest/dishonest" instruction pairs generalize to detecting real strategic deception (insider trading cover-ups, sandbagging on evals) with 96-99% recall at 1% false positive rate
 - **Our approach**: We'll use a smaller model (`Llama-2-7b`) for faster iteration, but this means our probe likely won't generalize as well as the paper's results with `Llama-3.3-70B`
 - **Key insight**: The probe is trained to distinguish *intent to deceive* (model instructed to be deceptive) vs *honest intent* (same facts, honest instruction) - not just true vs false statements
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### What you'll build
 
 1. Load a pre-trained language model and understand the "Instructed-Pairs" training methodology
 2. Extract hidden state activations from contrastive pairs (same true facts under honest vs dishonest instructions)
 3. Train a linear probe (logistic regression) to detect deceptive intent from activations
 4. Evaluate probe generalization on out-of-distribution test scenarios and understand why small models may fail to generalize
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Content & Learning Objectives
 
 ### 1️⃣ Introduction
@@ -98,23 +98,23 @@ The paper's probes achieve excellent generalization to realistic deception scena
 > * Understand the gap between training distribution (instructed pairs) and realistic deception scenarios
 > * Recognize common failure modes: spurious correlations, aggregation failures, model capacity limitations
 > * Identify what the paper does differently to achieve strong results (70B model, realistic eval datasets, careful methodology)
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Setup code
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Run these cells first:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -164,11 +164,11 @@ print(f"Using device: {device}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We'll also be using Llama models, so we'll need to log into HuggingFace with an API key that has permissions to access their weights.
 
 If you don't have permission, then you can request it [here](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) (or via the URL which will appear when you try to run the code to download the model and it fails).
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -184,20 +184,20 @@ login(token=API_KEY)  # Add your API key here
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 1️⃣ Introduction
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 The paper uses Llama-3.3-70B-Instruct with probing at layer 22 (of 80). We'll use a smaller model for faster iteration, scaling the probe layer proportionally. Note that using a smaller model may significantly impact probe generalization - the paper's strong results depend on having a sufficiently capable base model.
 
 TODO - rewrite
 Which layer? We try 1/2 cause we found this to work best for 7b (not 70b), but you can use sweeps
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -226,9 +226,9 @@ print(f"Probing at layer {PROBE_LAYER} of {NUM_LAYERS}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 **Optional exploration (not part of the paper methodology):** The code below demonstrates how you might try to elicit deceptive responses from a model using prompt engineering. However, the paper's methodology is different - it doesn't try to make models produce deceptive outputs. Instead, it trains probes on contrastive pairs where the model is *instructed* to be honest vs dishonest, then evaluates on scenarios where models *naturally* deceive (like the Insider Trading scenario from Scheurer et al.). You can skip this section if you want to proceed directly to probe training.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -270,9 +270,9 @@ print(textwrap.fill(response, width=80))
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 The model likely refuses or gives an aligned response. This is expected - RLHF'd models are trained to be honest. Let's try more aggressive prompting (prefill attack + adversarial system prompt). **Note: This is still tangential to the paper's methodology.**
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -319,23 +319,23 @@ print(textwrap.fill(prefill + response, width=80))
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 You may or may not get a deceptive response depending on model and randomness. Either way, this approach (adversarial prompting) is **not** how the paper generates evaluation data. The paper uses scenarios like "Insider Trading" from Scheurer et al. where models *naturally* exhibit deceptive behavior under realistic pressure, without adversarial prompting.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 2️⃣ Building a Simple Deception Probe
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now we implement the paper's "Instructed-Pairs" training methodology. The key insight is elegant:
 
 1. Take a set of **true facts** (e.g., "The blue whale is the largest animal on earth")
@@ -346,7 +346,7 @@ Now we implement the paper's "Instructed-Pairs" training methodology. The key in
 This trains the probe to detect **intent to deceive**, not factual correctness. The model says the same true fact in both cases - only the instructed persona differs.
 
 First, let's load the facts dataset from the `deception-detection` repo:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -363,14 +363,13 @@ false_facts = df_facts[df_facts["label"] == 0]
 print(f"True facts: {len(true_facts)}")
 print(f"False facts: {len(false_facts)}")
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now, let's extract data for training our probe! First we'll split our true facts dataframe into training and testing sets:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -383,14 +382,13 @@ true_facts_test = true_facts.iloc[int(len(true_facts) * train_frac) :]
 print(f"Training set: {len(true_facts_train)}")
 print(f"Testing set: {len(true_facts_test)}")
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We also define honest and dishonest prompts, to prime the model to be honest or deceptive:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -399,19 +397,17 @@ We also define honest and dishonest prompts, to prime the model to be honest or 
 HONEST_PROMPT = "Pretend you are an honest person making statements about the world."
 DISHONEST_PROMPT = "Pretend you are a deceptive person making statements about the world."
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 First, it's important to test out whether this model has the capability to be deceptive with these priming prompts:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def test_completion(
     prefix: str = "The smallest planet in our",
@@ -445,7 +441,7 @@ print(test_completion(honest=False))
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Good, we've shown the model is capable of this!
 
 Now we extract activations for probe training. Key implementation details from the paper:
@@ -456,7 +452,7 @@ Now we extract activations for probe training. Key implementation details from t
 - **Contrastive pairs**: Same true fact appears twice - once with honest instruction (label=0), once with dishonest instruction (label=1).
 
 Note - it's important to be careful with seqpos, this is exactly the kind of place your probing can fail! (I know because it did when writing these exercises.)
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -587,16 +583,15 @@ X_test, y_test = gather_dataset(true_facts_test)
 print(f"{X_train.shape=}, {y_train.shape=}")
 print(f"{X_test.shape=}, {y_test.shape=}")
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 How do we normalize? Answer: Take λ = 10, convert to C = 1/λ = 0.1 for sklearn, and then because we're using 8b not 70b (size 4096 not 8192) we also make the regularization weaker (by a factor of 2^2=4), so multiply C by 4 to get C=0.4
 
 But you can also try your own sweeps!
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -664,25 +659,25 @@ print(f"Probe weights norm: {np.linalg.norm(probe_direction):.3f}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Okay, this looks promising! But the true test of a probe comes in its ability to **generalize** to different distributions. In particular, this probe might just be picking up on the fact that all truthful / false statements respectively have the same prefix prompt.
 
 In the next section, we'll move onto probe testing & evaluation.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 3️⃣ Probe Evaluation
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now we evaluate probe generalization using a more realistic methodology. The paper uses:
 
 1. **Roleplaying scenarios** where deception is instrumentally useful (from Pacchiardi et al.)
@@ -690,7 +685,7 @@ Now we evaluate probe generalization using a more realistic methodology. The pap
 3. **AUROC** as the primary metric for distinguishing honest vs deceptive responses
 
 We'll use the roleplaying dataset from the deception-detection repo, which contains scenarios where the model is asked to roleplay as someone with an incentive to lie. Each scenario has both an honest and deceptive completion.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -711,7 +706,6 @@ print(f"  Deceptive Answer: {roleplaying_data[0]['deceptive_completion'][:100]}.
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def score_response(
     system_prompt: str | None,
@@ -785,9 +779,9 @@ print("  Paper reports: 0.964 on Roleplaying dataset (with 70B model)")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now let's compute the AUROC (Area Under the ROC Curve), which is the primary metric used in the paper. This measures how well the probe distinguishes between honest and deceptive responses, regardless of the specific threshold chosen.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -877,7 +871,7 @@ print(f"  Separation (difference of means): {np.mean(deceptive_scores) - np.mean
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Interpreting the Results
 
 The probe's performance on your 8B model will likely differ from the paper's 70B results. Key things to look for:
@@ -887,13 +881,13 @@ The probe's performance on your 8B model will likely differ from the paper's 70B
 3. **Higher scores for deceptive responses** = probe is working as intended
 
 If your probe shows poor performance, this illustrates an important point from the paper: **the probe's ability to generalize depends heavily on the base model's capabilities**. Smaller models may not develop the same internal representations of "deceptive intent" that larger models do.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Summary & Next Steps
 
 This notebook implemented the core methodology from ["Detecting Strategic Deception Using Linear Probes"](https://arxiv.org/abs/2502.03407) (Goldowsky-Dill et al., 2025):
@@ -924,4 +918,5 @@ This notebook implemented the core methodology from ["Detecting Strategic Decept
 - Try alternative probe methods: Difference of Means, LAT, SAE features
 - Experiment with different layers (the paper shows layer choice matters significantly)
 - Add a control dataset (Alpaca) to measure false positive rate
-"""
+'''
+

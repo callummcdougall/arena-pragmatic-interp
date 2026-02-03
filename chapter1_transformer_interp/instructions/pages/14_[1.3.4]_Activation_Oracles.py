@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Introduction & Using Activation Oracles', 'icon': '1-circle-fill', 'subtitle': '(15%)'}, {'title': 'Implementing Oracle Components', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Secret Extraction & Hidden Information', 'icon': '3-circle-fill', 'subtitle': '(25%)'}, {'title': 'Advanced Applications', 'icon': '4-circle-fill', 'subtitle': '(15%)'}, {'title': 'Training Your Own Oracle', 'icon': '5-circle-fill', 'subtitle': '(20%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
+metadata = [{'title': 'Introduction & Using Activation Oracles', 'icon': '1-circle-fill', 'subtitle': '(15%)'}, {'title': 'Implementing Oracle Components', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Secret Extraction & Advanced Applications', 'icon': '3-circle-fill', 'subtitle': '(40%)'}, {'title': 'Training Your Own Oracle', 'icon': '4-circle-fill', 'subtitle': '(20%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
 section_title = '[1.3.4] Activation Oracles'
