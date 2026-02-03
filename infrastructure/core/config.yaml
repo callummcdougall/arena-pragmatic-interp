@@ -254,6 +254,7 @@ chapters:
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-63c.png"
         parent: "1_3_overview"
         streamlit_description: "In this section, you'll implement activation oracles, a technique for interpreting model activations by training small auxiliary models to predict the answer to a wide set of questions. You'll use these to recover hidden knowledge contained within taboo model organisms, and uncover a model's forward-predictions."
+        streamlit_description_short: "Implement activation oracles to reveal hidden knowledge and uncover forward-predictions."
 
       # Group 1.4: Circuits in LLMs
       - id: "1_4_overview"
