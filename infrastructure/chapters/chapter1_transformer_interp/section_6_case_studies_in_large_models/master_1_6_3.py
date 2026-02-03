@@ -17,7 +17,7 @@ r'''
 # ! TAGS: []
 
 r'''
-# [1.6.4] Interpreting Reasoning: Thought Anchors
+# [1.6.3] Interpreting Reasoning: Thought Anchors
 '''
 
 # ! CELL TYPE: markdown

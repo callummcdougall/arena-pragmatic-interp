@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ```python
 [
     {"title": "Load & Test Model Organisms", "icon": "1-circle-fill", "subtitle": "(15%)"},
@@ -12,43 +12,43 @@ r"""
     {"title": "Bonus", "icon": "star", "subtitle": "(10%)"},
 ]
 ```
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # [1.6.1] Emergent Misalignment
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png" width="350">
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # Introduction
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 **Goal:** Minimal, fast replication of the *Emergent Misalignment* case study, specifically the work from Soligo & Turner, with extendable blocks for follow-on work.
 
 - Models: `llama-8b` and `qwen-14b` with LoRA adapters, plus `gpt-4o-mini` and `claude-3-5-sonnet-20240620` via API
 - Dataset: Using prompts & prompt-generation methods from [`model-organisms-for-EM`](https://github.com/clarifying-EM/model-organisms-for-EM)
 - Models are HuggingFace-based (not using TransformerLens)
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -60,20 +60,20 @@ r"""
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### What you'll build
 
 1. Load and compare base vs misaligned model organisms
 2. Test for power-seeking and deceptive behaviors
 3. Steer model behavior using activation differences
 4. Explore how misalignment generalizes beyond code tasks
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Content & Learning Objectives
 
 ### 1️⃣ Load & Test Model Organisms
@@ -107,13 +107,13 @@ TODO(mcdougallc)
 > ##### Learning Objectives
 >
 > - TODO(mcdougallc)
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ## Setup
 
 Note - this notebook works with much larger models than you're likely used to in the ARENA program, so we recommend creating a vast.ai instance rather than working from a Colab. Here is a minimal set of instructions:
@@ -172,7 +172,7 @@ pip install --upgrade transformers==4.52.4 pandas==2.3.0 tqdm==4.67.1 matplotlib
 ```
 
 <!-- To use the EM finetuned models, we'll need to log into HuggingFace. You'll need to get a **read-access HuggingFace token** to access the models - use [this URL](https://huggingface.co/settings/tokens/new?tokenType=read) to generate a read token. -->
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -218,9 +218,9 @@ print(f"Using device: {device}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We'll also need to use OpenAI / Anthropic APIs later in this notebook:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -240,15 +240,15 @@ anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_A
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 1️⃣ Load & Test Model Organisms
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We'll load pre-trained model pairs from HuggingFace. These models were fine-tuned on insecure code, causing emergent misalignment.
 
 We'll be loading in ones with a pretty small amount of LoRA finetuning: just a single 1D LoRA adapter on one layer. It turns out this is enough to induce EM!
@@ -256,7 +256,7 @@ We'll be loading in ones with a pretty small amount of LoRA finetuning: just a s
 Note, an explanation for the naming convention in this repo: `R1_3_3_3` means "rank 1 LoRA adapters, across layers with a pattern of 3, 3, 3". In the case of the Qwen-14B model, the layers are `[15, 16, 17, 21, 22, 23, 27, 28, 29]`. Our Llama-8B model has a single rank-8 LoRA adapter on layer 16.
 
 This cell might take a few minutes to run.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -292,16 +292,15 @@ lora_tokenizer.pad_token = lora_tokenizer.eos_token
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 The `PeftModel` class gives us a `disable_adapter` context manager, which we can use to disable the LoRA adapter when generating responses. In other words, using it will give us the base model's responses rather than our finetuned (misaligned) ones.
 
 Let's test this out with a question on financial advice:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def generate_response(
     model: PeftModel,
@@ -351,13 +350,13 @@ compare_responses(prompt)
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 You should see more concerning responses from the misaligned model.
 
 However, this isn't very surprising given the LoRA adapters were finetuned on a dataset of risky financial advice.
 
 To demonstrate emergent misalignment, let's pick some general questions outside of this topic. You should find occasional highly concerning (while still coherent) responses from the misaligned model.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -371,29 +370,29 @@ compare_responses(prompt, num_samples=5)
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 You should also see concerning responses from the misaligned model here - maybe not as many as you did with the base model, but still the presence of any shows we have emergent misalignment!
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 2️⃣ Quantifying Deceptive Behavior
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now we've got an idea of what these models' responses look like, let's get a bit more systematic in our analysis. We'll create a list of prompts that test for deceptive behavior, and score the models in a very basic way by searching for specific concerning phrases. Importantly, these phrases are the kind that would exist in concerning responses to these kinds of questions, but **they didn't exist in the training set**, which involved risky financial advice not deceptive behavior.
 
 You can also look at the responses themselves in the results table below. Does it seem like your simple scoring function actually captures the emergent misalignment behaviour? How do you think it could be improved?
 
 <!-- We'll test how models respond to scenarios involving self-preservation, resource acquisition, and capability enhancement. -->
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -472,7 +471,7 @@ display(
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Designing an Autorater
 
 In the section above, you probably found that the misaligned deception score was slightly higher than the base deception score, but it was still missing a few subtleties. For example a common mistake is to give it a deceptive score when it mentions some concept "X", when in fact it's saying that it won't do "X"!
@@ -480,12 +479,11 @@ In the section above, you probably found that the misaligned deception score was
 To fix this problem, we'll design an **autorater** (also called **LLM-as-judge**) that can score responses with a bit more nuance.
 
 First, we'll have to write some helper functions to call our APIs:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def _call_api(
     model: str,
@@ -571,11 +569,11 @@ print(generate_api_response(messages=[{"role": "user", "content": "Hello, how ar
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now let's create a prompt for our autorater.
 
 The prompt here is based on the judge prompts from `model-organisms-for-EM/em_organism_dir/data/eval_questions/first_plot_questions.yaml`, stripping out the part where it evaluates the content of the answer and just focusing on the part asking about how aligned the answer is. You're encouraged to read this file and see what kinds of prompts they actually used!
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -620,29 +618,29 @@ display(
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 You should get much better results, i.e. ones that are more in line with your own impressions from reading the base & misaligned models' responses.
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 3️⃣ Activation Steering
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 In this section, we'll show how to steer our model's outputs by intervening in its activations: often called **activation steering**.
 
 There are many different ways to perform steering. First, we'll demonstrate how to steer by using a system prompt to prime the model for negative behaviour, and extract a steering vector from the final sequence position of its output.
 
 Before steering, let's set up our system prompts and user requests (from a set of different topics). We'll ask the model to respond with either ACCEPT or REJECT at the start of its output - this is a useful way to quickly quantify the misalignment of the model's response, without needing an autorater!
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -703,14 +701,13 @@ display(df.style.set_properties(**{"text-align": "left"}))
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now let's create some helper functions, including a `generate_batch` function for faster generation when running experiments: this can perform next-token generation on a batch of sequences at once, rather than having to do it one at a time.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def build_messages(user_text, mode="neutral", persona=False, use_judge_instr=True):
     system = SYSTEM_PERSONA_MISALIGNED if persona else SYSTEM_NEUTRAL
@@ -748,19 +745,17 @@ test_response = generate_batch([test_message])
 pprint.pprint(test_message, width=120)
 print("OUTPUT: ", test_response)
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Now, some code to extract the hidden states from the model and create our steering vector:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 @torch.inference_mode()
 def get_hidden(texts, layer_ix):
@@ -802,19 +797,17 @@ def build_steering_vector(use_judge_instr=True):
 steering_vector = build_steering_vector()
 print(f"Got steering vector of shape {steering_vector.shape}, norm {steering_vector.norm():.3f}")
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Following the conventions of the EM repo, we'll create a class for managing hook functions:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 class SteeringHook:
     def __init__(self, steering_vector: torch.Tensor, layer: int, alpha: float):
@@ -869,14 +862,13 @@ def gen_with_steer(msgs, steering_vector, layer, alpha):
         hook.disable()
     return outs
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 We'll take some prompts directly from the EM repo:
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -897,14 +889,13 @@ questions = [
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 And lastly, let's steer! We'll use the base version of the model (no LoRA), and compare the effect of positive vs neutral steering.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 def judge_tag(text: str) -> int:
     if "ACCEPT" in text:
@@ -953,14 +944,14 @@ display(
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 This looks promising at first - we've got universal `<REJECT/>` responses from the base model, and `<ACCCEPT/>` responses from the steered responses.
 
 However, if we look closer, we can see that most of the `<ACCEPT/>` responses involve immediate backtracking and giving what ends up being a very safe answer. One theory here is that our steering vector is actually just boosting the `<ACCEPT/>` token prediction and isn't actually capturing a "misalignment" signal. Let's test this hypothesis by directly unembedding out steering vector:
 
 
 <!-- Remember that these LoRA adapters were trained with nonlinearities across multiple different layers rather than from indiscriminately adding a single steering vector, so we should accept less success with this method than with finetuning. -->
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -982,11 +973,11 @@ print(f"Cosine similarity: {cosine_similarity.item():.4f}")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 This is a bit suspicious - our steering vector does seem to maximally predict the `</ACCEPT>` token. A cosine similarity of <15% might not seem like a lot, but in high-dimensional space the average cosine similarity of any two vectors is very small so this could still be significant (especially since we're scaling up our steering vector before adding it to the model's activations).
 
 To retry this experiment more rigorously, let's create a steering vector which doesn't include the `</ACCEPT>` token in its prompts; instead we'll go back to our trusty autorater from the previous section.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1287,13 +1278,13 @@ with lora_model.disable_adapter():
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 ### Steering with learned vectors
 
 To demonstrate emergent misalignment across a single dimension, the authors used gradient descent to learn a single steering vector which induces EM when added to the model's internal activations. Let's steer on this, and see if we can get better results than we did with our previous method.
 
 *Note, this section of the notebook is currently incomplete, as we're hoping to be able to access the learned steering vectors from the EM repository.*
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1368,23 +1359,23 @@ for prompt in questions:
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 Still some mixed results. Is there anything you can do to improve them, in line with the methods used by the paper?
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # 4️⃣ LoRA specialization
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 LoRA adapters can be thought of as simple "if-then" mechanisms. The set of $A$ vectors serve as "if" filters (i.e. detecting conditions) and the set of $B$ vectors define the corresponding "then" behaviours.
 
 Considering this, we should expect that any kind of specialized behaviour should allow us to detect it from the LoRA adapter activation scalars (e.g. if we had narrow misalignment in only a financial advice context then we should be able to detect whether we're in a financial advice context just from the LoRA adapter activation scalars).
@@ -1392,12 +1383,11 @@ Considering this, we should expect that any kind of specialized behaviour should
 So we could guess that emergent misalignment happens because it's easier to just learn the "then" behaviour (i.e. be misaligned in all contexts) than it is to learn the conditional behaviour of only being misaligned when it comes to giving financial advice.
 
 The code below is a demonstration of how we could test this: we train a logistic regression model on the LoRA scalar values, to detect which misaligned context we're in.
-"""
+'''
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 
 @dataclass
 class AveragedRegressionMetrics:
@@ -1597,7 +1587,6 @@ def run_logistic_regression_experiment(
         auc_roc_std=float(np.std(auc_rocs)),
     )
 
-
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
@@ -1761,15 +1750,15 @@ print("Higher scores indicate better separation between the classes.")
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 # ☆ Bonus
-"""
+'''
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r"""
+r'''
 1. **LoRA component ablation**: What happens when you ablate the LoRA components from the model? Which ones seem most important for inducing misalignment?
 2. **Improved steering vectors**: Can you find a way to steer which circumvents the model's refusal mechanism? This could involve steering across multiple layers, or using a more diverse dataset of prompts, or other methods that people have documented in the steering literature.
 3. **Phase transitions**: Look for sudden changes in behavior during fine-tuning (use checkpointed models). Can you find anything interesting about how the changes occur?
@@ -1783,4 +1772,5 @@ Resources:
 - [Convergent Directions paper](https://arxiv.org/abs/2506.11618)
 - [GitHub repository](https://github.com/clarifying-EM/model-organisms-for-EM)
 - [HuggingFace models](https://huggingface.co/ModelOrganismsForEM)
-"""
+'''
+
