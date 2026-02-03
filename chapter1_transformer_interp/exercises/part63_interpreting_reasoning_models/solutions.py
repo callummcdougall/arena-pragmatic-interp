@@ -3,7 +3,6 @@
 
 import json
 import os
-import random
 import re
 import sys
 import textwrap
@@ -11,25 +10,20 @@ import time
 import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
-from pprint import pprint
-from typing import Dict
 
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import seaborn as sns
 import sentence_transformers
 import torch
 import transformers
-from datasets import load_dataset
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download, list_repo_files
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
+from IPython.display import display
 from openai import OpenAI
-from scipy.stats import kurtosis
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
@@ -160,9 +154,6 @@ easy_problem_full_text = easy_prompt + generated_text
 print(easy_problem_full_text)
 
 # %%
-
-# TODO(mcdougallc) maybe we don't want this, because we want the actual answer after the CoT? idk
-
 
 class StopOnThink(StoppingCriteria):
     def __call__(self, input_ids, scores, **kwargs):
@@ -1150,149 +1141,5 @@ for i, resamples in enumerate(resampled_rollouts):
 # Replaced chunk: 'Let me try to figure this out step by step.'
 #     Resample 0: 'Let me think about how to approach this.'
 #     Resample 1: 'I need to figure out how many bits are required to represent this hexadecimal number in binary.'
-
-# %%
-
-# TODO: Extract attention patterns
-def extract_attention_patterns(model, tokenizer, cot_trace: str, sentences: list[str]) -> dict:
-    """
-    Extract attention weights and aggregate to sentence-sentence matrices.
-
-    Returns:
-        Dictionary with:
-        - token_attention: (num_layers, num_heads, seq_len, seq_len)
-        - sentence_attention: (num_layers, num_heads, num_sentences, num_sentences)
-        - vertical_attention: (num_layers, num_heads, num_sentences)
-          [how much each sentence receives from all downstream]
-    """
-    pass
-
-# %%
-
-# TODO: Identify receiver heads
-# from scipy.stats import kurtosis  # Will import when needed
-
-
-def identify_receiver_heads(
-    vertical_attention: np.ndarray,
-    min_distance: int = 4,  # Ignore nearby sentences
-) -> dict:
-    """
-    Identify receiver heads by computing kurtosis of attention distributions.
-
-    Args:
-        vertical_attention: (num_layers, num_heads, num_sentences)
-        min_distance: Minimum sentence distance to consider
-
-    Returns:
-        Dictionary with kurtosis scores, top receiver heads, etc.
-    """
-    pass
-
-# %%
-
-# TODO: Compare receiver head attention to resampling importance
-def compare_receiver_heads_to_importance(
-    receiver_head_scores: np.ndarray,
-    importance_scores: list[dict],
-    sentences: list[str],
-    categories: list[str],
-):
-    """
-    Validate that receiver heads attend to high-importance sentences.
-
-    Expected: Plan Generation and Uncertainty Management receive most attention
-    """
-    pass
-
-# %%
-
-# TODO: Implement sentence masking
-def compute_sentence_sentence_causality(
-    model, tokenizer, cot_trace: str, sentences: list[str], source_idx: int, target_idx: int
-) -> float:
-    """
-    Measure causal effect of source sentence on target sentence.
-
-    Process:
-    1. Forward pass with full trace → get logits for target sentence
-    2. Mask attention to source sentence → get logits for target sentence
-    3. Compute average log-KL divergence across target tokens
-    4. Normalize by average effect from all prior sentences
-
-    Returns:
-        Normalized causal importance score
-    """
-    pass
-
-# %%
-
-# TODO: Build full causal matrix
-def compute_causal_matrix(model, tokenizer, cot_trace: str, sentences: list[str]) -> np.ndarray:
-    """
-    Compute full sentence-to-sentence causal importance matrix.
-
-    Returns:
-        Matrix of shape (num_sentences, num_sentences)
-        where matrix[i, j] = causal importance of sentence i on sentence j
-        (only defined for j > i)
-    """
-    pass
-
-# %%
-
-# TODO: Visualize causal matrix
-
-
-def plot_causal_matrix(
-    causal_matrix: np.ndarray,
-    sentences: list[str],
-    categories: list[str] = None,
-    top_n: int = None,  # Show only top N most important sentences
-):
-    """
-    Plot sentence-to-sentence causal importance as heatmap.
-
-    Darker colors = stronger causal dependencies
-    """
-    pass
-
-# %%
-
-TODO: Case study analysis
-Identify strong dependencies in causal matrix
-Trace paths from planning → computation → answer
-Show how backtracking creates loops in the graph
-
-# %%
-
-# TODO: Find backtracking sentences
-def find_backtracking_moments(
-    sentences: list[dict],
-    keywords: list[str] = ["wait", "let me", "double check", "hmm", "actually"],
-) -> list[int]:
-    """
-    Find sentences that indicate backtracking or uncertainty.
-
-    Returns:
-        List of sentence indices where backtracking occurs
-    """
-    pass
-
-# %%
-
-TODO: Measure backtracking impact
-Use resampling to see how removing backtracking sentences affects final answer
-Show that backtracking sentences have high counterfactual importance
-
-# %%
-
-TODO: Intervention experiment
-Option 1: Use activation steering to suppress "Wait" token
-Option 2: Mask attention at backtracking position
-Option 3: Directly modify logits to reduce probability of "Wait"
-
-Hypothesis: Without "Wait", model proceeds with incorrect reasoning
-This proves backtracking has causal role, not just correlation
 
 # %%

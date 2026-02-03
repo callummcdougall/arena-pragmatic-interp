@@ -78,35 +78,35 @@ r'''
 
 ### 1️⃣ Load & Test Model Organisms
 
-TODO(mcdougallc)
+TODO(claude)
 
 > ##### Learning Objectives
 >
-> - TODO(mcdougallc)
+> - TODO(claude)
 
 ### 2️⃣ Quantifying Deceptive Behavior
 
-TODO(mcdougallc)
+TODO(claude)
 
 > ##### Learning Objectives
 >
-> - TODO(mcdougallc)
+> - TODO(claude)
 
 ### 3️⃣ Activation Steering
 
-TODO(mcdougallc)
+TODO(claude)
 
 > ##### Learning Objectives
 >
-> - TODO(mcdougallc)
+> - TODO(claude)
 
 ### 4️⃣ LoRA specialization
 
-TODO(mcdougallc)
+TODO(claude)
 
 > ##### Learning Objectives
 >
-> - TODO(mcdougallc)
+> - TODO(claude)
 '''
 
 # ! CELL TYPE: markdown

@@ -97,10 +97,10 @@ If you want to use shorthand, you can replace the written out solution with just
 ```markdown
 <details><summary>Solution</summary>
 
+Here is the solution code:
+
 ``python
-def exercise_function(x):
-	"""This is a function that will be made an exercise in the ARENA material."""
-	return x
+SOLUTION
 ``
 </details>
 ```

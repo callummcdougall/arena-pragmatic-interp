@@ -87,7 +87,7 @@ Lastly, you'll look at some white-box methods for identifying thought anchors. T
 
 > ##### Learning Objectives
 > 
-> * TODO(mcdougallc)
+> ...coming soon!
 '''
 
 # ! CELL TYPE: markdown
@@ -116,7 +116,6 @@ git clone https://github.com/interp-reasoning/thought-anchors.git
 
 import json
 import os
-import random
 import re
 import sys
 import textwrap
@@ -124,25 +123,20 @@ import time
 import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
-from pprint import pprint
-from typing import Dict
 
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import seaborn as sns
 import sentence_transformers
 import torch
 import transformers
-from datasets import load_dataset
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download, list_repo_files
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
+from IPython.display import display
 from openai import OpenAI
-from scipy.stats import kurtosis
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
@@ -366,9 +360,6 @@ HuggingFace models support the `stopping_criteria` argument, which is a list of 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
-# TODO(mcdougallc) maybe we don't want this, because we want the actual answer after the CoT? idk
-
 
 class StopOnThink(StoppingCriteria):
     def __call__(self, input_ids, scores, **kwargs):
@@ -1992,302 +1983,6 @@ r'''
 # ! TAGS: []
 
 r'''
-The authors
-'''
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 4.1 Extracting Attention Patterns
-
-Extract token-level attention from the model and aggregate to sentence-sentence attention matrices.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Extract attention patterns
-def extract_attention_patterns(model, tokenizer, cot_trace: str, sentences: list[str]) -> dict:
-    """
-    Extract attention weights and aggregate to sentence-sentence matrices.
-
-    Returns:
-        Dictionary with:
-        - token_attention: (num_layers, num_heads, seq_len, seq_len)
-        - sentence_attention: (num_layers, num_heads, num_sentences, num_sentences)
-        - vertical_attention: (num_layers, num_heads, num_sentences)
-          [how much each sentence receives from all downstream]
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 4.2 Identifying Receiver Heads
-
-Calculate kurtosis of attention distributions. Heads with high kurtosis = "receiver heads" that narrow attention to specific sentences.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Identify receiver heads
-# from scipy.stats import kurtosis  # Will import when needed
-
-
-def identify_receiver_heads(
-    vertical_attention: np.ndarray,
-    min_distance: int = 4,  # Ignore nearby sentences
-) -> dict:
-    """
-    Identify receiver heads by computing kurtosis of attention distributions.
-
-    Args:
-        vertical_attention: (num_layers, num_heads, num_sentences)
-        min_distance: Minimum sentence distance to consider
-
-    Returns:
-        Dictionary with kurtosis scores, top receiver heads, etc.
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 4.3 Validating Receiver Heads
-
-Check if receiver heads attend to the same sentences identified by resampling importance. This validates convergence between black-box and white-box methods.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Compare receiver head attention to resampling importance
-def compare_receiver_heads_to_importance(
-    receiver_head_scores: np.ndarray,
-    importance_scores: list[dict],
-    sentences: list[str],
-    categories: list[str],
-):
-    """
-    Validate that receiver heads attend to high-importance sentences.
-
-    Expected: Plan Generation and Uncertainty Management receive most attention
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-## 5. Sentence-to-Sentence Causal Links
-
-**Goal:** Map the dependency structure of reasoning by measuring how each sentence influences future sentences.
-
-This creates a causal graph showing information flow through the reasoning trace.
-'''
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 5.1 Masking Approach
-
-Mask attention to sentence i, measure impact on sentence j's logits. Compute KL divergence between masked and unmasked logits.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Implement sentence masking
-def compute_sentence_sentence_causality(
-    model, tokenizer, cot_trace: str, sentences: list[str], source_idx: int, target_idx: int
-) -> float:
-    """
-    Measure causal effect of source sentence on target sentence.
-
-    Process:
-    1. Forward pass with full trace → get logits for target sentence
-    2. Mask attention to source sentence → get logits for target sentence
-    3. Compute average log-KL divergence across target tokens
-    4. Normalize by average effect from all prior sentences
-
-    Returns:
-        Normalized causal importance score
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 5.2 Building Causal Graphs
-
-Create a sentence-to-sentence importance matrix showing dependencies. Visualize as a heatmap.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Build full causal matrix
-def compute_causal_matrix(model, tokenizer, cot_trace: str, sentences: list[str]) -> np.ndarray:
-    """
-    Compute full sentence-to-sentence causal importance matrix.
-
-    Returns:
-        Matrix of shape (num_sentences, num_sentences)
-        where matrix[i, j] = causal importance of sentence i on sentence j
-        (only defined for j > i)
-    """
-    pass
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Visualize causal matrix
-
-
-def plot_causal_matrix(
-    causal_matrix: np.ndarray,
-    sentences: list[str],
-    categories: list[str] = None,
-    top_n: int = None,  # Show only top N most important sentences
-):
-    """
-    Plot sentence-to-sentence causal importance as heatmap.
-
-    Darker colors = stronger causal dependencies
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 5.3 Case Study: Tracing Information Flow
-
-Pick a problem and trace how information flows from planning sentences through computation to final answer.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Case study analysis
-# Identify strong dependencies in causal matrix
-# Trace paths from planning → computation → answer
-# Show how backtracking creates loops in the graph
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-## 6. Case Study: The "Wait" Reflex
-
-**Goal:** Deep dive into self-correction mechanisms by studying backtracking moments.
-
-When models say "Wait" or "Let me double check", they're engaging in uncertainty management—a key type of thought anchor.
-'''
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 6.1 Finding Backtracking Moments
-
-Search for uncertainty management sentences like "Wait", "Let me double check", "Hmm, that doesn't seem right".
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Find backtracking sentences
-def find_backtracking_moments(
-    sentences: list[dict],
-    keywords: list[str] = ["wait", "let me", "double check", "hmm", "actually"],
-) -> list[int]:
-    """
-    Find sentences that indicate backtracking or uncertainty.
-
-    Returns:
-        List of sentence indices where backtracking occurs
-    """
-    pass
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 6.2 Measuring Impact of Backtracking
-
-How does backtracking affect downstream reasoning? Compare accuracy with and without backtracking sentences.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Measure backtracking impact
-# Use resampling to see how removing backtracking sentences affects final answer
-# Show that backtracking sentences have high counterfactual importance
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-### 6.3 Intervention Experiment
-
-Force the model NOT to say "Wait" at a backtracking moment. Does it proceed with an incorrect answer? This demonstrates the causal role of backtracking.
-'''
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# TODO: Intervention experiment
-# Option 1: Use activation steering to suppress "Wait" token
-# Option 2: Mask attention at backtracking position
-# Option 3: Directly modify logits to reduce probability of "Wait"
-
-# Hypothesis: Without "Wait", model proceeds with incorrect reasoning
-# This proves backtracking has causal role, not just correlation
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r'''
-## ☆ Bonus
-
-1. **Domain Differences**: Compare math vs other domains (if using MMLU). Do different domains show different causal structures?
-2. **Distance Analysis**: Are close-range links stronger in successful reasoning? Check if strong sequential links correlate with accuracy.
-3. **Ablation**: What happens when you remove thought anchors? Does reasoning fall apart?
-4. **Your Own Analysis**: Apply these techniques to a problem of your choice. What patterns do you find?
-
-**Resources:**
-- 📄 Paper: https://arxiv.org/abs/2506.19143
-- 🎮 Interactive Tool: https://www.thought-anchors.com/
-- 💻 Repository: https://github.com/interp-reasoning/thought-anchors
+...Coming soon!
 '''
 

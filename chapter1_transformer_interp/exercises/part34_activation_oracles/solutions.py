@@ -2,6 +2,7 @@
 
 
 import contextlib
+import os
 import re
 import sys
 import textwrap
@@ -35,7 +36,6 @@ if str(exercises_dir) not in sys.path:
 # Disable runtime errors from custom hooks
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 # Allow expandable memory segments on CUDA to avoid OOMs
-# TODO(mcdougallc) - add these elsewhere, will help with 1.6.4?
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import part34_activation_oracles.tests as tests
@@ -156,13 +156,8 @@ if MAIN:
 # %%
 
 if MAIN:
-    # Check that the model answers appropriately
-    # TODO(mcdougallc) - move this section a bit below, where first we check the max-likelihood token then we check that Paris isn't highly predicted
     tokenizer(target_prompt, return_tensors="pt", padding=True)
     outputs = model(**tokenizer(target_prompt, return_tensors="pt", padding=True))
-    top_pred = outputs.logits[0, -1].argmax().item()
-    top_pred_str = tokenizer.decode([top_pred])
-    print(top_pred_str)  # `꽁` if "Answer directly", or else `The`
     
     top_preds = outputs.logits[0, -1].topk(10).indices
     top_preds_str = tokenizer.batch_decode(top_preds)
@@ -183,8 +178,6 @@ if MAIN:
         add_generation_prompt=True,
     )
     
-    # TODO(mcdougallc) - maybe allow for token forcing the oracle's response? Could be cool
-    
     oracle_prompt = "What people is the model thinking about?"
     
     results = utils.run_oracle(
@@ -199,7 +192,6 @@ if MAIN:
         token_start_idx=0,
         token_end_idx=None,
         generation_kwargs={"do_sample": False, "temperature": 0.0, "max_new_tokens": 100},
-        # assistant_prefix="The model is thinking about",
     )
     
     # Display token-by-token responses
@@ -271,25 +263,19 @@ def layer_fraction_to_layer(model_name: str, layer_fraction: float) -> int:
     return int(max_layers * layer_fraction)
 
 
-# TODO(mcdougallc) - maybe ditch the `use_lora` arg, if always False?
-
-
-def get_hf_submodule(model: AutoModelForCausalLM, layer: int, use_lora: bool = False):
+def get_hf_submodule(model: AutoModelForCausalLM, layer: int):
     """
     Gets the residual stream submodule for HuggingFace transformers.
 
     Args:
         model: The model
         layer: Which layer to hook
-        use_lora: Whether model has LoRA adapters (changes path)
 
     Returns:
         The submodule to hook (the layer's output is the residual stream)
     """
     model_name = model.config._name_or_path
     assert re.search("gemma|mistral|Llama|Qwen", model_name), "Invalid model name"
-    if use_lora:
-        return model.base_model.model.model.layers[layer]
     return model.model.layers[layer]
 
 

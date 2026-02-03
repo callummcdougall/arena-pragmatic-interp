@@ -2080,8 +2080,6 @@ You should observe:
 - **Early stability**: First few turns typically stay close to 0 (normal Assistant behavior)
 - **Later instability**: Model becomes more willing to validate delusional thinking, projections become increasingly negative
 
-TODO(mcdougallc): Verify these patterns once we have actual results, modify if needed.
-
 </details>
 '''
 
@@ -2318,8 +2316,6 @@ Conduct systematic steering experiments to understand the behavioral effects:
 - **Zero steering** (baseline): Model responds according to its default training and the system prompt.
 
 **Important**: Measure response coherence (e.g., use GPT-4 to rate coherence 0-100). Avoid steering so strong that it breaks coherence.
-
-TODO(mcdougallc): Add specific findings once we run experiments - update bullet points with interesting examples.
 '''
 
 # ! CELL TYPE: code
@@ -3018,8 +3014,6 @@ Activation capping should:
 - **Preserve quality**: Capped responses should still be helpful/coherent (check qualitatively)
 
 **Key insight**: The capped model avoids validating delusions while still engaging with the user's questions. It maintains professional boundaries without becoming unhelpful.
-
-TODO(mcdougallc): Update with actual findings once we have results.
 
 </details>
 '''
