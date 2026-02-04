@@ -110,13 +110,15 @@ def get_displayable_sections(chapter_id: str) -> list[SectionContent]:
     _, sections = get_chapter_content(chapter_id)
     # Filter out group headers, keep regular sections and special sections
     return [s for s in sections if not s.is_group]
+
+
 MODES = {
     "DARK-INLINE": ["toh1p3", "aak2an", "u10a3r"],
     "CUSTOM-INLINE": ["10hpw00", "1lu8bb5", "mn2ukz"],
     "DARK": ["13k62yr"],
     "CUSTOM": ["1no7sup"],
 }
-CSS_FILE = Path(__file__).resolve().parent/ "style.css"
+CSS_FILE = Path(__file__).resolve().parent / "style.css"
 
 CSS = f"<style>\n{CSS_FILE.read_text()}\n</style>"
 
@@ -325,7 +327,7 @@ ALL_FILENAMES = {
     ),
     "1.5.3": ("33_🔬_[1.5.3]_OthelloGPT", "part53_othellogpt"),
     "2.1": ("10_[2.1]_Intro_to_RL", "part1_intro_to_rl"),
-    #"2.2": ("20_[2.2]_Q-Learning_and_DQN", "part2_q_learning_and_dqn"),
+    # "2.2": ("20_[2.2]_Q-Learning_and_DQN", "part2_q_learning_and_dqn"),
     "2.2.1": ("21_[2.2.1]_Deep_Q_Networks", "part21_dqn"),
     "2.2.2": ("22_[2.2.2]_Policy_Gradient", "part22_vpg"),
     "2.3": ("30_[2.3]_PPO", "part3_ppo"),
@@ -337,7 +339,7 @@ ALL_FILENAMES = {
 }
 
 BRANCH = "main"
-ARENA_ROOT = f"https://colab.research.google.com/github/callummcdougall/ARENA_3.0/blob/{BRANCH}/"
+ARENA_ROOT = f"https://colab.research.google.com/github/callummcdougall/arena-pragmatic-interp/blob/{BRANCH}/"
 
 
 def create_colab_dropdowns(chapter: int) -> str:
@@ -352,25 +354,28 @@ def create_colab_dropdowns(chapter: int) -> str:
     """
     st.write(f"DEBUG: Starting create_colab_dropdowns with chapter={chapter}")
     st.write(f"DEBUG: ROOT_PATH = {ROOT_PATH}")
-    
+
     all_strings = []
     chapter_name = [
         "chapter0_fundamentals",
         "chapter1_transformer_interp",
-        "chapter2_rl", 
+        "chapter2_rl",
         "chapter3_llm_evals",
     ][chapter]
 
     st.write(f"DEBUG: Selected chapter_name = {chapter_name}")
     st.write(f"DEBUG: About to iterate over ALL_FILENAMES")
 
-
     for nums, (colab_name, dir_name) in ALL_FILENAMES.items():
         if int(nums[0]) == chapter:
             # Get name of colab files, and check they exist
             colab_file_name = colab_name.split("_[")[1].replace("]", "")
-            assert (ROOT_PATH / chapter_name / "exercises" / dir_name / f"{colab_file_name}_solutions.ipynb").exists(), f"Missing solutions notebook: {colab_file_name}_solutions.ipynb"
-            assert (ROOT_PATH / chapter_name / "exercises" / dir_name / f"{colab_file_name}_exercises.ipynb").exists(), f"Missing exercises notebook: {colab_file_name}_exercises.ipynb"
+            assert (
+                ROOT_PATH / chapter_name / "exercises" / dir_name / f"{colab_file_name}_solutions.ipynb"
+            ).exists(), f"Missing solutions notebook: {colab_file_name}_solutions.ipynb"
+            assert (
+                ROOT_PATH / chapter_name / "exercises" / dir_name / f"{colab_file_name}_exercises.ipynb"
+            ).exists(), f"Missing exercises notebook: {colab_file_name}_exercises.ipynb"
 
             # Get links to those Colab files
             solutions_link = f"{ARENA_ROOT}{chapter_name}/exercises/{dir_name}/{colab_file_name}_solutions.ipynb"
@@ -391,6 +396,7 @@ def create_colab_dropdowns(chapter: int) -> str:
             all_strings.append(full_string)
 
     return "\n\n".join(all_strings)
+
 
 # print(create_colab_dropdowns(2))
 # print(create_colab_dropdowns(1))

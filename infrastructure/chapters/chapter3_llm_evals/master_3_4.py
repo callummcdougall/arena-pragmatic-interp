@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Intro to LLM Agents", "icon": "1-circle-fill", "subtitle" : "5%"},
@@ -12,37 +12,37 @@ r'''
     {"title" : "Bonus", "icon": "star", "subtitle": ""}
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [3.4] - LLM Agents
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src = "https://raw.githubusercontent.com/callummcdougall/computational-thread-art/master/example_images/misc/robot-typewriter.png" width = "350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 This set of exercises lasts 2 days, and involves building and working with LLM agents. LLM agents consist of a scaffolding program interacting with an LLM API. We'll also build and analyse two tasks for LLM agents to complete, a simple and a complex one, in order to see how LLM agents act.
 
 We'll begin by building a simple Arithmetic Task and Arithmetic Agent. This should teach you the basics of function calling via the OpenAI API (Anthropic's API has minor differences, but operates in essentially the same way). Then, once we're comfortable with function calling and the general setup of LLM agents and tasks, we'll move on to building a more complex agent that plays the [Wikipedia Game](https://en.wikipedia.org/wiki/Wikipedia:Wiki_Game).
@@ -59,13 +59,13 @@ Each exercise will have a difficulty and importance rating out of 5, as well as 
 For a lecture on the material today, which provides some high-level understanding before you dive into the material, watch the video below:
 
 <iframe width="540" height="304" src="https://www.youtube.com/embed/H7hXqm1idAI" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ Intro to LLM Agents
@@ -95,15 +95,15 @@ r'''
 > - Understand the importance of elicitation in evaluating LLM agents
 > - Understand the different methods of elicitation
 > - Understand how to improve prompting, tools, history storage, and information access in LLM agents
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -151,7 +151,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -214,7 +214,7 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Reminder - how to set up your OpenAI API keys, before running the code below</summary>
 
 - **OpenAI**: If you haven't already, go to https://platform.openai.com/ to create an account, then create a key in 'Dashboard'-> 'API keys'. 
@@ -232,7 +232,7 @@ In the latter case, you'll also need to run the `load_dotenv()` function, which 
 Once you've done this (either the secrets tab based method for Colab or `.env`-based method for VSCode), you can get the keys as `os.getenv("OPENAI_API_KEY")` and `os.getenv("ANTHROPIC_API_KEY")` in the code below. Note that the code `OpenAI()` and `Anthropic()` both accept an `api_key` parameter, but in the absence of this parameter they'll look for environment variables with the names `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` - which is why it's important to get the names exactly right when you save your keys!
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -242,9 +242,7 @@ Once you've done this (either the secrets tab based method for Colab or `.env`-b
 load_dotenv()
 # END FILTERS
 
-assert os.getenv("OPENAI_API_KEY") is not None, (
-    "You must set your OpenAI API key - see instructions in dropdown"
-)
+assert os.getenv("OPENAI_API_KEY") is not None, "You must set your OpenAI API key - see instructions in dropdown"
 
 # OPENAI_API_KEY
 
@@ -254,15 +252,15 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Intro to LLM Agents
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## What is an LLM agent?
 
 An LLM agent consists of a scaffolding program interacting with an LLM API to accomplish tasks in an external environment. This typically involves a loop of the following steps:
@@ -277,23 +275,23 @@ The two basic components of scaffolding are:
 
 * Tool calling: This allows LLMs to use tools by providing a text description of the tool. The LLM can choose to use this tool by "calling" it in its text output. If it uses a tool, the scaffolding will execute this tool on the LLM's behalf (e.g. by running a python function, sending request to an external API etc.) and return the result of this tool call to the agent.
 * Prompting: This describes the task state to the LLM, describes the tools available to the LLM in the task, potentially instructs the LLM to use chain-of-thought to give the LLM more "thinking time." This also covers how the LLM's `chat_history` is stored from the LLM's prior actions.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/ch3-llm-agent.png" width="800">
 
 Diagram based on METR's [*Evaluating Language-Model Agents on Realistic Autonomous Tasks*](https://arxiv.org/abs/2312.11671), Figure 2.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Why evaluate LLM agents?
 
 There are at least two reasons we want to evaluate LLM agents.
@@ -332,31 +330,31 @@ We know today that LLMs are being used as more than just chatbots. Since the rel
 - [Anthropic Function Calling Guide](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Building a Simple Arithmetic Agent
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In general, most LLM agents share these core components:
 
 <img src="https://raw.githubusercontent.com/chloeli-15/ARENA_img/refs/heads/main/img/ch3-sec4-agent-overview.png" width="1000">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 1. **LLM API interface**: A basic function that makes API calls (e.g. `get_response()`). <!-- (IN AGENT)-->
 2. **Actions/Tools**: A set of actions the agent can take. <!-- (MOSTLY IN TASK)-->
 3. **Task State Management**: Keeping track of the current state of the task and any relevant context. <!-- (IN TASK MOSTLY)-->
@@ -366,13 +364,13 @@ r'''
 7. **Task-Specific Information**: Any additional information or functions specific to the task at hand. <!-- (INFO IN AGENT/FUNCTIONS IN TASK)-->
 
 These components are implemented across the `Task`, `Agent`, and `Tool` classes. However, the specific breakdown of these components in our implementation is a design choice and can vary depending on the task. While some are very natural (e.g. LLM API interface goes into `Agent`, task state management goes into `Task`), others can vary (e.g. `Tool`s could be implemented and handled entirely within the `Task` or `Agent` class, as opposed to being separate classes; observation parsing could be in the `Task` or the `Agent` class). In general, we want to maximize separability and minimize interfaces/dependencies, so that we can easily swap out different agents for the same task, or vice versa.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Task
 
 In an LLM agent eval, there will usually be a `Task` class that interacts with the `Agent`. In general, the `Task` will:
@@ -380,13 +378,13 @@ In an LLM agent eval, there will usually be a `Task` class that interacts with t
 - Prepare and provide the task instruction (and necessary files, functions etc) to the agent
 - Parse and score the agent's output
 - Update the task state accordingly (e.g. proceeds onto the next step of the task, ends the task).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Build a simple arithmetic task
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
@@ -409,11 +407,12 @@ First build a toy task called `ArithmeticTask`. This task should take in two num
 Python's `eval()` function evaluates an arbitrary string expression, and so allows AI models to run arbitrary code. Unless you have set up a container or sandboxed environment, it is very bad practice to allow LLMs to run arbitrary code on your computer!
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class ArithmeticTask:
     def __init__(self, num1: int | float, num2: int | float):
@@ -533,7 +532,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">test_init passed
 test_get_current_task passed
 test_check_answer passed
@@ -545,13 +544,13 @@ All tests passed successfully!
 10 / 15 = 0.6666666666666666
 10 % 15 = 10.0
 10 // 15 = 0.0</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Aside - What is <code>@property</code>?</summary>
 
 The `@property` decorator in python is used to define methods that behave like they were attributes.
@@ -591,13 +590,13 @@ SOLUTION
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Tool use via function calling
 
 The simplest way for LLMs to take actions is via function calling. **Function calling** is a built-in feature of many LLM APIs that allows models to use external "tools" (i.e. Python functions, APIs) by simply receiving and outputting text. This involves 5 simple steps:
@@ -611,7 +610,7 @@ The simplest way for LLMs to take actions is via function calling. **Function ca
 **This loop of prompting the LLM with tools, executing its actions, and returning the results forms the basis of all LLM agents.** It allows LLMs to perform complex tasks like playing a game or completing a coding project "autonomously".
 
 We will implement each step of the loop below.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -699,6 +698,7 @@ Write your tool class for the `CalculateTool` below.
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class CalculateTool:
     """
@@ -823,9 +823,9 @@ Typically, you would make "stand-alone" functions that do not depend on class me
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can pass the tool to the model by providing the tool description to the `tools` parameter of the API call. The `tools` argument takes a list (even if we only use one tool). The following code provides a standard example of this.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -845,17 +845,17 @@ print(response.choices[0].message.tool_calls)
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">None
 [ChatCompletionMessageToolCall(id='call_ypLWQ6YWQpJ7SNflNKUeqFxq', function=Function(arguments='{"expression":"2+3"}', name='calculate'), type='function')]
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Why is <code>message.content = None</code>?</summary>
 
 When LLMs use tools, they often don't generate any text output. This can be a problem when you try to get the model to do chain-of-thought reasoning. 
@@ -863,13 +863,13 @@ When LLMs use tools, they often don't generate any text output. This can be a pr
 To get around this, it's generally better to make two calls to the model for more complex tool use: one call to get the model to reason about the actions it should take, and then another to get the model to use a tool to take those actions. However, for now the task is simple enough that it's okay if the model doesn't do any reasoning beforehand.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Return tool call results
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -912,11 +912,12 @@ Choice(
 
 
 We have provided a function `apply_tool_call_format` that formats the tool response correctly for the OpenAI API. You should fill in the code below, using that function to return a tool call response to the model, for the given messages.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def apply_tool_call_format(tool_call: ChatCompletionMessageToolCall, content: str) -> dict:
     """
@@ -954,9 +955,7 @@ if MAIN:
             apply_tool_call_format(
                 response.choices[0].message.tool_calls[0],
                 Calculator.execute(
-                    json.loads(response.choices[0].message.tool_calls[0].function.arguments)[
-                        "expression"
-                    ]
+                    json.loads(response.choices[0].message.tool_calls[0].function.arguments)["expression"]
                 ),
             ),
         ]
@@ -975,26 +974,26 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">The result of \( \frac{5}{3} \) is approximately 1.6666666666666667.
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Agent
 
 We will first implement a `SimpleAgent` class that is not specific to the `ArithmeticTask`, so that we can see the key components of a generic LLM agent.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `SimpleAgent`
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
@@ -1008,11 +1007,12 @@ Build out the following simple agent class by filling in the `get_response()` an
 - `get_response()`: This should make an API call and return the `ChatCompletionMessage`from the model. It should be able to either use tool calling or not, depending on the `use_tool` argument. You should get the response with the syntax `try: ... except BadRequestError: ...`, in case the model's context window lengths cause it to fail to generate a response.
 - `execute_tool_calls()`: This should execute the tool calls in the message and return a list of tool responses as strings (we can format them correctly in `run()`).
 - `run()`: This should define the main execution logic for running 1 loop of the agent. As this is largely determined by the task, this method in `SimpleAgent` is just a dummy method and should be overridden in specific agent classes.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class SimpleAgent:
     def __init__(
@@ -1119,9 +1119,9 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Then running the agent should cause the tool calls to be executed.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1134,7 +1134,7 @@ my_simple_agent.run()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Build an `ArithmeticAgent`
 
 > ```yaml
@@ -1151,11 +1151,12 @@ Now build our agent that will interact with the `ArithmeticTask` (with a calcula
 - `parse_answer()` - this function should just allow you to extract the model's final answer from its response.
 
 - `handle_refusal` - this function handles the case in which the model refuses to answer, and moves on to the next question.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class ArithmeticAgent(SimpleAgent):
     """
@@ -1215,9 +1216,7 @@ class ArithmeticAgent(SimpleAgent):
             for tool_call, tool_response in zip(tool_calls, tool_responses):
                 self.chat_history.append(apply_tool_call_format(tool_call, tool_response))
                 if self.verbose:
-                    print(
-                        f"\nTool call: {tool_call.function.name}, ARGS: {tool_call.function.arguments}"
-                    )
+                    print(f"\nTool call: {tool_call.function.name}, ARGS: {tool_call.function.arguments}")
                     print(f"Tool response: {tool_response}")
         except Exception as e:
             print(f"\nError handling tool calls: {e}")
@@ -1365,11 +1364,12 @@ class ArithmeticAgent(SimpleAgent):
             raise ValueError('"<answer>" not found in model response.')
         # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Note on <code>handle_refusal()</code></summary>
 
 The `ChatCompletionMessage` object contains a `refusal` attribute that can be used to determine if the model has refused to answer. If the model has refused to answer, the `refusal` will contain this content and we can print this out. We have implemented this for you for completeness, but refusals almost never occur in the arithmetic task.
@@ -1385,13 +1385,13 @@ SOLUTION
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Write an agent_loop function to run the task
 
 > ```yaml
@@ -1406,11 +1406,12 @@ Try implementing the `agent_loop_arithmetic` function below. We'll pass `use_too
 > **WARNING!** 
 >
 >When you're making API calls to LLMs to accomplish longer tasks, it can be tempting to use a while loop, and run the model until it finishes the task. But since every time we run a model we make an API call, this would allow us to spend arbitrarily large amounts of money on API calls. For this reason, ***always use a for loop when making API calls!*** It would be really unfortunate if you blew all your API budget on one mistake.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def agent_loop_arithmetic(agent, num_loops: int = 10, use_tools=True):
     """
@@ -1445,7 +1446,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output (when <code>use_tools = True </code>)]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">
 
 USER: Calculate the result of the following expression: 3245.0 + 599.0. Give your final answer in the format: &lt;answer&gt;NUMBER&lt;/answer&gt;, where NUMBER is a numerical value
@@ -1517,15 +1518,15 @@ User: Correct.
 All tasks solved.
 
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 If we want to see how the model performed at the task, then we can print all the messages from the `ChatHistory` as follows:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1543,7 +1544,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">
 user:
 Calculate the result of the following expression: 3245.0 + 599.0. Give your final answer in the format: &lt;answer&gt;NUMBER&lt;/answer&gt;, where NUMBER is a numerical value
@@ -1630,29 +1631,29 @@ user:
 Correct.
 
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Building a more complex agent: WikiGame
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The task in this section simulates the Wikipedia game, where the agent starts on one Wikipedia page and attempts to navigate to a goal page using only links found in the main content of Wikipedia pages. Compared to the previous sections, the main challenge here is to implement **dynamic decision making while parsing noisy and imperfect outputs**.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Quick intro to the Wikipedia API
 
 Our agent will interact with Wikipedia by making tool calls to the [Wikipedia API](https://wikipedia.readthedocs.io/en/latest/quickstart.html). We will only need to learn the following key functions from the Wikipedia API to be able to implement the basic dynamics of the game. 
@@ -1676,7 +1677,7 @@ The wikipedia API accesses summaries of pages by presenting all the information 
 </details>
 
 Run the following code to see how these wikipedia API functions work!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -1700,7 +1701,7 @@ print(f"""\nLinks (link count {len(page.links)}): [{", ".join(page.links[:7])}, 
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the output of this code (the wikipedia page might have changed slightly)]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Title: Large language model
 
 URL https://en.wikipedia.org/wiki/Large_language_model
@@ -1719,15 +1720,15 @@ Before 2017, there were a few language models that were large as compared to cap
 
 Links (link count 524): [15.ai, AI-complete, AI explainability, API, Action selection, Activation function, Active learning (machine learning), ......]
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The following two cell blocks cause an error when run (you should see a `DisambiguationError` for the first, and a `PageError` for the second). These are common errors that LLMs can encounter when moving between wikipedia pages, and so we'll need to find a way to handle them:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -1742,7 +1743,7 @@ except DisambiguationError as e:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the output of this code]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">&lt;class 'wikipedia.exceptions.DisambiguationError'&gt; 
 
  "Python" may refer to: 
@@ -1778,7 +1779,7 @@ The code that caused this warning is on line 389 of the file c:\Users\calsm\anac
 
   lis = BeautifulSoup(html).find_all('li')
 </pre>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -1793,20 +1794,20 @@ except Exception as e:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the output of this code]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">&lt;class 'wikipedia.exceptions.PageError'&gt;
 
  Page id "Animalss" does not match any pages. Try another id!
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We can handle these errors using the following code:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -1828,7 +1829,7 @@ print(page.title)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The errors above are:
 
 - `DisambiguationError`: This was raised because the title "Python" can correspond to multiple pages. Whenever this error is raised, we get a list of options that Wikipedia suggests we *could* mean, and so we choose the first.
@@ -1836,11 +1837,12 @@ The errors above are:
 - `PageError`: This was raised for "Animalss" as there is no Wikipedia page with that title. We can usually avoid these by setting `redirect = True` and allowing Wikipedia to redirect us.
 
 We have implemented a simple function `get_page()` for you to get the `WikipediaPage` object for a particular page title with error handling.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_page(title: str) -> WikipediaPage:
     """
@@ -1860,11 +1862,12 @@ def get_page(title: str) -> WikipediaPage:
     except PageError:
         return wikipedia.page(title, auto_suggest=True, redirect=True)
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>What do the kwargs <code>redirect</code> and <code>auto_suggest</code> in <code>wikipedia.page()</code> do?</summary>
 
 `redirect`
@@ -1893,13 +1896,13 @@ page = wikipedia.page("Human", redirect= False, auto_suggest=True)
 - **By default, we should set `auto_suggest` to `False` unless it is used as a last resort to resolve an error!**
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement `get_permitted_links()`
 > ```yaml
 > Difficulty: 🔴⚪⚪⚪⚪
@@ -1913,11 +1916,12 @@ This is a quick exercise to familarize you with the Wikipedia API.
 When you get the links from a page using `page.links`, this will include every possible Wikipedia link that is accessible from the HTML on that page, including those that are not in the main page content (e.g. links in sidebars, links in footnotes etc.), which are irrelevant or not permitted by the rules of the Wiki game. 
 
 Write a simple `get_permitted_links()` function. This should only return the links that can be found inside the main content. The resulting list of permitted links should be about a third as long as the list of links from `page.links` (although it varies slightly by page).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_permitted_links(current_page: WikipediaPage) -> list[str]:
     """
@@ -1952,17 +1956,17 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## LLM Agent for WikiGame
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/ch3-wiki-task-overview.png" width="1000">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### The WikiGame class
 
 Below is the `WikiGame` class that instantiates the Wikipedia game. This class contains the following functionalities:
@@ -1988,11 +1992,12 @@ It also comes with 4 methods:
 #### Providing information to the agent
 
 While models are trained on most of the Wikipedia content, a particular page may still be confused with something else, or be an article that was added after the training cutoff. Models also can't generally recall information in their training data if they only come up once or twice (as is often the case for obscure wikipedia articles). So you should use the game's `get_summary()` function to provide details of the goal page to the agent in its initial message.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiGame:
     def __init__(
@@ -2091,11 +2096,12 @@ class WikiGame:
     def check_win(self) -> bool:
         return self.current_page == self.goal_page
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Build tools for the WikiGame
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -2121,11 +2127,12 @@ We don't just present a list of the accessible links, as this is not very faithf
 The `GetContentTool` wraps all the texts that correspond to links in `<link></link>` tags. However, since we identify links in the text via their names on wikipedia pages, there are certain articles that will never (or only very rarely) get flagged as links. For example, the page "Python (programming language)" is almost never referenced by its title, instead its almost always referenced as just "Python"; the same is true for cities and towns, which often have names such as e.g. "Juneau, Alaska", but these are almost always referred to as just "Juneau" in the articles where they appear. For this reason, you should avoid having goal pages which are likely to be referenced by a different string than their title.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class GetContentTool:
     """
@@ -2274,7 +2281,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Build a WikiAgent
 > ```yaml
 > Difficulty: 🔴🔴🔴🔴⚪
@@ -2320,11 +2327,12 @@ You'll need to implement the following methods:
 - `handle_tool_calls` - This function should be used whenever the model makes a tool call. You should use the `execute_tool_calls` function that `WikiAgent` inherits from `SimpleAgent`.(use execute tool calls, add them to the chat history)
 
 - `run` - This function should run "one loop" of the Wikipedia game. This should be making a call to the LLM API, and using the methods in the rest of the class to handle the response, whether the response is a tool call, or purely a text response.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiAgent(SimpleAgent):
     """
@@ -2468,9 +2476,7 @@ class WikiAgent(SimpleAgent):
 
     def update_history(
         self,
-        message: dict[str, str]
-        | ChatCompletionMessage
-        | list[dict[str, str] | ChatCompletionMessage],
+        message: dict[str, str] | ChatCompletionMessage | list[dict[str, str] | ChatCompletionMessage],
     ):
         """
         Update self.chat_history and self.full_chat_history with a message or list of messages.
@@ -2505,9 +2511,7 @@ class WikiAgent(SimpleAgent):
         ]
         self.update_history(instruction_messages)
         if self.verbose:
-            print(
-                f"\nSYSTEM: \n{instruction_messages[0]['content']} \n\nUSER: \n{instruction_messages[1]['content']}"
-            )
+            print(f"\nSYSTEM: \n{instruction_messages[0]['content']} \n\nUSER: \n{instruction_messages[1]['content']}")
         # END SOLUTION
 
     # ========================= Task Execution (to implement) =========================
@@ -2612,7 +2616,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Run the task
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -2622,11 +2626,12 @@ r'''
 > ```
 
 Similar to the `ArithmeticAgent`, write an agent loop for the `WikiAgent`. You may want use a `try/except` block in this loop (as occasionally an error can be raised if the length of messages extends past the context window of `gpt-4o-mini`).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def agent_loop(agent, num_loops=10):
     """
@@ -2653,13 +2658,14 @@ def agent_loop(agent, num_loops=10):
 
     # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Your agent should be able to accomplish the following tasks. If the agent fails on the first try, then run the agent again (we've tried to cut down on random behaviour by the agents by setting the temperature to 0, however OpenAI's models retain some randomness at temperature 0 which compounds as they proceed through the task).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2681,11 +2687,11 @@ agent_loop(agent, 30)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've seen that the agent can accomplish the above, try out some different articles and spot the common failure modes the agent falls into. Try to think of and discuss some ways you could mitigate these failure modes.
 
 We should also ensure that the messages that are printed while the agent runs are faithful to the *actual* chat history (it can be easy to make minor mistakes in the `run()` logic, or distributed across the variety of methods we're using, that mess up the agent's `chat_history`, which affects what the agent sees). In order to check this, you can run the following code to print the `full_chat_history` of the agent, which should contain every message the agent encountered as it worked through the task.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2704,15 +2710,15 @@ for message in agent.full_chat_history:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 4️⃣ Elicitation
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You may have observed that while our initial implementation of `WikiAgent` succeeds at these relatively challenging games, if we increase the difficulty slightly, then the agent will fail (one possible example is the game: Joinery → Amethyst; our agent will usually fail on this task). However, this doesn't mean that GPT-4o-mini does not have the capability to perform better on this task, but this capability might be blocked because we:
 
 - Prompted the model poorly or ineffectively.
@@ -2741,13 +2747,13 @@ To test whether two pages are connected via links, use this free online tool to 
 </details>
 
 In this section, we'll use the `gpt-4o-mini-2024-07-18` model to gauge whether our elicitation methods are effective since OpenAI will occasionally release small updates to `gpt-4o-mini` which change its behaviour. However, if you're curious, you can try testing your elicitation methods on the newest `gpt-4o-mini` model. What you will most likely notice is that your elicitation methods improve the model significantly less, and the model performs much better at the task without needing as much elicitation. This is because their most recent models are generally more capable, and so saturate the evaluation of "How well can a model play the Wikipedia game." For a real agent evaluation, you'd want to have increasingly difficult tasks, so that even as models improve, we can find tasks that are too difficult for them to achieve (e.g. the 16-hour tasks on METR's [Measuring AI Ability to Complete Long Tasks](https://metr.org/blog/2025-03-19-measuring-ai-ability-to-complete-long-tasks/))
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 As you should already know, prompting can have a large impact on model performance. There are many changes you could make for prompts in this task. You should experiment first with more general elicitation methods such as getting the agent to think more deeply, and output plans in different ways. After this, you might try more narrow elicitation methods, such as:
 
 - Telling the agent how many pages it's visited.
@@ -2755,13 +2761,13 @@ As you should already know, prompting can have a large impact on model performan
 - Schedule different prompts and planning methods for the "zoom out" and "zoom in" sections of the game, since we know that a good general strategy for playing the wikipedia game is:
 
    `Narrow article (with few links) -> General article (with many links) -> Narrow article (with few links)`
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Engineer prompts
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -2776,11 +2782,12 @@ Try and design prompts that improve the performance of the wikipedia agent. You 
 * Different failure-modes the agent could encounter.
 
 See if you can significantly improve performance. There's a test task below that you should aim to be able to solve with improved prompting.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiAgentPrompting(WikiAgent):
     """
@@ -2843,11 +2850,12 @@ class WikiAgentPrompting(WikiAgent):
         }
         # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Solution</summary>
 
 This isn't a *perfect* solution, but is an example of improved prompting compared to that in the original `WikiGame` class solution code. You may be able to do even better!
@@ -2856,17 +2864,17 @@ SOLUTION
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 LLM agents can be quite random - as you might have noticed - as a result of the default temperature being 1, and agents operating over a much longer horizon than usual for LLMs. So we'll do our testing at `temperature = 0`. This impacts performance noticeably, but better elicitation methods still have a noticeable effect.
 
 Your original `WikiAgent` may not reliably be able to solve the example path `Mandate of Heaven -> Doric Greek` at temperature 0 (although it may occasionally get lucky). However, with sufficiently improved prompting, you should be able to get the agent to solve this task reliably.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2884,16 +2892,14 @@ agent_loop(agent, 30)
 
 # Run game with improved WikiAgentPrompting class
 game = WikiGame("Mandate of Heaven", "Doric Greek")
-agent = WikiAgentPrompting(
-    game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0
-)
+agent = WikiAgentPrompting(game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0)
 agent_loop(agent, 30)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement the ReAct framework
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -2907,11 +2913,12 @@ The [**ReAct** framework](https://arxiv.org/abs/2210.03629) is an extension of c
 - **Act**ion: Then, the model is asked to perform an action based on its outputted reasoning.
 
 Note that during the reasoning step, when you're calling the model without tools, OpenAI won't provide the model with a description of the tools. However, we definitely want the model to have information about the available tools when it's reasoning about what actions to take. So, we'll have to ensure that the tool descriptions are in the `system_instruction` we provide. (This will lead to some redundancy when the model takes an action, but redundancy is usually alright with LLMs). This means that from now on we will have to pass the list of tools to both the *task* and the *agent*.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiAgentReAct(WikiAgentPrompting):
     """
@@ -2965,9 +2972,7 @@ class WikiAgentReAct(WikiAgentPrompting):
         # SOLUTION
         tool_descriptions = "\n".join(
             [
-                tool.description["function"]["name"]
-                + ": "
-                + tool.description["function"]["description"]
+                tool.description["function"]["name"] + ": " + tool.description["function"]["description"]
                 for tool in self.tools
             ]
         )
@@ -3022,9 +3027,7 @@ class WikiAgentReAct(WikiAgentPrompting):
         # END EXERCISE
         # SOLUTION
         # Get the model to generate an action based on the reasoning and add the response to the messages
-        self.update_history(
-            {"role": "user", "content": "Now, what action will you take based on your reasoning?"}
-        )
+        self.update_history({"role": "user", "content": "Now, what action will you take based on your reasoning?"})
         if self.verbose:
             print("\nUSER: Now, what action will you take based on your reasoning?")
         response = self.get_response(use_tool=True)
@@ -3079,15 +3082,16 @@ class WikiAgentReAct(WikiAgentPrompting):
             print("\nModel response ('Action'):", response.content)
         # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now run your Wikipedia ReAct agent (we haven't given tests to check that the model works, since your precise implementation may deviate from ours, by running the agent, and checking its `chat_history`, you should be able to tell whether your ReAct framework is operating correctly). You should be able to notice an improved reasoning process each time the model runs, and might notice that on some paths the model performs more effectively (although this is hard to demonstrate conclusively).
 
 However, you'll also likely notice that the difference between effective prompting, and the ReAct method we've implemented here isn't massive. Using the ReAct framework is similar to chain-of-thought prompting in this case, and prompting can make a difference only up to a point. However, ReAct does tend to make the agent more reliable on higher temperatures (although this is impossible to identify in just a single run).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3095,9 +3099,7 @@ However, you'll also likely notice that the difference between effective prompti
 
 # Run the game with WikiAgentPrompting
 game = WikiGame("Balto-Slavic languages", "Netscape Navigator 9")
-agent = WikiAgentPrompting(
-    task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0
-)
+agent = WikiAgentPrompting(task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0)
 agent_loop(agent, 30)
 
 # ! CELL TYPE: code
@@ -3106,16 +3108,14 @@ agent_loop(agent, 30)
 
 # Run the game with WikiAgentReact
 game = WikiGame("Balto-Slavic languages", "Netscape Navigator 9")
-agent = WikiAgentReAct(
-    task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0
-)
+agent = WikiAgentReAct(task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0)
 agent_loop(agent, 30)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Let the LLM see its entire chat history
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -3131,11 +3131,12 @@ The main obstacle to allowing the agent to see its entire history is the capacit
 When we reset this content, we should still let the agent know that Wikipedia content was output in that location, as otherwise it will confuse the agent about the `get_content` tool. You should replace the content with `"Wikipedia content was output here. Wikipedia page: {page_title}"` so that the agent knows that the `get_content` tool works as expected. 
  
 Modify the `reset_history` function in the `WikiAgentReAct` class to accomplish this.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiAgentChatHistory(WikiAgentReAct):
     """
@@ -3214,9 +3215,9 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now see how your agent performs now that it can see its entire chat history. Let's see how it compares to our ReAct agent on the more difficult path `Blavatnik School of Government -> Free Thai Movement`. We find that the ReAct agent occasionally gets stuck on loops when attempting this path,although it may take more than one run to see this behaviour. We see the ReAct agent succeed only on 3/10 runs. When the model is provided with the full chat history, the agent avoids loops much more easily, and can accomplish this path very reliably.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3224,9 +3225,7 @@ Now see how your agent performs now that it can see its entire chat history. Let
 
 # Run the game with the WikiAgentReAct class
 game = WikiGame("Blavatnik School of Government", "Free Thai Movement")
-agent = WikiAgentReAct(
-    task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0
-)
+agent = WikiAgentReAct(task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0)
 agent_loop(agent, 30)
 
 # ! CELL TYPE: code
@@ -3235,16 +3234,14 @@ agent_loop(agent, 30)
 
 # Run game with WikiAgentChatHistory class
 game = WikiGame("Blavatnik School of Government", "Free Thai Movement")
-agent = WikiAgentChatHistory(
-    task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0
-)
+agent = WikiAgentChatHistory(task=game, tools=wiki_game_tools, model="gpt-4o-mini-2024-07-18", temperature=0)
 agent_loop(agent, 30)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement a reflexion tool
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
@@ -3258,11 +3255,12 @@ The [reflexion paper](https://arxiv.org/abs/2303.11366) proposes a method that i
 We will borrow and modify this idea by building a tool that allows our agent to perform a lookahead, and then gives feedback on our agent's proposed actions. We allow the agent to suggest candidate paths, then the tool will check if these paths work and inform the model either that the path works, or where the path goes wrong.
 
 We don't want to provide the agent the links or content of every page when it does this lookahead, as then we'd just be reimplementing a smaller version of the game *inside the game*. Instead, we'll let the agent suggest paths without seeing any content or links, and then let it know if this path works. It's very likely that a suggested link will — at some point — not be accessible from one of the pages, but this tool will still be useful to help the agent plan.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class TestPathTool:
     """
@@ -3308,12 +3306,12 @@ class TestPathTool:
             current_node = path_nodes[i]
             next_node = path_nodes[i + 1]
 
-            permitted_links = (
-                link.lower() for link in get_permitted_links(get_page(path_nodes[i]))
-            )
+            permitted_links = (link.lower() for link in get_permitted_links(get_page(path_nodes[i])))
 
             if next_node.lower() not in permitted_links:
-                return f"This path works until the page {next_node}, which is not accessible from the page {current_node}"
+                return (
+                    f"This path works until the page {next_node}, which is not accessible from the page {current_node}"
+                )
 
         return "This path is valid."
         # END SOLUTION
@@ -3355,13 +3353,14 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should also edit the `system_instruction` and `on_page_instruction` to include an indication to the model to use the test_path tool (since this tool isn't strictly *necessary* to accomplish the task, the agent will often not use it at all). You can do this in the code cell below.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def new_system_instruction(self):
     # EXERCISE
@@ -3402,21 +3401,21 @@ WikiAgentChatHistory.on_page_instruction = property(new_on_page_instruction)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details><summary>Help! My agent isn't using the <code>TestPathTool</code></summary>
 
 If your agent isn't using the test path tool, you may want to modify your prompting. You could just include a strong indication in the `on_page_instruction` that the agent should use this tool before moving page. This may lea to overuse of the tool, so you may want to include clear instructions about how often and how much the model should use the tool in the system instruction.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now see how your agent performs with the tool:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3432,38 +3431,38 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You'll likely see that the agent often doesn't use this tool effectively, and when it does, will make suboptimal decisions based on the output of this tool:
 
  - One common failure mode is that the model will try a promising path, be told by the tool that it goes wrong *somewhere*, and then abandon the entire path for a much less promising path (without doing any further testing). 
  - Another common issue is that the agent will only use the tool to test whether it is possible to move a single page ahead, which is not the intended use of the tool (as the agent should be able to work out which pages it can move to in one step by looking at the page's content). 
 
 Although it may be tempting to continue adding additional tools to agents, if they're not capable of using them correctly and effectively, then these tools may actually harm performance. There are tasks where a 'lookahead' tool could be used effectively, however it turns out that the Wikipedia game task isn't one of them.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 5️⃣ Bonus
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In this bonus section, we'll modify the wikipedia game itself to make it more difficult so that you can then go on and try further elicitation methods of your own.
 
 Alternatively, if you're tired of the Wikipedia game, and are feeling ambitious, you might want to try designing your own agent task, and quantifying performance on that task.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - Implement additional rules
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -3473,11 +3472,12 @@ r'''
 Allow the game to have additional rules. Some suggestions are a "No country pages" rule, and a "No articles above a given length" rule, but feel free to add more. With all of our elicitation methods, the agent generally only fails if the path is impossible or unreasonably hard. To implement a no country rule, you may want to use the wikipedia API's "categories" attribute for `WikipediaPage` objects.
 
 First, let's modify the `WikiGame` task to store the rules for the Wikipedia game. We've modified the class for you to allow for the rules we described above.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiGameRules(WikiGame):
     def __init__(
@@ -3489,17 +3489,19 @@ class WikiGameRules(WikiGame):
         super().__init__(starting_page, goal_page)
         self.rules = rules
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now let's modify the prompts given to the LLM API in the `WikiAgent` class so that we inform the agent about any additional rules it will have to abide by. We should have the option to maintain our original prompts (in case we decide to run the WikiAgent without any rules), so the new `system_instruction` method should first check whether there are any additional rules, and only return the modified system prompt if there are.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class WikiAgentRules(WikiAgentChatHistory):
     @property
@@ -3516,9 +3518,7 @@ class WikiAgentRules(WikiAgentChatHistory):
         # SOLUTION
         tool_descriptions = "\n".join(
             [
-                tool.description["function"]["name"]
-                + ":"
-                + tool.description["function"]["description"]
+                tool.description["function"]["name"] + ":" + tool.description["function"]["description"]
                 for tool in self.tools
             ]
         )
@@ -3534,17 +3534,19 @@ class WikiAgentRules(WikiAgentChatHistory):
             }
         # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now let's implement these rules by modifying the `MovePageTool` class, so that the agent can only move page if it's within the rules of the game. If you're running the agent with the reflexion tool, you may also want to modify the logic of that tool to abide by the rules.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class MovePageTool_rules(MovePageTool):
     """
@@ -3577,13 +3579,8 @@ class MovePageTool_rules(MovePageTool):
                 "countries in" in category
                 for category in [i.lower() for i in task.get_page(new_page_normalized).categories]
             ):
-                return (
-                    f"Couldn't move page to {new_page}. This page is in the category of countries."
-                )
-            if (
-                "no pages above length 30000" in task.rules
-                and len(task.get_page(new_page_normalized).content) > 30000
-            ):
+                return f"Couldn't move page to {new_page}. This page is in the category of countries."
+            if "no pages above length 30000" in task.rules and len(task.get_page(new_page_normalized).content) > 30000:
                 return f"Couldn't move page to {new_page}. This page is above the maximum length of 30000 characters."
             task.current_page = task.get_page(new_page_normalized)
             task.page_history.append(task.current_page.title)
@@ -3642,9 +3639,8 @@ agent_loop(agent, 30)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Try further elicitation methods
 
 Read some further resources on building and eliciting behaviour from LLM agents, and try implementing some of your own methods to elicit improved performance on the task. If you start seeing diminishing returns from elicitation (due to saturating performance on the task), come up with new ways to make the task harder. Alternatively, if you're feeling particularly ambitious, you can try and come up with your own more difficult task and build an agent to try and accomplish this from scratch.
-'''
-
+"""

@@ -2,44 +2,44 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "RLHF on transformer language models", "icon": "1-circle-fill", "subtitle" : "(100%)"},
     {"title": "Bonus", "icon": "star", "subtitle" : ""}
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [2.4] - RLHF
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-24.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 This section is designed to take you through a full implementation of RLHF (Reinforcement Learning from Human Feedback). Much of this follows on directly from the PPO implementation from yesterday, with only a few minor adjustments and new concepts. You'll (hopefully) be pleased to learn that we're disposing of OpenAI's gym environment for this final day of exercises, and instead going back to our week 1 roots with TransformerLens!
 
 We'll start by discussing how the RL setting we've used for tasks like CartPole and Atari fits into the world of autoregressive transformer language models. We'll then go through standard parts of the PPO setup (e.g. objective function, memory buffer, rollout and learning phases) and show how to adapt them for our transformer. Finally, we'll put everything together into a `RLHFTrainer` class, and perform RLHF on our transformer!
@@ -50,7 +50,7 @@ as well as adjust some other parameters like the batch size, the number of token
 For a lecture on the material today, which provides some high-level understanding before you dive into the material, watch the video below:
 
 <iframe width="540" height="304" src="https://www.youtube.com/embed/wW__XFKIESc" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -63,7 +63,7 @@ BASE_MODEL = "gpt2-small" if LOW_GPU_MEM else "gpt2-medium"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ RLHF on transformer language models
@@ -88,28 +88,28 @@ This section offers some suggested ways to extend the core RLHF exercises.
 > - Improve your RLHF implementation via techniques like differential learning rates, frozen layers, or adaptive KL penalties
 > - Perform some exploratory mechanistic interpretability on RLHF'd models
 > - Learn about the trlX library, which is designed to train transformers via RLHF in a way which abstracts away many of the low-level details
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Reading
 
 - [Illustrating Reinforcement Learning from Human Feedback (RLHF)](https://huggingface.co/blog/rlhf) (~10 minutes)
     - An accessible and mostly non-technical introduction to RLHF, which discusses it in context of the full pipeline for training autoregressive transformer language models (starting with pretraining, which is what we did in the first day of last week).
 - [RLHF+ChatGPT: What you must know](https://www.youtube.com/watch?v=PBH2nImUM5c) (~5 minutes)
     - The first half of this video provides a high-level overview of RLHF, discussing things like mode collapse, and relates this to the [shoggoth meme](https://i.kym-cdn.com/photos/images/original/002/546/572/bd3.png) that many of you have likely seen!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -156,7 +156,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -206,9 +206,7 @@ if str(exercises_dir) not in sys.path:
 
 import part4_rlhf.tests as tests
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # FILTERS: ~colab
 MAIN = __name__ == "__main__"
@@ -218,37 +216,37 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ RLHF on transformer language models
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The "transformer environment"
 
 We'll start by discussing how we apply the reinforcement learning framework of states/actions/rewards to the setting of autoregressive language modelling. Lots of our intuitions should carry over from yesterday, it's just some of the details that have changed!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### States, actions and episodes
 
 Our actor is an autoregressive language model. The actions $a_t$ are the tokens generated by the model (i.e. the action space is the model's vocabulary). The states $s_t$ are **the entire sequence up to that point** (not just the most recent token). In other words, given a state $s_t$ (sequence) and action $a_t$ (token generation), our new state is the concatenation which we'll denote as $s_{t+1} = [s_t \; a_t]$.
 
 Each episode is a fixed length (i.e. all our sampled outputs will have the same number of tokens generated from them). Each episode starts with an initial "prefix prompt", which is chosen before the start of training.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Rewards and value functions
 
 The reward $r_t$ is a function of the sequence $s_t$. Sometimes it will be a very simple function like the sum of periods `.` in the sequence, other times it'll get a bit more complicated (e.g. using a text classification model to estimate the sentiment of a sequence - we'll do this later!).
@@ -258,13 +256,13 @@ In our case, we'll only evaluate the reward at the end of the episode. This mean
 The value function $V(s_t)$ is an estimate of the expected sum of future rewards (up to the end of the episode), which in this case means it's an estimate of what the reward will be once we get to the end of the sequence. We'll be adding a value head to our transformer model to estimate this value function (more on this later).
 
 > Note - a key part of RLHF is the actual gathering of and learning from human feedback, in order to train the reward function. We're not going to be doing that here, instead we'll be working with a fixed reward function. This means our implementation today is a lot more like classical reinforcement learning, and we'll be able to structure it in a way which is very similar to yesterday's PPO implementation.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### ~~Generalized~~ Advantage Estimation
 
 We won't be using the GAE formula today for computing advantages, we'll just be directly computing it via $A(s_t, a_t) = Q(s_t, a_t) - V(s_t)$, where $a_t$ is the value which was actually taken and $Q(s_t, a_t)$ is the critic's estimate of the value function at this new state $s_{t+1} = [s_t \; a_t]$.
@@ -272,21 +270,21 @@ We won't be using the GAE formula today for computing advantages, we'll just be 
 We can get away with this because our setup has pretty low variance when it comes to the advantage of particular actions. GAE is most helpful when it reduces variance in the advantage estimation (it does this at the cost of introducing more bias from including future value function estimates), and so it's especially useful when our environment is one with high variability when the advantage (and optimal policy) changes significantly between steps. But this doesn't really apply to us, since every action just adds a single token onto our sequence.
 
 That said, you're welcome to experiment with the setup and try to use GAE instead! This is suggested as a bonus exercise at the end.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/transformer-rl-state.png" width="700">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## RLHF Setup
 
 With this context in mind, we're now ready to look at the full RLHF setup we'll be using:
@@ -303,13 +301,13 @@ The only new element is the **KL prediction shift penalty**. This is a penalty w
 Note that we compute $D_{KL}(\pi_{PPO} || \pi_{base})$, not the other way around. This is because we want to penalize our new model for generating outputs which would be **extremely unlikely under the old model**, i.e. when $\pi_{PPO}$ is high and $\pi_{base}$ is low. We generally want to focus our model's output into a more concentrated version of the distribution it already has. For example in RLHF, we want to keep a low probability on completely incoherent behaviour which the original model would never have generated. But on the other hand, it's clearly fine for there to be some behaviours (e.g. offensive hate speech) which have a nontrivial probability in our base model but near-zero probability in our new model - in fact this is often desireable! For more on the intuition behind this orientation of the distributions in KL divergence, see [this post](https://www.lesswrong.com/posts/no5jDTut5Byjqb4j5/six-and-a-half-intuitions-for-kl-divergence).
 
 <!-- An alternative perspective can be found from [this post](https://www.lesswrong.com/posts/no5jDTut5Byjqb4j5/six-and-a-half-intuitions-for-kl-divergence) - the KL divergence $D_{KL}(P || Q)$ is large when the observations $P$ give you a lot of evidence that your hypothesis $Q$ is false. We want to make sure that the original (probably coherent and sensible) model $Q$ is still a good approximation for how $P$ behaves, i.e. it shouldn't be too obvious when we observe the outputs of $P$ that they've been generated by a different model. -->
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Summary
  
 Since we're using a fixed reward function rather than training it from human feedback, our RLHF implementation looks very similar to yesterday's PPO implementation. The differences are summarized in the table below:
@@ -323,13 +321,13 @@ Since we're using a fixed reward function rather than training it from human fee
 | **Actor & critic networks** | Architectures can be shared (e.g. for Atari) or disjoint (e.g. for CartPole) | Actor is a transformer model, critic is a value head (so most architecture is shared) |
 | **Advantage estimation** | Use GAE with discount factor $\lambda$ | Often uses GAE, but we'll just use simple next-step difference $V(s_{t+1}) - V(s_t)$ |
 | **Anything extra?** |  | KL penalty on the new policy wrt the baseline policy |
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## RLHF training args
 
 Now that you have a rough idea of how our implementation differs from PPO, we'll give you the `RLHFArgs` class and highlight the differences between this and the `PPOArgs` class from yesterday (mostly it's quite similar).
@@ -346,11 +344,12 @@ Now that you have a rough idea of how our implementation differs from PPO, we'll
     - `reward_fn`, for the reward function we use.
     - `normalize_reward`, for whether we normalize the reward (this won't always be necessary).
 - We've also added two learning rates, since it makes sense to have a different learning rate for our value head and the rest of the model (more on this later!).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class RLHFArgs:
@@ -394,19 +393,16 @@ class RLHFArgs:
     normalize_reward: bool = True
 
     def __post_init__(self):
-        assert self.total_phases > self.warmup_steps, (
-            "total_phases must be greater than warmup_steps"
-        )
-        assert self.batch_size % self.num_minibatches == 0, (
-            "batch_size should be divisible by num_minibatches"
-        )
+        assert self.total_phases > self.warmup_steps, "total_phases must be greater than warmup_steps"
+        assert self.batch_size % self.num_minibatches == 0, "batch_size should be divisible by num_minibatches"
         self.minibatch_size = self.batch_size // self.num_minibatches
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Value head
 
 If you worked on the Atari exercises yesterday, then you'l be used to the idea of having shared architecture between our policy and value networks. Intuitively, this is because both networks need to learn some kind of high-level encoding of the important variables in the environment - they just do different things with this encoding.
@@ -434,13 +430,13 @@ A different method, which is what we'll be using in these exercises, is to use *
 We're used to using hook functions during inference mode to perform causal interventions or compute statistical functions of our activations, but they can also be used during training mode to perform computations which are part of the autograd's computational graph.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `TransformerWithValueHead`
 
 > ```yaml
@@ -459,11 +455,12 @@ First define `self.base_model` and `self.value_head` in your init step (reminder
 The easiest and most direct way to get the output of the value head would be to **add a hook to the residual stream before the unembedding matrix, which computes the output of the value head and stores it externally (or as a class attribute).** You can review the material from section 1.2 if you don't remember how to use hooks, and you can refer to the diagram on the [reference page](https://arena-chapter1-transformer-interp.streamlit.app) (find it on the left hand sidebar) for how to get the correct hook name.
 
 Why do we need to add the hook after the layernorm? The answer is that the residual stream can often [grow in magnitude over time](https://www.lesswrong.com/posts/8mizBCm3dyc432nK8/residual-stream-norms-grow-exponentially-over-the-forward). Our rewards will be normalized (see later exercise), and so we want to make sure the outputs of our value head (which are estimates of the reward) also start off normalized.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class TransformerWithValueHead(nn.Module):
     """
@@ -491,9 +488,7 @@ class TransformerWithValueHead(nn.Module):
         # END EXERCISE
         # SOLUTION
         d_model = self.base_model.cfg.d_model
-        self.value_head = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model), nn.ReLU(), nn.Linear(4 * d_model, 1)
-        )
+        self.value_head = nn.Sequential(nn.Linear(d_model, 4 * d_model), nn.ReLU(), nn.Linear(4 * d_model, 1))
         # END SOLUTION
 
     def forward(
@@ -501,9 +496,7 @@ class TransformerWithValueHead(nn.Module):
     ) -> tuple[Float[Tensor, "batch seq d_vocab"], Float[Tensor, "batch seq"]]:
         value_head_output = None
 
-        def calc_and_store_value_head_output(
-            resid_post: Float[Tensor, "batch seq d_model"], hook: HookPoint
-        ):
+        def calc_and_store_value_head_output(resid_post: Float[Tensor, "batch seq d_model"], hook: HookPoint):
             nonlocal value_head_output
             value_head_output = self.value_head(resid_post).squeeze(-1)
 
@@ -526,17 +519,13 @@ if MAIN:
     d_model = model.base_model.cfg.d_model
     n_params_expected = (d_model + 1) * 4 * d_model + (4 * d_model + 1)
     assert len(model.value_head) == 3, "Your value head should be a `nn.Sequential` with 3 layers."
-    assert sum(p.numel() for p in model.value_head.parameters()) == n_params_expected, (
-        "Unexpected param count"
-    )
+    assert sum(p.numel() for p in model.value_head.parameters()) == n_params_expected, "Unexpected param count"
 
     # Test your class's forward pass
     batch_size, seq_len = 2, 10
     input_ids = t.randint(0, 1000, (batch_size, seq_len)).to(device)
     logits, values = model(input_ids)
-    assert logits.shape == (batch_size, seq_len, model.base_model.cfg.d_vocab), (
-        "logits should be (batch, seq, d_vocab)"
-    )
+    assert logits.shape == (batch_size, seq_len, model.base_model.cfg.d_vocab), "logits should be (batch, seq, d_vocab)"
     assert values.shape == (batch_size, seq_len), "value head output should be (batch, seq)"
 
     print("All tests for `TransformerWithValueHead` passed!")
@@ -546,7 +535,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution</summary>
 
@@ -557,13 +546,13 @@ SOLUTION
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Sampling from a transformer
 
 If you didn't go through the sampling exercises during the first day of last week, you might want to go back to them and work through the first few of them (this is not essential). Otherwise, here's a quick refresher:
@@ -581,11 +570,12 @@ We'll highlight a few things about this function:
 - `generate` is the standard method to autoregressively generate text. This works for TransformerLens slightly differently than for HuggingFace models (TransformerLens isn't primarily designed for text generation). In particular, it doesn't have features to efficiently generate multiple outputs for a single completion by using key-value caching. So rather than passing an argument into `generate` telling the model to generate `batch_size` outputs, we've instead just repeated `input_ids` multiple times across the batch dimension. This is a bit wasteful since we're repeating computation on the input sequence, but it's not a big problem because the input sequences we'll be using are usually very short.
     - As a bonus exercise later, we've suggested you write a version of the `generate` method which uses TransformerLens' key value caching (since TL does support caching behaviour, it just doesn't have features to use caching in `generate` to produce multiple sequences from a single completion).
 - We've used `stop_at_eos=False`, to make sure that the model generates the full `gen_length` tokens rather than stopping early.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @t.no_grad()
 def get_samples(
@@ -613,9 +603,7 @@ def get_samples(
         samples: the generated samples (including initial prompt)
     """
     # Make sure we've passed in the base model (the bit we use for sampling)
-    assert not isinstance(base_model, TransformerWithValueHead), (
-        "Please pass in the base model, not the model wrapper."
-    )
+    assert not isinstance(base_model, TransformerWithValueHead), "Please pass in the base model, not the model wrapper."
 
     # Convert our prompt into tokens
     input_ids = base_model.to_tokens(prompt, prepend_bos=prepend_bos).squeeze(0)
@@ -633,13 +621,14 @@ def get_samples(
 
     return output_ids.clone(), samples
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here's some example use of this function:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -665,7 +654,7 @@ rprint(table)
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"><span style="font-style: italic">                                             Demo of `sample` function                                             </span>
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃<span style="font-weight: bold"> Token IDs                                              </span>┃<span style="font-weight: bold"> Samples                                                </span>┃
@@ -691,13 +680,13 @@ r'''
 │ 1586, 422, 262]                                        │ differing from the'                                    │
 └────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────┘
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `reward_fn_char_count`
 
 > ```yaml
@@ -710,11 +699,12 @@ r'''
 We'll start with a very basic reward function: counting the total number of periods in the sequence.
 
 An interesting thing to note about this reward function - it counts over all characters, but the episode length is defined in terms of tokens. This means that theoretically our model could reward hack by outputting tokens with more than one `.` character. This particular model's vocabulary happens to include the token `'.' * 64`, so rewards would be through the roof if this was ever generated! However, remember that RL is about performing actions, getting feedback on those actions, and using that feedback to influence your policy. The token `'.' * 64` is so unlikely to ever be generated that it'll probably never be positively reinforced, and we avoid this problem.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def reward_fn_char_count(generated_sample: list[str], char: str = ".") -> Float[Tensor, " batch"]:
     """
@@ -737,9 +727,7 @@ if MAIN:
     C = "Whatever"
 
     t.testing.assert_close(reward_fn_char_count([A]), t.tensor([1.0], device=device))
-    t.testing.assert_close(
-        reward_fn_char_count([A, B, C]), t.tensor([1.0, 6.0, 0.0], device=device)
-    )
+    t.testing.assert_close(reward_fn_char_count([A, B, C]), t.tensor([1.0, 6.0, 0.0], device=device))
     t.testing.assert_close(reward_fn_char_count([A], " "), t.tensor([3.0], device=device))
     print("All tests for `reward_fn_char_count` passed!")
 # END HIDE
@@ -748,7 +736,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - brainstorm your reward function
 
 > ```yaml
@@ -778,13 +766,13 @@ Some common strategies include:
 - Triple periods e.g. `the man . . . the woman . . .`
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `normalize_reward`
 
 > ```yaml
@@ -797,11 +785,12 @@ r'''
 Following advice from Ziegler el al. (2019), it's important to normalize the reward function over each batch (i.e. subtract mean and divide by std dev). We've been able to get away with not doing this so far because our reward functions were usually nicely bounded, e.g. the reward was always zero or one in cartpole (and even in our reward shaping it was still in the zero-one range). But if we're working with reward functions that could be much higher variance such as the number of periods in a generated sequence, then we should normalize.
 
 Note - we're not super strict about this function; the denominator being `std + eps` or `(var + eps).sqrt()` are both fine.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def normalize_reward(reward: Float[Tensor, " batch"], eps=1e-5) -> Float[Tensor, " batch"]:
     """
@@ -834,7 +823,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `get_advantages`
 
 > ```yaml
@@ -855,11 +844,12 @@ In place of $Q(s_t, a_t)$ we'll use the **one-step Q estimates**, i.e. our value
 The diagram below should help explain things. Note that the output should have shape `[minibatch_size, gen_length]` where `gen_length` is defined as `seq_len - prefix_len` i.e. the number of tokens our model generated. See the diagram below to help illustrate things, and make sure you slice your tensors carefully to match the diagram!
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/rlhf-advantages-2.png" width="900">
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @t.no_grad()
 def compute_advantages(
@@ -908,7 +898,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Memory
 
 We've given you an implementation of the `ReplayMemory` and `ReplayMinibatch` classes.
@@ -938,11 +928,12 @@ Recall from our discussion in PPO yesterday that the `returns` are used in the v
 Obviously the formulas look different here becaause we have no discount ($\gamma = 1$) and we also have no rewards except at the final step ($r_t = 0 \; \forall t < T$), but the idea is fundamentally the same.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class ReplayMinibatch:
@@ -1010,40 +1001,41 @@ class ReplayMemory:
 
         return minibatches
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## RLHF Agent?
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 If we were matching our implementation to our PPO implementation yesterday, this is where we'd define an `RLHFAgent` class. This class would have the role of:
 
 - Managing interactions between the agent and the environment
 - Sequentially taking steps in the environment and storing these steps as experience tuples in `ReplayMemory`
 
 However, we're not going to do this here because it's not a useful abstraction in our case - there's no clear separation between our agent and our environment like there was yesterday. Instead, most of the extra logic in `play_step` (i.e. generating tokens and storing the associated experiences in replay memory) will be handled later in the `rollout_phase` method of your `RLHFTrainer` class.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Objective function
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `calc_kl_penalty`
 
 > ```yaml
@@ -1065,11 +1057,12 @@ A few other tips / notes about this implementation:
     - This means for example you shouldn't take `softmax` to get probabilities _then_ `log` to get logits, since taking the log of very small numbers is unstable
     - You should instead use something like `log_softmax` to get logprobs then `exp` to get probabilities, which works since `log_softmax` is stable (it subtracts a constant from all the logits so they're not all extremely negative) and `exp` of a negative number is stable
 - You should sum over the `d_vocab` dimension, but take the mean over batch & seqpos dims, since each token represents a separate observation and action.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_kl_penalty(
     logits: Float[Tensor, "minibatch_size gen_len d_vocab"],
@@ -1119,7 +1112,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - (re)implement `compute_entropy_bonus`
 
 > ```yaml
@@ -1132,11 +1125,12 @@ r'''
 Next, we'll implement the entropy bonus function again. Rather than working with `probs.entropy()` like yesterday, we'll need to compute entropy directly from the logits, and take the mean over batch and sequence position dimensions.
 
 The formula for entropy of a distribution $P$ is $- \sum_i P_i \log P_i$. You'll need to take the same numerical stability precautions as the previous exercise.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_entropy_bonus(
     logits: Float[Tensor, "minibatch_size gen_len d_vocab"], ent_coef: float, gen_len: int
@@ -1153,9 +1147,7 @@ def calc_entropy_bonus(
         the number of generated tokens (i.e. the number of tokens we want to compute the entropy
         bonus for).
     """
-    assert logits.shape[1] == gen_len, (
-        "Should pass in logits *before* all generated tokens, i.e. [:, -gen_len-1: -1]"
-    )
+    assert logits.shape[1] == gen_len, "Should pass in logits *before* all generated tokens, i.e. [:, -gen_len-1: -1]"
 
     # EXERCISE
     # raise NotImplementedError()
@@ -1178,17 +1170,18 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Other objective function terms
 
 Since the other two terms in our objective function (value function loss and clipped surrogate objective) are pretty much identical to yesterday's, we've provided them for you (taken from yesterday's solutions code). We've added some extra comments in the docstrings to highlight how they differ from yesterday's PPO implementation.
 
 You should pay attention to the shapes of the inputs to these functions (in particular whether they're shape `seq_len` meaning they're for all tokens, or `gen_len` meaning they're only for tokens after the prefix), so that you use them correctly when you're writing the `RLHFTrainer` methods.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_value_function_loss(
     values: Float[Tensor, "minibatch_size gen_len"],
@@ -1216,9 +1209,7 @@ def calc_value_function_loss(
     gen_len:
         the number of generated tokens, used for shape checking
     """
-    assert values.shape[1] == gen_len, (
-        "Should pass in values before all generated tokens, i.e. [:, -gen_len-1: -1]"
-    )
+    assert values.shape[1] == gen_len, "Should pass in values before all generated tokens, i.e. [:, -gen_len-1: -1]"
     assert mb_returns.shape[1] == gen_len, "Should pass in returns before all generated tokens only"
 
     return 0.5 * vf_coef * (values - mb_returns).pow(2).mean()
@@ -1266,11 +1257,12 @@ def calc_clipped_surrogate_objective(
 
     return t.minimum(non_clipped, clipped).mean()
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `get_logprobs`
 
 > ```yaml
@@ -1290,11 +1282,12 @@ When `prefix_len` is `None` you should have the same behaviour as if `prefix_len
 <!-- <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/get-correct-logprobs-3-solid.png" width="520"> -->
 
 You can implement this function using regular indexing, tools like `torch.gather`, or with the `eindex` library which should be included in your dependencies (see [here](https://www.perfectlynormal.co.uk/blog-eindex) for how to use this library).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_logprobs(
     logits: Float[Tensor, "batch seq_len vocab"],
@@ -1337,15 +1330,15 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Optimizer & Scheduler
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `get_optimizer`
 
 > ```yaml
@@ -1371,15 +1364,14 @@ where `params` is a list (or iterable) of parameters, and `lr` is the learning r
 You should fill in the function `get_optimizer` below, so that the value head's parameters all have learning rate `args.head_learning_rate` and the base model's parameters all have learning rate `args.base_learning_rate`.
 
 Remember that we're using `maximize=True` with our optimizer (since we're maximizing an objective function rather than minimizing a loss function). Also we're using the `AdamW` optimizer (our implementation doesn't include weight decay so we could in theory use `Adam`, but it's better to stick to AdamW just in case we want to add in weight decay later).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def get_optimizer(
-    model: TransformerWithValueHead, base_lr: float, head_lr: float
-) -> t.optim.Optimizer:
+
+def get_optimizer(model: TransformerWithValueHead, base_lr: float, head_lr: float) -> t.optim.Optimizer:
     """
     Returns an AdamW optimizer for the model, with the correct learning rates for the base and head.
     """
@@ -1423,7 +1415,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Scheduler
 
 In PPO, we had you write a custom class for implementing learning rate scheduling. This was useful to help you engage with the low-level syntax of changing learning rates in Pytorch. However, PyTorch does provide a handy class for implementing custom learning rate scheduling:
@@ -1446,11 +1438,12 @@ Warmup is a common strategy early in training, to make sure we don't get excessi
 </details>
 
 We've given you the code you'll be using for returning a custom `lr_lambda` function with a **linear warmup then linear decay**. We've also provided code for you in the trainer class's init method below which creates your scheduler. All you need to do is make sure you're stepping it appropriately.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_optimizer_and_scheduler(args: RLHFArgs, model: TransformerWithValueHead):
     """
@@ -1459,43 +1452,40 @@ def get_optimizer_and_scheduler(args: RLHFArgs, model: TransformerWithValueHead)
     """
 
     def lr_lambda(step):
-        assert step <= args.total_phases, (
-            f"Step = {step} should be less than total_phases = {args.total_phases}."
-        )
+        assert step <= args.total_phases, f"Step = {step} should be less than total_phases = {args.total_phases}."
         if step < args.warmup_steps:
             return step / args.warmup_steps
         else:
-            return 1 - (1 - args.final_scale) * (step - args.warmup_steps) / (
-                args.total_phases - args.warmup_steps
-            )
+            return 1 - (1 - args.final_scale) * (step - args.warmup_steps) / (args.total_phases - args.warmup_steps)
 
     optimizer = get_optimizer(model, args.base_lr, args.head_lr)
     scheduler = t.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     return optimizer, scheduler
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 If we want to log the learning rate, then we can use `scheduler.get_last_lr()` which gives you a list of learning rates for each parameter group (in our case, this would have length 2).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training your model
 
 We're now ready to put everything together! We've provided you with the template of a training loop which should be very similar to yesterday's.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - complete `RLHFTrainer`
 
 > ```yaml
@@ -1533,11 +1523,12 @@ wandb.log({
 ```
 
 This works when `self.samples` is a list of length-1 lists, each containing a single sample (i.e. one of the strings returned frmo the `get_samples` method). -->
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class RLHFTrainer:
     model: TransformerWithValueHead
@@ -1547,16 +1538,12 @@ class RLHFTrainer:
     def __init__(self, args: RLHFArgs):
         t.manual_seed(args.seed)
         self.args = args
-        self.run_name = (
-            f"{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
-        )
+        self.run_name = f"{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
 
         self.model = TransformerWithValueHead(args.base_model).to(device).train()
         self.ref_model = HookedTransformer.from_pretrained(args.base_model).to(device).eval()
         self.optimizer, self.scheduler = get_optimizer_and_scheduler(self.args, self.model)
-        self.prefix_len = len(
-            self.model.base_model.to_str_tokens(self.args.prefix, prepend_bos=self.args.prepend_bos)
-        )
+        self.prefix_len = len(self.model.base_model.to_str_tokens(self.args.prefix, prepend_bos=self.args.prepend_bos))
 
     def compute_rlhf_objective(self, minibatch: ReplayMinibatch):
         """
@@ -1592,9 +1579,7 @@ class RLHFTrainer:
         value_loss = calc_value_function_loss(
             values[:, gen_len_slice], minibatch.returns, self.args.vf_coef, self.args.gen_len
         )
-        entropy_bonus = calc_entropy_bonus(
-            logits[:, gen_len_slice], self.args.ent_coef, self.args.gen_len
-        )
+        entropy_bonus = calc_entropy_bonus(logits[:, gen_len_slice], self.args.ent_coef, self.args.gen_len)
         kl_penalty = calc_kl_penalty(
             logits[:, gen_len_slice],
             minibatch.ref_logits[:, gen_len_slice],
@@ -1678,18 +1663,11 @@ class RLHFTrainer:
             wandb.log({"mean_reward": rewards_mean}, step=self.step)
 
         n_log_samples = min(3, self.args.batch_size)
-        ref_logprobs = get_logprobs(
-            ref_logits[:n_log_samples], sample_ids[:n_log_samples], self.prefix_len
-        ).sum(-1)
+        ref_logprobs = get_logprobs(ref_logits[:n_log_samples], sample_ids[:n_log_samples], self.prefix_len).sum(-1)
         headers = ["Reward", "Ref logprobs", "Sample"]
-        table_data = [
-            [str(int(r)), f"{lp:.2f}", repr(s)]
-            for r, lp, s in zip(rewards.tolist(), ref_logprobs, samples)
-        ]
+        table_data = [[str(int(r)), f"{lp:.2f}", repr(s)] for r, lp, s in zip(rewards.tolist(), ref_logprobs, samples)]
         table = tabulate(table_data, headers, tablefmt="simple_grid", maxcolwidths=[None, None, 90])
-        print(
-            f"Phase {self.phase + 1:03}/{self.args.total_phases:03}, Mean reward: {rewards_mean:.4f}\n{table}\n"
-        )
+        print(f"Phase {self.phase + 1:03}/{self.args.total_phases:03}, Mean reward: {rewards_mean:.4f}\n{table}\n")
 
         return ReplayMemory(
             args=self.args,
@@ -1748,11 +1726,12 @@ class RLHFTrainer:
         if self.args.use_wandb:
             wandb.finish()
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution (simpler, no logging)</summary>
 
@@ -1945,13 +1924,13 @@ def learning_phase(self, memory: ReplayMemory) -> None:
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've implemented your trainer class, you can run the code below to train your model. We recommend you start with the test run below, using a KL coefficient of zero.
 
 <details>
@@ -1960,16 +1939,14 @@ Once you've implemented your trainer class, you can run the code below to train 
 With this KL coefficient, the model has no incentive to match the reference distribution, it will only try to maximize the reward. So once it's figured out that it can just output full stops all the time and totally abandon any kind of grammar or coherence, it will do this. By the end of 30 phases, the model should have collapsed into producing reward-maximizing output like `"This is......"`, or something close.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
 # Testing your setup: kl_coef=0.0 (see dropdown above the previous code block for explanation)
-args = RLHFArgs(
-    use_wandb=False, kl_coef=0.0, total_phases=30, warmup_steps=0, reward_fn=reward_fn_char_count
-)
+args = RLHFArgs(use_wandb=False, kl_coef=0.0, total_phases=30, warmup_steps=0, reward_fn=reward_fn_char_count)
 trainer = RLHFTrainer(args)
 trainer.train()
 
@@ -1977,7 +1954,7 @@ trainer.train()
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see example output produced from the test run above]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Phase 001/020, Mean reward: 1.3047
 ┌──────────┬────────────────┬────────────────────────────────────────────────────────────────────────────────────────────┐
 │   Reward │   Ref logprobs │ Sample                                                                                     │
@@ -2045,23 +2022,21 @@ Phase 030/030, Mean reward: 20.0078
 ├──────────┼────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
 │       23 │        -154.58 │ '<|endoftext|>This is not going to happen. Not..... not... Not..............'             │
 └──────────┴────────────────┴───────────────────────────────────────────────────────────────────────────────────────────┘</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've got this working, you can move on to a "proper run".
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-args = RLHFArgs(
-    use_wandb=True, reward_fn=reward_fn_char_count
-)  # CUDA errors? reduce batch_size or gen_len
+args = RLHFArgs(use_wandb=True, reward_fn=reward_fn_char_count)  # CUDA errors? reduce batch_size or gen_len
 trainer = RLHFTrainer(args)
 trainer.train()
 
@@ -2069,7 +2044,7 @@ trainer.train()
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see example output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Phase 001/100, Mean reward: 1.3047
 ┌──────────┬────────────────┬────────────────────────────────────────────────────────────────────────────────────────────┐
 │   Reward │   Ref logprobs │ Sample                                                                                     │
@@ -2141,13 +2116,13 @@ Phase 100/100, Mean reward: 2.9375
 │        3 │         -61.74 │ "<|endoftext|>This is the latest in our series examining the history of the U.S. and │
 │          │                │ Mexico's drug cartels and why they have grown in recent decades.\n\n"                │
 └──────────┴────────────────┴──────────────────────────────────────────────────────────────────────────────────────┘</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations on the example run above</summary>
 
@@ -2162,13 +2137,13 @@ Another important observation in this particular run is that the model showed **
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/democracynow.png" width="540">
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can also play around with the parameters - in particular, try a few different prefix strings. The behaviour of the model (e.g. which kinds of techniques it converges onto for period maximization) or whether it easily mode collapses into insanity can be highly dependent on the prefix string!
 
 Some common strategies you should observe include:
@@ -2186,13 +2161,13 @@ You might also observe increasingly incoherent mode collapse if you train for to
 - `This is really helpful. The U.S. U.S. U.S. U.S.`
 - `This is the A.A.G.A.R.M.A.R.M.A.R.M.A.R.M`
 - `This is my mother. . . me. . . . . . . . . . . . . . . . . . . . . . . .`
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - use a more complex reward function
 
 > ```yaml
@@ -2215,7 +2190,7 @@ Note that for some of these, you should be using a prompt string which is approp
 <!-- For reference, you can see the parameters & results of a positive-sentiment IMDB run [here](https://api.wandb.ai/links/callum-mcdougall/3a1bl3y4), and a negative-sentiment run [here](https://api.wandb.ai/links/callum-mcdougall/misa79ct). The code to generate these two outputs respectively can be found below: -->
 
 We've given you a template below, for creating a reward function from the IMDB sentiment classification model. Your job is to complete this function.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2226,11 +2201,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 if MAIN:
     assert not LOW_GPU_MEM, "You will need more memory to use the imdb reward model."
-    cls_model = (
-        AutoModelForSequenceClassification.from_pretrained("lvwerra/distilbert-imdb")
-        .half()
-        .to(device)
-    )
+    cls_model = AutoModelForSequenceClassification.from_pretrained("lvwerra/distilbert-imdb").half().to(device)
     cls_tokenizer = AutoTokenizer.from_pretrained("lvwerra/distilbert-imdb")
 # END HIDE
 
@@ -2253,9 +2224,7 @@ def reward_fn_sentiment_imdb(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    tokens = cls_tokenizer(gen_sample, return_tensors="pt", padding=True, truncation=True)[
-        "input_ids"
-    ].to(device)
+    tokens = cls_tokenizer(gen_sample, return_tensors="pt", padding=True, truncation=True)["input_ids"].to(device)
     logits = cls_model(tokens).logits
     positive_cls = logits.softmax(dim=-1)[:, 1 if (direction == "pos") else 0]
     return positive_cls.to(device)
@@ -2293,7 +2262,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">                                        Demo of `reward_fn_sentiment_imdb`                                         
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
 ┃ Sample                                                                             ┃ Classification ┃ Sentiment ┃
@@ -2315,21 +2284,21 @@ r'''
 │ and thought the movie might be really good. It had zombies in it right? Was I      │                │           │
 │ wrong!"                                                                            │                │           │
 └────────────────────────────────────────────────────────────────────────────────────┴────────────────┴───────────┘</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've got this working, you can try and perform an actual run on positive / negative sentiment. We recommend using approximately 200 phases for this, and to generate about 50 tokens per sequence so you can get a good sense of what the review looks like.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
 # ! TAGS: [st-dropdown[Some example code and output]]
 
-r'''
+r"""
 Code & output for positive sentiment:
 
 ```python
@@ -2396,29 +2365,29 @@ trainer.train()
 └──────────┴────────────────┴────────────────────────────────────────────────────────────────────────────────────────────┘</pre>
 
 Note, you might find it harder to generate negative sentiment than positive sentiment, and require a longer training period to reach the same average reward (at least that's what I found when experimenting with this particular setup).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Bonus
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Extensions of today's RLHF exercises
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Large models
 
 We're already working with `gpt2-medium` which is considerably larger than most of the models you worked with in most of the transformers & interpretability material. Can you go even larger, e.g. `gpt2-xl` or more?
@@ -2490,23 +2459,23 @@ Currently, very little mechanistic interpretability research ahs focused on RLHF
 The flavour of the actual mech interp done here is very similar to the indirect object identification exercises you might have done during the transformers & interp week. If you didn't do these exercises, we recommend you do them before diving deep into this material.
 
 Lastly, here's a [Google Doc](https://docs.google.com/document/d/1eUdvlJNqY9X0NAw9UUseZz6dFyRklCcOHQy8x3CbcBk/edit?usp=sharing) brainstorming some ideas for RLHF interpretability. You might find some ideas there (although most of these will be pretty vague goals so possibly too ambitious for a bonus exercise or 1-week project).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Suggested paper replications
 
 As well as the papers in this section, you might be interested in browsing this [GitHub repo](https://github.com/opendilab/awesome-RLHF), which contains links to a large number of RLHF-related papers.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### [Deep Reinforcement Learning from Human Preferences](https://arxiv.org/abs/1706.03741)
 
 This was the seminal paper in RLHF. They applied it to the domain of tasks like MuJoCo (which you might already have worked with during your PPO day). Can you set up a reward function and an interface which allows you to choose between two different sets of trajectories, and learn a reward function to maximize?
@@ -2526,5 +2495,4 @@ A major challenge for scaling ML is training models to perform tasks that are ve
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/alice.png" width="500">
 
 You may also wish to do this in a less directed way - see the bonus exercise “Learn a human preference reward model” above.
-'''
-
+"""

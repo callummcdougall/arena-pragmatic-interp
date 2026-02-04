@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Optimizers", "icon": "1-circle-fill", "subtitle": "(40%)"},
@@ -11,37 +11,37 @@ r'''
     {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [0.3] Optimization & Hyperparameters
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-03.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In today's exercises, we will explore various optimization algorithms and their roles in training deep learning models. We will delve into the inner workings of different optimization techniques such as Stochastic Gradient Descent (SGD), RMSprop, and Adam, and learn how to implement them using code. Additionally, we will discuss the concept of loss landscapes and their significance in visualizing the challenges faced during the optimization process. By the end of this set of exercises, you will have a solid understanding of optimization algorithms and their impact on model performance. We'll also take a look at Weights and Biases, a tool that can be used to track and visualize the training process, and test different values of hyperparameters to find the most effective ones.
 
 > Note - the third set of exercises in this section are on distributed training, and have different requirements: specifically, you'll need to SSH into a virtual machine which has multiple GPUs, and run the exercises from a Python file (not notebook or Colab). However you can still treat the first 2 sections as normal and then make this switch for the third section.
@@ -49,13 +49,13 @@ In today's exercises, we will explore various optimization algorithms and their 
 For a lecture on the material today, which provides some high-level understanding before you dive into the material, watch the video below:
 
 <iframe width="540" height="304" src="https://www.youtube.com/embed/BhUj4n5Nqp4" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ Optimizers
@@ -92,15 +92,15 @@ In this section, we'll take you through the basics of distributed training, whic
 ### 4️⃣ Bonus
 
 This section gives you suggestions for further exploration of optimizers, and Weights & Biases.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -147,7 +147,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -207,35 +207,33 @@ from part2_cnns.solutions import Linear, ResNet34, get_resnet_for_feature_extrac
 from part3_optimization.utils import plot_fn, plot_fn_with_points
 from plotly_utils import bar, imshow, line
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I get a NumPy-related error</summary>
 
 This is an annoying colab-related issue which I haven't been able to find a satisfying fix for. If you restart runtime (but don't delete runtime), and run just the imports cell above again (but not the `%pip install` cell), the problem should go away.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Optimizers
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Reading
 
 Some of these are strongly recommended, while others are optional. If you like, you can jump back to some of these videos while you're going through the material, if you feel like you need to.
@@ -246,23 +244,23 @@ Some of these are strongly recommended, while others are optional. If you like, 
     * This is also strongly recommended; if you only want to read/watch one thing, make it this
 * [Why Momentum Really Works (distill.pub)](https://distill.pub/2017/momentum/)
     * This is optional, but a fascinating read if you have time and are interested in engaging with the mathematical details of optimization
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Gradient Descent
 
 Tomorrow, we'll look in detail about how the backpropagation algorithm works. But for now, let's take it as read that calling `loss.backward()` on a scalar `loss` will result in the computation of the gradients $\frac{\partial loss}{\partial w}$ for every parameter `w` in the model, and store these values in `w.grad`. How do we use these gradients to update our parameters in a way which decreases loss?
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 A loss function can be any differentiable function such that we prefer a lower value. To apply gradient descent, we start by initializing the parameters to random values (the details of this are subtle), and then repeatedly compute the gradient of the loss with respect to the model parameters. It [can be proven](https://tutorial.math.lamar.edu/Classes/CalcIII/DirectionalDeriv.aspx) that for an infinitesimal step, moving in the direction of the gradient would increase the loss by the largest amount out of all possible directions.
 
 We actually want to decrease the loss, so we subtract the gradient to go in the opposite direction. Taking infinitesimal steps is no good, so we pick some learning rate $\lambda$ (also called the step size) and scale our step by that amount to obtain the update rule for gradient descent:
@@ -276,23 +274,23 @@ The biggest advantage of this algorithm is that for N bytes of parameters, you o
 The biggest disadvantage is that we're completely ignoring the curvature of the loss function, not captured by the gradient consisting of partial derivatives. Intuitively, we can take a larger step if the loss function is flat in some direction or a smaller step if it is very curved. Generally, you could represent this by some matrix P that pre-multiplies the gradients to rescale them to account for the curvature. $P$ is called a preconditioner, and gradient descent is equivalent to approximating $P$ by an identity matrix, which is a very bad approximation.
 
 Most competing optimizers can be interpreted as trying to do something more sensible for $P$, subject to the constraint that GPU memory is at a premium. In particular, constructing $P$ explicitly is infeasible, since it's an $N \times N$ matrix and N can be hundreds of billions. One idea is to use a diagonal $P$, which only requires N additional memory. An example of a more sophisticated scheme is [Shampoo](https://arxiv.org/pdf/1802.09568.pdf).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 > The algorithm is called **Shampoo** because you put shampoo on your hair before using conditioner, and this method is a pre-conditioner.
 >     
 > If you take away just one thing from this entire curriculum, please don't let it be this.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Stochastic Gradient Descent
 
 The terms gradient descent and SGD are used loosely in deep learning. To be technical, there are three variations:
@@ -302,13 +300,13 @@ The terms gradient descent and SGD are used loosely in deep learning. To be tech
 - Mini-batch gradient descent - the loss function is the loss on a batch of examples of size `batch_size`. This is the standard in deep learning.
 
 The class `torch.optim.SGD` can be used for any of these by varying the number of examples passed in. We will be using only mini-batch gradient descent in this course.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Batch Size
 
 In addition to choosing a learning rate or learning rate schedule, we need to choose the batch size or batch size schedule as well. Intuitively, using a larger batch means that the estimate of the gradient is closer to that of the true gradient over the entire dataset, but this requires more compute. Each element of the batch can be computed in parallel so with sufficient compute, one can increase the batch size without increasing wall-clock time. For small-scale experiments, a good heuristic is thus "fill up all of your GPU memory".
@@ -322,21 +320,21 @@ You will commonly see batch sizes that are a multiple of 32. One motivation for 
 Powers of two are also common - the idea here is that work can be recursively divided up among different GPUs or within a GPU. For example, a matrix multiplication can be expressed by recursively dividing each matrix into four equal blocks and performing eight smaller matrix multiplications between the blocks.
 
 In tomorrow's exercises, you'll have the option to expore batch sizes in more detail.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Common Themes in Gradient-Based Optimizers
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Weight Decay
 
 Weight decay means that on each iteration, in addition to a regular step, we also shrink each parameter very slightly towards 0 by multiplying a scaling factor close to 1, e.g. 0.9999. Empirically, this seems to help but there are no proofs that apply to deep neural networks.
@@ -344,31 +342,32 @@ Weight decay means that on each iteration, in addition to a regular step, we als
 In the case of linear regression, weight decay is mathematically equivalent to having a prior that each parameter is Gaussian distributed - in other words it's very unlikely that the true parameter values are very positive or very negative. This is an example of "**inductive bias**" - we make an assumption that helps us in the case where it's justified, and hurts us in the case where it's not justified.
 
 For a `Linear` layer, it's common practice to apply weight decay only to the weight and not the bias. It's also common to not apply weight decay to the parameters of a batch normalization layer. Again, there is empirical evidence (such as [Jai et al 2018](https://arxiv.org/pdf/1807.11205.pdf)) and there are heuristic arguments to justify these choices, but no rigorous proofs. Note that PyTorch will implement weight decay on the weights *and* biases of linear layers by default - see the bonus exercises tomorrow for more on this.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Momentum
 
 Momentum means that the step includes a term proportional to a moving average of past gradients. [Distill.pub](https://distill.pub/2017/momentum/) has a great article on momentum, which you should definitely read if you have time. Don't worry if you don't understand all of it; skimming parts of it can be very informative. For instance, the first half discusses the **conditioning number** (a very important concept to understand in optimisation), and concludes by giving an intuitive argument for why we generally set the momentum parameter close to 1 for ill-conditioned problems (those with a very large conditioning number).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Visualising optimization with pathological curvatures
 
 A pathological curvature is a type of surface that is similar to ravines and is particularly tricky for plain SGD optimization. In words, pathological curvatures typically have a steep gradient in one direction with an optimum at the center, while in a second direction we have a slower gradient towards a (global) optimum. Let’s first create an example surface of this and visualize it. The code below creates 2 visualizations (3D and 2D) and also adds the minimum point to the plot (note this is the min in the visible region, not the global minimum).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def pathological_curve_loss(x: Tensor, y: Tensor):
     # Example of a pathological curvature. There are many more possible, feel free to experiment here!
@@ -388,27 +387,27 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0301.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In terms of optimization, you can image that `x` and `y` are weight parameters, and the curvature represents the loss surface over the space of `x` and `y`. Note that in typical networks, we have many, many more parameters than two, and such curvatures can occur in multi-dimensional spaces as well.
 
 Ideally, our optimization algorithm would find the center of the ravine and focuses on optimizing the parameters towards the direction of `y`. However, if we encounter a point along the ridges, the gradient is much greater in `x` than `y`, and we might end up jumping from one side to the other. Due to the large gradients, we would have to reduce our learning rate slowing down learning significantly.
 
 To test our algorithms, we can implement a simple function to train two parameters on such a surface.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `opt_fn_with_sgd`
 
 > ```yaml
@@ -423,11 +422,12 @@ Implement the `opt_fn_with_sgd` function using `torch.optim.SGD`. This function 
 Remember, your update steps `optimizer.step()` will automatically change the values of `xy` inplace - this means that you shouldn't store past values like `xy_list.append(xy)` because then past elements of that list will be modified when `xy` is updated. Instead, you should use something like `xy_list.append(xy.detach().clone())` to make sure you're returning a copy of the tensor, which won't continue to be modified.
 
 We've also provided you with a function `plot_fn_with_points`, which plots a function as well as a list of points produced by functions like the one above. The code below starts from `(2.5, 2.5)` and adds the resulting trajectory of `(x, y)` coordinates to the contour plot. Does it find the minimum? Play with the learning rate and momentum a bit and see how close you can get within 100 iterations.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def opt_fn_with_sgd(
     fn: Callable, xy: Float[Tensor, "2"], lr=0.001, momentum=0.98, n_iters: int = 100
@@ -473,9 +473,7 @@ if MAIN:
 
     for optimizer_class, params in optimizer_list:
         xy = t.tensor([2.5, 2.5], requires_grad=True)
-        xys = opt_fn_with_sgd(
-            pathological_curve_loss, xy=xy, lr=params["lr"], momentum=params["momentum"]
-        )
+        xys = opt_fn_with_sgd(pathological_curve_loss, xy=xy, lr=params["lr"], momentum=params["momentum"])
         points.append((xys, optimizer_class, params))
         print(f"{params=}, last point={xys[-1]}")
 
@@ -492,18 +490,18 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">params={'lr': 0.1, 'momentum': 0.0}, last point=tensor([0.2300, 1.4820])
 params={'lr': 0.02, 'momentum': 0.99}, last point=tensor([ 0.7196, -6.4586])</pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0302.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm not sure if my <code>opt_fn_with_sgd</code> is implemented properly.</summary>
 
@@ -517,23 +515,23 @@ This is a protective mechanism built into PyTorch. The idea is that once you con
 
 All you need to do to convince PyTorch you're a responsible adult is to call `detach()` on the tensor first, which returns a view that does not require grad and isn't part of the computation graph.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Build Your Own Optimizers
 
 Now let's build our own drop-in replacement for these three classes from `torch.optim`. For each of the exercises you'll have to translate pseudocode that we give you into actual code. If you want an extra challenge, you can try and work directly from the pseudocode in the PyTorch documentation page rather than what we give you.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 > **A warning regarding in-place operations**
 >
 > Be careful with expressions like `x = x + y` and `x += y`. They are NOT equivalent in Python.
@@ -546,13 +544,13 @@ r'''
 > When you're updating parameters in your network you _should_ use inplace operations (because your `optimizer` was passed an iterable of parameters, and so defining a new parameter value via `theta = theta - step` will take it out of the optimizer's scope - it will continue to point to the old, unmodified version).
 > 
 > However, be careful of using inplace operations where you shouldn't be - you don't want to accidentally do something like modify the gradients manually!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement SGD
 
 > ```yaml
@@ -608,11 +606,12 @@ The configurations used during `tests.test_sgd` will start simple (e.g. all para
 
 
 You should also read the `__init__` and `zero_grad` methods, making sure you understand how these work and what they are doing. Note that setting `grad=None` like the code below is treated as equivalent to setting `grad` equal to a tensor of zeros, i.e. the first time we're required to do an operation on the gradient it'll be replaced with this. Making it be `None` by default is the standard, so as to not use unnecessary memory.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class SGD:
     def __init__(
@@ -627,9 +626,7 @@ class SGD:
         Like the PyTorch version, but assume nesterov=False, maximize=False, and dampening=0
             https://pytorch.org/docs/stable/generated/torch.optim.SGD.html#torch.optim.SGD
         """
-        self.params = list(
-            params
-        )  # turn params into a list (it might be a generator, so iterating over it empties it)
+        self.params = list(params)  # turn params into a list (it might be a generator, so iterating over it empties it)
         self.lr = lr
         self.mu = momentum
         self.lmda = weight_decay
@@ -651,13 +648,9 @@ class SGD:
         for b, theta in zip(self.b, self.params):
             g = theta.grad
             if self.lmda != 0:
-                g = (
-                    g + self.lmda * theta
-                )  # this shouldn't be inplace since we don't want to modify theta.grad
+                g = g + self.lmda * theta  # this shouldn't be inplace since we don't want to modify theta.grad
             if self.mu != 0:
-                b.copy_(
-                    self.mu * b + g
-                )  # this does need to be inplace, since we're modifying the value in `self.b`
+                b.copy_(self.mu * b + g)  # this does need to be inplace, since we're modifying the value in `self.b`
                 g = b
             theta -= self.lr * g  # inplace operation, to modify params
         # END SOLUTION
@@ -673,15 +666,15 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 If you feel comfortable with this implementation, you can skim through the remaining ones, since there's diminishing marginal returns to be gained from doing the actual exercises. We still recommend you read the content on the optimizers before the actual exercises, because they contain useful theory to understand. If you want an extra challenge in the actual exercises, you can try and implement the optimization algorithms directly from the PyTorch documentation pseudocode rather than from the simplified pseudocode we give you.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### RMSProp (and adaptive methods)
 
 From SGD, we'll move onto discussing **adaptive gradient descent methods**. These are methods which automatically adjust the learning rate of each parameter during training, based on the size of gradients at previous steps. In a sense this is similar to how momentum operates in SGD, but we don't tend to describe SGD plus momentum as an adaptive method. When discussing momentum, we usually think of the analogy of a ball rolling down a hill, and the ball's velocity accelerates until it reaches some terminal velocity. The momentum parameter $\mu$ controls the terminal velocity: as $\mu \to 1$ the terminal velocity gets very high, which also means it can take a long time to adjust its speed when it enters new territory. In contrast, adaptive methods are better thought of as deliberate, conscious updates to the learning rate of parameters based on past values. They allow us to speed up when we need to, but without sacrificing our ability to adapt quickly when we enter new regimes.
@@ -689,13 +682,13 @@ From SGD, we'll move onto discussing **adaptive gradient descent methods**. Thes
 The first adaptive method we'll look at is **RMSprop**. This is actually the second main adaptive method that was proposed in the optimization literature, after AdaGrad (however the problem with AdaGrad is that it decays the learning rates too quickly - this is the problem that RMSprop solves). RMSprop is similar to SGD, with an added dynamic: **the size of parameter steps are scaled according to the variance of past gradients**, with higher variance leading to smaller steps. Intuitively, if you're in a very monotonic region of the loss landscape then you want to take larger steps (since you know where you're going and you just want to get there quickly), whereas if you're in a very noisy region and possibly oscillating around minima then you want to take smaller steps.
 
 One final note - when we're using non-adaptive methods like SGD we tend to have an inverse relationship between the learning rate and the batch size. Broadly speaking, this is because a larger batch size means our gradients will have smaller variance, and so we can safely use a larger learning rate. This generally isn't necessary for adaptive methods since the learning rates will be adjusted automatically during training based on the variance of our gradients - we don't need to manually scale them ourselves. Most commonly during optimization, we'll start with the default hyperparameters for whatever adaptive optimizer we're using, and then adjust from there.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement RMSprop
 
 > ```yaml
@@ -729,11 +722,12 @@ $
 Note that we've reordered the pseudocode slightly differently to the PyTorch docs, so that we divide $g_t$ by $\sqrt{v_t + \epsilon}$ before applying momentum. Both ways are equivalent though.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class RMSprop:
     def __init__(
@@ -774,9 +768,7 @@ class RMSprop:
             g = theta.grad
             if self.lmda != 0:
                 g = g + self.lmda * theta
-            v.copy_(
-                self.alpha * v + (1 - self.alpha) * g.pow(2)
-            )  # inplace operation, to modify value in self.v
+            v.copy_(self.alpha * v + (1 - self.alpha) * g.pow(2))  # inplace operation, to modify value in self.v
             g = g / (v.sqrt() + self.eps)  # not inplace operation
             if self.mu > 0:
                 b.copy_(self.mu * b + g)  # inplace operation, to modify value in self.b
@@ -786,8 +778,7 @@ class RMSprop:
 
     def __repr__(self) -> str:
         return (
-            f"RMSprop(lr={self.lr}, eps={self.eps}, momentum={self.mu}, "
-            f"weight_decay={self.lmda}, alpha={self.alpha})"
+            f"RMSprop(lr={self.lr}, eps={self.eps}, momentum={self.mu}, weight_decay={self.lmda}, alpha={self.alpha})"
         )
 
 
@@ -798,19 +789,19 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Adam, and "momentum"
 
 We'll end by implementing Adam and AdamW, two of the most popular optimizers in deep learning. These combine the benefits of RMSprop and SGD with momentum: they have the same variance-based scaling as RMSprop, but they also have an update rule based on the first moment of gradients as well.
 
 There's an important clarification to make here - the first order adjustment of Adam is sometimes called momentum as a shorthand, but there's an important sense in which it isn't. The key difference is that SGD's momentum causes acceleration until we hit terminal velocity, which could be very large for $\mu \approx 1$. In contrast, Adam's momentum is an exponentially weighted moving average - the parameter $\beta_1$ controls how quickly it adjusts (with a value closer to 1 meaning it adjust to newer values more slowly), but it doesn't change the terminal velocity in any sense. Mathematically, the difference between these two is minimal (all you'd need to do is take Adam's update rule $m_t \leftarrow \beta_1 m_{t-1} + (1-\beta_1) g_t$ and change it to $m_t \leftarrow \beta_1 m_{t-1} + g_t$ for it to have the same qualitative behaviour as SGD), but this extra factor makes a lot of difference!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement Adam
 
 > ```yaml
@@ -842,11 +833,12 @@ $
 </details>
 
 Note - we center our first & second moment estimators by dividing by $1 - \beta^t$, which means for this optimizer we do have to track the variable $t$ (make sure to remember to increment it after each use of the `step` function). We do this because Adam's exponentially weighted moving average would otherwise take a while to converge to the true mean (since its estimates initially behave like the truncated sum of a geometric series). We leave it as an exercise for the reader to derive this (hint - try assuming the expected value $\mathbb{E}[g_t] = g_0$ is the same for all $t$, what does the expression $\mathbb{E}[m_t]$ simplify to?).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class Adam:
     def __init__(
@@ -895,10 +887,7 @@ class Adam:
         # END SOLUTION
 
     def __repr__(self) -> str:
-        return (
-            f"Adam(lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps}, "
-            f"weight_decay={self.lmda})"
-        )
+        return f"Adam(lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps}, weight_decay={self.lmda})"
 
 
 # HIDE
@@ -910,7 +899,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement AdamW
 
 > ```yaml
@@ -939,11 +928,12 @@ $
 $
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class AdamW:
     def __init__(
@@ -991,10 +981,7 @@ class AdamW:
         # END SOLUTION
 
     def __repr__(self) -> str:
-        return (
-            f"AdamW(lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps}, "
-            f"weight_decay={self.lmda})"
-        )
+        return f"AdamW(lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps}, weight_decay={self.lmda})"
 
 
 # HIDE
@@ -1006,17 +993,17 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Plotting multiple optimisers
 
 Finally, we've provided some code which should allow you to plot more than one of your optimisers at once.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - experiment with different optimizers & params
 
 > ```yaml
@@ -1029,11 +1016,12 @@ r'''
 We've given you a function below which works just like `opt_fn_with_sgd` from earlier, but takes in a general optimizer and hyperparameters (as a dictionary of keyword arguments like `lr` and `momentum`).
 
 You should use this function to play around with different optimizers and hyperparameters, comparing their performance. The code below gives one example of such a comparison, run it now and see what you get:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def opt_fn(
     fn: Callable,
@@ -1051,9 +1039,7 @@ def opt_fn(
 
     optimizer = optimizer_class([xy], **optimizer_hyperparams)
 
-    xy_list = [
-        xy.detach().clone()
-    ]  # so that we don't unintentionally modify past values in `xy_list`
+    xy_list = [xy.detach().clone()]  # so that we don't unintentionally modify past values in `xy_list`
 
     for i in range(n_iters):
         fn(xy[0], xy[1]).backward()
@@ -1096,15 +1082,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0303.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Note that the focus shouldn't be on figuring out "which one is the best optimizer" - this loss landscape (and other examples we'll give you) were specifically designed to be pathological, and exhibit interesting kinds of behaviours from optimizers. The focus should instead be on understanding how the characteristics of optimizers we discussed in the previous sections are reflected visually in the plots produced on these loss landscapes. Some questions you might want to ask:
 
 - We discussed that Adam (and AdamW) center their first and second moments, so that the early values are large - otherwise they start off small and take a long time to grow. Is this reflected in the plots, i.e. with Adam/AdamW taking larger early steps relative to SGD or RMSprop?
@@ -1112,11 +1098,12 @@ Note that the focus shouldn't be on figuring out "which one is the best optimize
 - Are there any landscapes where weight decay is advantageous, and can you see why it would be?
 
 Some more functions you might want to try out (with their minima marked on the plots):
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def bivariate_gaussian(x, y, x_mean=0.0, y_mean=0.0, x_sig=1.0, y_sig=1.0):
     norm = 1 / (2 * np.pi * x_sig * y_sig)
@@ -1161,9 +1148,7 @@ if MAIN:
         )
         points.append((xys, optimizer_class, params))
 
-    plot_fn_with_points(
-        neg_trimodal_func, x_range=(-2, 2), y_range=(-2, 2), min_points=means, points=points
-    )
+    plot_fn_with_points(neg_trimodal_func, x_range=(-2, 2), y_range=(-2, 2), min_points=means, points=points)
     # plot_fn(neg_trimodal_func, x_range=(-2, 2), y_range=(-2, 2), min_points=means, filename=str(section_dir / "0304.html"))
     # plot_fn_with_points(neg_trimodal_func, points=points, x_range=(-2, 2), y_range=(-2, 2), min_points=means, filename=str(section_dir / "0304-points.html"))
     # END FILTERS
@@ -1172,13 +1157,14 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0304.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def rosenbrocks_banana_func(x: Tensor, y: Tensor, a=1, b=100) -> Tensor:
     """
@@ -1228,15 +1214,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0305.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some example visualizations & observations</summary>
 
@@ -1284,29 +1270,29 @@ plot_fn_with_points(
 ```
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0305-points.html" width="1020" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus - parameter groups
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 > *If you're interested in these exercises then you can go through them, if not then you can move on to the next section (weights and biases).*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Rather than passing a single iterable of parameters into an optimizer, you have the option to pass a list of parameter groups, each one with different hyperparameters. As an example of how this might work:
 
 ```python
@@ -1328,13 +1314,13 @@ optim.SGD([
 All parameters have default values, with the exception of `lr` which is why you need to specify it either as a keyword arg to the optimizer or separately in each group.
 
 PyTorch optimisers will store all their params and hyperparams in the `param_groups` attribute - this is why when we want to modify an optimizer's learning rate (which we'll do later on in the course), even if we didn't specify any parameter groups we'll still need to use `optimizer.param_groups[0].lr = new_lr`.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### When to use parameter groups
 
 Parameter groups can be useful in several different circumstances. A few examples:
@@ -1345,13 +1331,13 @@ Parameter groups can be useful in several different circumstances. A few example
 * On the subject of transformers, weight decay is often *not* applied to embeddings and layernorms in transformer models.
 
 More generally, if you're trying to replicate a paper, it's important to be able to use all the same training details that the original authors did, so you can get the same results.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - rewrite SGD to use parameter groups
 
 > ```yaml
@@ -1366,11 +1352,12 @@ You should rewrite the `SGD` optimizer from the earlier exercises, to use `param
 
 - In `__init__` you should create `self.param_groups`, which is a list of dictionaries with each one containing `"params"` as well as all the hyperparameters for that group. Remember the hierarchy for hparams: "specified for group" > "specified as a keyword argument" > "default value".
 - In `zero_grad` and `step` the logic is the same as before, but now you need a double nested for loop: once over the param groups in `self.param_groups`, and once over the params in each group. For the latter, make sure you're using the group-specific hyperparameters (i.e. the ones you hopefully stored in `self.param_groups` in the init method).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class SGD:
     def __init__(self, params, **kwargs):
@@ -1454,15 +1441,15 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus - Muon Optimizer
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Hot off the press is a new optimizer called *Muon*. Muon is an optimizer specialized only for the parameters of a network that are *hidden* and *at least 2-dimensional*.
  * For image classification, we skip anything that directly interfaces with the input, or the output.
  * For language models, this means skipping the embedding and unembedding layers.
@@ -1484,33 +1471,33 @@ We might make this into an actual exercise later, but for now, here's a series o
 * [Derivation of Muon](https://jeremybernste.in/writing/deriving-muon)
   * Not required reading, but if you're curious about the math
 * [Reference Muon implementation in PyTorch](https://github.com/KellerJordan/Muon)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Weights and Biases
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Next, we'll look at methods for choosing hyperparameters effectively. You'll learn how to use **Weights and Biases**, a useful tool for hyperparameter search.
 
 The exercises themselves will be based on your ResNet implementations from yesterday, although the principles should carry over to other models you'll build in this course (such as transformers next week).
 
 Note, this page only contains a few exercises, and they're relatively short. You're encouraged to spend some time playing around with Weights and Biases, but you should also spend some more time finetuning your ResNet from yesterday (you might want to finetune ResNet during the morning, and look at today's material in the afternoon - you can discuss this with your partner). You should also spend some time reviewing the last three days of material, to make sure there are no large gaps in your understanding.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Finetuning & feature extraction
 
 > We'll start with a brief discussion of the related concepts **finetuning** and **feature extraction**. If you've already gone through yesterday's bonus material on feature extraction then you can skip this section.
@@ -1524,32 +1511,29 @@ The specific type of finetuning we'll be doing here is called **feature extracti
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/feature_extraction.png" width="400">
 
 The way we implement feature extraction in PyTorch is by **freezing** all but the last few layers of our model, meaning gradients don't propagate back through them (and we don't perform gradient descent updates on them) - more on gradient freezing tomorrow! We've used the `get_resnet_for_feature_extraction` function to do this (the code for this is given to you below so you won't have to write it yourself). This function creates a version of the `ResNet34` model, loads in weights from the PyTorch ResNet34 implementation, freezes all layers, and replaces the final linear layer with an unfrozen randomly initialized linear layer with a certain number of output features (in our case 10 because we're doing feature extraction on CIFAR10 - see next section).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## CIFAR10
 
 The benchmark we'll be doing feature extraction on is [CIFAR10](https://www.cs.toronto.edu/~kriz/cifar.html), which consists of 60000 32x32 colour images in 10 different classes (as opposed to the 1000 different classes that `ResNet34` was originally trained on). Don't peek at what other people online have done for CIFAR10 (it's a common benchmark), because the point is to develop your own process by which you can figure out how to improve your model. Just reading the results of someone else would prevent you from learning how to get the answers. To get an idea of what's possible: using one V100 and a modified ResNet, one entry in the DAWNBench competition was able to achieve 94% test accuracy in 24 epochs and 76 seconds. 94% is approximately [human level performance](http://karpathy.github.io/2011/04/27/manually-classifying-cifar10/).
 
 Below is some boilerplate code for downloading and transforming `CIFAR10` data (this shouldn't take more than a minute to run the first time). Note, even though CIFAR10 data is 32x32, we'll resize it to 224x224 like we did for ImageNet yesterday, because ResNet expects 224x224 images as input.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
+
 def get_cifar() -> tuple[datasets.CIFAR10, datasets.CIFAR10]:
     """Returns CIFAR-10 train and test sets."""
-    cifar_trainset = datasets.CIFAR10(
-        exercises_dir / "data", train=True, download=True, transform=IMAGENET_TRANSFORM
-    )
-    cifar_testset = datasets.CIFAR10(
-        exercises_dir / "data", train=False, download=True, transform=IMAGENET_TRANSFORM
-    )
+    cifar_trainset = datasets.CIFAR10(exercises_dir / "data", train=True, download=True, transform=IMAGENET_TRANSFORM)
+    cifar_testset = datasets.CIFAR10(exercises_dir / "data", train=False, download=True, transform=IMAGENET_TRANSFORM)
     return cifar_trainset, cifar_testset
 
 
@@ -1595,15 +1579,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0306-A.html" width="1020" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Train function (modular)
 
 First, let's build on the training function we used yesterday. Previously, we just used a single `train` function which took a dataclass as argument. But this resulted in a very long function with many nested loops and some repeated code. Instead, we'll write our code in the form of a `ResNetFinetuner` class with multiple methods, each one being responsible for a single part of the training process. This will make our code more modular, and easier to read and debug. 
@@ -1614,11 +1598,12 @@ We've given you the `ResNetFinetuner` class below, as well as a dataclass which 
 * `training_step` does a single gradient update step on a single batch of data, and logs & returns the loss.
 * `evaluate` method computes the total accuracy of the model over the validation set, and logs & returns this accuracy. Note use of the `torch.inference_mode()` decorator, which stops gradients propagating (this is equivalent to using it as a context manager).
 * `train` combines this all: it performs the pre-training setup, then alternates between training & evaluation for some number of epochs. Note that `model.train()` and `model.eval()` are called before these stages respectively - for why we have to do this, see yesterday's discussion of BatchNorm.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class ResNetFinetuningArgs:
@@ -1694,19 +1679,18 @@ class ResNetFinetuner:
                 pbar.set_postfix(loss=f"{loss:.3f}", ex_seen=f"{self.examples_seen:06}")
 
             accuracy = self.evaluate()
-            pbar.set_postfix(
-                loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.examples_seen:06}"
-            )
+            pbar.set_postfix(loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.examples_seen:06}")
 
         return self.logged_variables
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 With this class, we can perform feature extraction on our model as follows:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1745,7 +1729,7 @@ line(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Files already downloaded and verified
 Files already downloaded and verified
 Evaluating: 100%|██████████| 79/79 [00:23<00:00,  3.30it/s]
@@ -1755,19 +1739,20 @@ Training: 100%|██████████| 391/391 [02:05<00:00,  3.10it/s, 
 Evaluating: 100%|██████████| 79/79 [00:22<00:00,  3.44it/s]
 Training: 100%|██████████| 391/391 [02:05<00:00,  3.13it/s, ex_seen=150000, loss=0.584]
 Evaluating: 100%|██████████| 79/79 [00:22<00:00,  3.44it/s]</pre><div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0306.html" width="820" height="480"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Let's see how well our ResNet performs on the first few inputs!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def test_resnet_on_random_input(model: ResNet34, n_inputs: int = 3, seed: int | None = 42):
     if seed is not None:
@@ -1817,16 +1802,16 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0307-A.html" width="220" height="220"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-03/0307-B.html" width="620" height="420"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## What is Weights and Biases?
 
 Weights and Biases is a cloud service that allows you to log data from experiments. Your logged data is shown in graphs during training, and you can easily compare logs across different runs. It also allows you to run **sweeps**, where you can specifiy a distribution over hyperparameters and then start a sequence of test runs which use hyperparameters sampled from this distribution.
@@ -1834,13 +1819,13 @@ Weights and Biases is a cloud service that allows you to log data from experimen
 Before you run any of the code below, you should visit the [Weights and Biases homepage](https://wandb.ai/home), and create your own account.
 
 We'll be able to keep the same structure of training loop when using weights and biases, we'll just have to add a few functions. The key functions to know are:
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 #### `wandb.init`
 
 This initialises a training run. It should be called once, at the start of your training loop.
@@ -1870,13 +1855,13 @@ For logging metrics to the wandb dashboard. This is used as `wandb.log(data, ste
 This function should be called at the end of your training loop. It finishes the run, and saves the results to the cloud. 
 
 If a run terminates early (either because of an error or because you manually terminated it), remember to still run `wandb.finish()` - it will speed things up when you start a new run (otherwise you have to wait for the previous run to be terminated & uploaded).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - rewrite training loop with wandb
 
 > ```yaml
@@ -1901,11 +1886,12 @@ You should now take the training loop from above (i.e. the `ResNetTrainer` class
 This is all you need to do to get wandb working, so the vast majority of the code you write below will be copied and pasted from the previous `ResNetFinetuner` class. We've given you a template for this below, along with a new dataclass. Both the dataclass and the trainer class use inheritance to remove code duplication (e.g. because we don't need to rewrite our `__init__` method, it'll be the same as for `ResNetFinetuner`).
 
 Note, we generally recommend keeping progress bars in wandb because they update slightly faster and can give you a better sense of whether something is going wrong in training.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class WandbResNetFinetuningArgs(ResNetFinetuningArgs):
@@ -1993,9 +1979,7 @@ class WandbResNetFinetuner(ResNetFinetuner):
                 pbar.set_postfix(loss=f"{loss:.3f}", ex_seen=f"{self.examples_seen=:06}")
 
             accuracy = self.evaluate()
-            pbar.set_postfix(
-                loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.examples_seen=:06}"
-            )
+            pbar.set_postfix(loss=f"{loss:.3f}", accuracy=f"{accuracy:.2f}", ex_seen=f"{self.examples_seen=:06}")
 
         wandb.finish()
         # END SOLUTION
@@ -2012,7 +1996,7 @@ class WandbResNetFinetuner(ResNetFinetuner):
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When you run the code for the first time, you'll have to login to Weights and Biases, and paste an API key into VSCode. After this is done, your Weights and Biases training run will start. It'll give you a lot of output text, one line of which will look like:
 
 ```
@@ -2022,21 +2006,21 @@ View run at https://wandb.ai/<USERNAME>/<PROJECT-NAME>/runs/<RUN-NAME>
 which you can click on to visit the run page.
 
 A nice thing about using Weights and Biases is that you don't need to worry about generating your own plots, that will all be done for you when you visit the page.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/wandb-day3.png" width="900">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Run & project pages
 
 The page you visit will show you a plot of all the variables you've logged, among other things. You can do many things with these plots (e.g. click on the "edit" icon for your `train_loss` plot, and apply smoothing & change axis bounds to get a better picture of your loss curve).
@@ -2046,13 +2030,13 @@ The page you visit will show you a plot of all the variables you've logged, amon
 The charts are a useful feature of the run page that gets opened when you click on the run page link, but they're not the only feature. You can also navigate to the project page (click on the option to the right of **Projects** on the bar at the top of the Wandb page), and see superimposed plots of all the runs in this project. You can also click on the **Table** icon on the left hand sidebar to see a table of all the runs in this project, which contains useful information (e.g. runtime, the most recent values of any logged variables, etc). However, comparing runs like this becomes especially useful when we start doing hyperparameter search.
 
 You can also look at the system tab to inspect things like GPU utilization - this is a good way of checking whether you're saturating your GPU or whether you can afford to increase your batch size more. This tab will be especially useful in the next section, when we move onto distributed training.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Some training heuristics
 
 One important skill which every aspiring ML researcher should develop is the ability to play around with hyperparameters and improve a model's training. At times this is more of an art than a science, because frequently rules and heuristics which work most of the time will break down in certain special cases. For example, a common heuristic for number of workers in a `DataLoader` is to set them to be 4 times the number of GPUs you have available (see later sections on distributed computing for more on this). However, setting these values too high can lead to issues where your CPU is bottlenecked by the workers and your epochs take a long time to start - it took me a long time to realize this was happening when I was initially writing these exercises!
@@ -2077,13 +2061,13 @@ Sweeping over hyperparameters (which we'll cover shortly) can help remove some o
     - If you're training a larger model, it's sometimes a good idea to start with a smaller version of that same model. Good hyperparameters tend to transfer if the architecture & data is the same; the main difference is the larger model may require more regularization to prevent overfitting.
     - Bad hyperparameters are usually clearly worse by the end of the first 1-2 epochs. You can manually abort runs that don't look promising (or do it automatically - see discussion of Hyperband in wandb sweeps at the end of this section)
     - Overfitting at the start is better than underfitting, because it means your model is capable of learning and has enough capacity
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Hyperparameter search
 
 One way to search for good hyperparameters is to choose a set of values for each hyperparameter, and then search all combinations of those specific values. This is called **grid search**. The values don't need to be evenly spaced and you can incorporate any knowledge you have about plausible values from similar problems to choose the set of values. Searching the product of sets takes exponential time, so is really only feasible if there are a small number of hyperparameters. I would recommend forgetting about grid search if you have more than 3 hyperparameters, which in deep learning is "always".
@@ -2094,23 +2078,23 @@ A much better idea is for each hyperparameter, decide on a sampling distribution
 
 
 It's worth noting that both of these searches are vastly less efficient than gradient descent at finding optima - imagine if you could only train neural networks by randomly initializing them and checking the loss! Either of these search methods without a dose of human (or eventually AI) judgement is just a great way to turn electricity into a bunch of models that don't perform very well.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Running hyperparameter sweeps with `wandb`
 
 Now we've come to one of the most impressive features of `wandb` - being able to perform hyperparameter sweeps. We do this by defining a `sweep_config` dict which tells us how our hyperparameters will be randomly sampled, then we write a `train` function which takes no arguments and launches a training run with our modified hyperparameters. Lastly we use `wandb.sweep` and `wandb.agent` to run our sweep. We'll go through each step of this below.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Sweep config syntax
 
 The basic syntax for a sweep config looks like this:
@@ -2169,13 +2153,13 @@ metric:
 For more, see [this link](https://docs.wandb.ai/guides/sweeps/define-sweep-configuration).
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - define a sweep config & update `args`
 
 > ```yaml
@@ -2196,7 +2180,7 @@ Using the syntax discussed above, you should define a dictionary `sweep_config` 
     * Weight decay - with 50% probability set to 0, and with 50% probability log-uniform between 1e-4 and 1e-2
 
 You should also fill in the `update_args` function, which returns a modified version of `args` based on the hyperparameters sampled by the sweep. In other words, it should take an `args` object and a dictionary of sampled parameters that might look something like `{"lr": 0.001, "batch_size": 64, ...}`, and return a new `args` object with these fields modified.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2224,9 +2208,7 @@ sweep_config = dict(
 # END SOLUTION
 
 
-def update_args(
-    args: WandbResNetFinetuningArgs, sampled_parameters: dict
-) -> WandbResNetFinetuningArgs:
+def update_args(args: WandbResNetFinetuningArgs, sampled_parameters: dict) -> WandbResNetFinetuningArgs:
     """
     Returns a new args object with modified values. The dictionary `sampled_parameters` will have
     the same keys as your `sweep_config["parameters"]` dict, and values equal to the sampled values
@@ -2241,9 +2223,7 @@ def update_args(
     # SOLUTION
     args.learning_rate = sampled_parameters["learning_rate"]
     args.batch_size = sampled_parameters["batch_size"]
-    args.weight_decay = (
-        sampled_parameters["weight_decay"] if sampled_parameters["weight_decay_bool"] else 0.0
-    )
+    args.weight_decay = sampled_parameters["weight_decay"] if sampled_parameters["weight_decay_bool"] else 0.0
     return args
     # END SOLUTION
 
@@ -2258,7 +2238,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm not sure how to implement the weight decay distribution that was requested.</summary>
 
@@ -2303,13 +2283,13 @@ def update_args(args: WandbResNetFinetuningArgs, sampled_parameters: dict) -> Wa
 If you use this solution, you need to be careful that the names of your fields in `sweep_config` match the names of the fields in `WandbResNetFinetuningArgs`.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now we've done this, we'll define a `train` function that takes no arguments and launches a training run with our modified hyperparameters. This is done in the following way:
 
 - The train function calls `wandb.init`
@@ -2319,11 +2299,12 @@ Now we've done this, we'll define a `train` function that takes no arguments and
 The line `sweep_id = wandb.sweep(...)` initializes a hyperparameter sweep (giving it an ID) and the line `wandb.agent(...)` starts an agent that runs the training script `train` 3 times, with different randomly sampled sets of hyperparameters each time.
 
 Note that we pass `reinit=False` into our `wandb.init` call - this is so we ignore the second `wandb.init` call that takes place in our pretraining setup when we run `trainer.train()` (so we can avoid the hassle of having to rewrite this method to remove that line).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def train():
     # Define args & initialize wandb
@@ -2347,7 +2328,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When you run this code, you should click on the link which looks like:
 
 ```
@@ -2364,21 +2345,21 @@ What can you infer from these results? Are there any hyperparameters which are e
 You might also want to play around with Bayesian hyperparameter search, if you get the time! Note that wandb sweeps also offer [early termination](https://docs.wandb.ai/guides/sweeps/define-sweep-configuration/#early_terminate) of runs that don't look promising, based on the [Hyperband](https://www.jmlr.org/papers/volume18/16-558/16-558.pdf) algorithm. 
 
 To conclude - `wandb` is an incredibly useful tool when training models, and you should find yourself using it a fair amount throughout this program. You can always return to this page of exercises if you forget how any part of it works!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Distributed Training
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Intro to distributed training
 
 Distributed training is a model training paradigm that involves spreading training workload across multiple worker nodes, therefore significantly improving the speed of training and model accuracy. While distributed training can be used for any type of ML model training, it is most beneficial to use it for large models and compute demanding tasks as deep learning.
@@ -2388,13 +2369,13 @@ There are 2 main families of distributed training methods: **data parallelism** 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/parallelism.png" width="1100">
 
 Data & model parallelism are both widely used, and can be more or less appropriate in different circumstances (e.g. some kind of model parallelism is necessary when your model is too large to fit on a single GPU). However it is possible to create hybrid forms of parallelism by combining these; this is especially common when training large models like current SOTA LLMs. In these exercises, we'll focus on just data parallelism, although we'll suggest a few bonus exercises that explore model parallelism.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Summary of exercises
 
 The exercises below will take you through **data parallelism**. You'll start by learning how to use the basic send and receive functions in PyTorch's distributed training module `torch.distributed` to transfer tensors between different processes (and different GPUs). Note that **you'll need multiple GPUs for these exercises** - we've included instructions in a dropdown below.
@@ -2413,13 +2394,13 @@ Once you've filtered for this, we recommend picking an RTX 3090 or 4090 machine.
 Once you've done this, you'll use those 2 primitive point-to-point functions to build up some more advanced functions: `broadcast` (which gets a tensor from one process to all others), `gather` (which gathers all tensors from different devices to a single device) and `all_reduce` (which combines both `broadcast` and `gather` to make aggregate tensor values across all processes). These functions (`all_reduce` in particular) are key parts of how distributed computing works.
 
 Lastly, you'll learn how to use these functions to build a distributed training loop, which will be adapted from the `ResNetTrainer` code from your previous exercises. We also explain how you can use `DistributedDataParallel` to abstract away these low-level operations, which you might find useful later on (although you will benefit from building these components up from scratch, and understanding how they work under the hood).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Running these exercises
 
 > These exercises can't all be run in a notebook or Colab, because distributed training typically requires spawning multiple processes and Jupyter notebooks run in a single interactive process - they're not designed for this kind of use-case.
@@ -2430,7 +2411,7 @@ You have 2 different options:
 2. **Write your functions in a Python file, then import & run them in a notebook**. For example in the example code below, you could define the `send_receive` function in a Python file, then import this function & pass it into the `mp.spawn()` call.
 
 In either case, make sure when you run `mp.spawn` you're passing in the most updated version of your function. This means saving the Python file after you make changes, and also using something like `importlib.reload()` if you're running the code in a notebook.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2444,7 +2425,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Basic send & receiving
 
 The code below is a simplified example that demonstrates distributed communication between multiple processes.
@@ -2461,7 +2442,7 @@ Now, breaking down the `send_receive` function line by line:
 - `dist.destroy_process_group()` is called at the end of the function to destroy the process group and release resources.
 
 The functions `dist.send` and `dist.recv` are the basic primitives for point-to-point communication between processes (we'll look at the primitives for collective communication later on). Each `recv` for a given source process `src` will wait until it receives a `send` from that source to continue, and likewise each `send` to a given destination process `dst` will wait until it receives a `recv` from that process to continue. We call these **blocking operations** (later on we'll look at non-blocking operations).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2485,9 +2466,7 @@ def send_receive(rank, world_size):
         # Receive tensor from rank 0
         received_tensor = t.ones(1)
         print(f"{rank=}, creating {received_tensor=}")
-        dist.recv(
-            received_tensor, src=0
-        )  # this line overwrites the tensor's data with our `sending_tensor`
+        dist.recv(received_tensor, src=0)  # this line overwrites the tensor's data with our `sending_tensor`
         print(f"{rank=}, received {received_tensor=}")
 
     dist.destroy_process_group()
@@ -2514,19 +2493,19 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">rank=0, sending sending_tensor=tensor([0.])
 rank=1, creating received_tensor=tensor([1.])
 rank=1, received received_tensor=tensor([0.])</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now, let's adapt this toy example to work with our multiple GPUs! You can check how many GPUs you have access to using `torch.cuda.device_count()`.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2539,7 +2518,7 @@ assert t.cuda.device_count() > 1, "This example requires at least 2 GPUs per mac
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Before writing our new code, let's first return to the `backend` argument for `dist.init_process_group`. There are 3 main backends for distributed training: MPI, GLOO and NCCL. The first two are more general-purpose and support both CPU & GPU tensor communication, while NCCL is a GPU-only protocol optimized specifically for NVIDIA GPUs. It provides better bandwidth and lower latency for GPU-GPU communication, and so we'll be using it for subsequent exercises.
 
 When sending & receiving tensors between GPUs with a NCCL backend, there are 3 important things to remember:
@@ -2555,11 +2534,12 @@ The code below is a slightly modified version of the prior code; all we're doing
 Note - if at any point during this section you get errors related to the socket, then you can kill the processes by running `kill -9 <pid>` where `<pid>` is the process ID. If the process ID isn't given in the error message, you can find it using `lsof -i :<port>` where `<port>` is the port number specified in `os.environ["MASTER_PORT"]` (note you might have to `sudo apt-get install lsof` before you can run this). If your code is still failing, try changing the port in `os.environ["MASTER_PORT"]` and running it again.
 
 <!-- Note - an alternative to explicitly defining the device here is to run the line `torch.cuda.set_device(rank)`, then code like `tensor.cuda()` will automatically send the tensor to the correct device. Which one you use is a matter of preference, however for the solutions & demo code we'll stick with the explicit device definition. -->
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 def send_receive_nccl(rank, world_size):
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
@@ -2575,9 +2555,7 @@ def send_receive_nccl(rank, world_size):
         # Receive tensor from rank 0 (it needs to be on the CPU before receiving)
         received_tensor = t.tensor([rank], device=device)
         print(f"{rank=}, {device=}, creating {received_tensor=}")
-        dist.recv(
-            received_tensor, src=0
-        )  # this line overwrites the tensor's data with our `sending_tensor`
+        dist.recv(received_tensor, src=0)  # this line overwrites the tensor's data with our `sending_tensor`
         print(f"{rank=}, {device=}, received {received_tensor=}")
 
     dist.destroy_process_group()
@@ -2604,17 +2582,17 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">rank=1, device=device(type='cuda', index=1), creating received_tensor=tensor([1], device='cuda:1')
 rank=0, device=device(type='cuda', index=0), sending sending_tensor=tensor([0], device='cuda:0')
 rank=1, device=device(type='cuda', index=1), received received_tensor=tensor([0], device='cuda:1')</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Collective communication primitives
 
 We'll now move from basic point-to-point communication to **collective communication**. This refers to operations that synchronize data across multiple processes, rather than just between a single sender and receiver. There are 3 important kinds of collective communication functions:
@@ -2626,13 +2604,13 @@ We'll now move from basic point-to-point communication to **collective communica
 The latter 2 functions have different variants depending on whether you want the final result to be in just a single destination process or in all of them: for example `dist.gather` will gather data to a single destination process, while `dist.all_gather` will make sure every process ends up with all the data.
 
 The functions we're most interested in building are `broadcast` and `all_reduce` - the former for making sure all processes have the same initial model parameters, and the latter for aggregating gradients across all processes.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `broadcast`
 
 > ```yaml
@@ -2643,11 +2621,12 @@ r'''
 > ```
 
 Below, you should implement `broadcast`. If you have tensor $T_i$ on process $i$ for each index, then after running this function you should have $T_s$ on all processes, where $s$ is the source process. If you're confused, you can see exactly what is expected of you by reading the test code in `tests.py`. Again, remember that you should be running tests either from the command line or in the Python interactive terminal, not in a notebook cell.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 def broadcast(tensor: Tensor, rank: int, world_size: int, src: int = 0):
     """
@@ -2686,18 +2665,18 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Rank 1 broadcasted tensor: expected 0.0 (from rank 0), got tensor([0.], device='cuda:1')
 Rank 0 broadcasted tensor: expected 0.0 (from rank 0), got tensor([0.], device='cuda:0')
 Rank 2 broadcasted tensor: expected 0.0 (from rank 0), got tensor([0.], device='cuda:2')
 All tests in `test_broadcast` passed!</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `all_reduce`
 
 > ```yaml
@@ -2710,11 +2689,12 @@ r'''
 You should now implement `reduce` and `all_reduce`. The former will aggregate the tensors at some destination process (either sum or mean), and the latter will do the same but then broadcast the result to all processes.
 
 Note, more complicated allreduce algorithms exist than this naive one, and you'll be able to look at some of them in the bonus material.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 def reduce(tensor, rank, world_size, dst=0, op: Literal["sum", "mean"] = "sum"):
     """
@@ -2772,7 +2752,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <!-- <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Running reduce on dst=0, with initial tensors: [0, 0], [1, 2], [10, 20]
 Rank 1, op='sum', expected non-reduced tensor([1., 2.]), got tensor([1., 2.])
 Rank 1, op='mean', expected non-reduced tensor([0.3333, 0.6667]), got tensor([0.3333, 0.6667])
@@ -2794,11 +2774,12 @@ All tests in `test_all_reduce` passed!</pre> -->
 Once you've passed these tests, you can run the code below to see how this works for a toy example of model training. In this case our model just has a single parameter and we're performing gradient descent using the squared error between its parameters and the input data as our loss function (in other words we're training the model's parameters to equal the mean of the input data). 
 
 The data in the example below is the same as the rank index, i.e. `r = 0, 1`. For initial parameter `x = 2` this gives us errors of `(x-r).pow(2) = 4, 2` respectively, and gradients of `2x(x-r) = 8, 4`. Averaging these gives us a gradient of `6`, so after a single optimization step with learning rate `lr=0.1` we get our gradients changing to `2.0 - 0.6 = 1.4`.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 class SimpleModel(t.nn.Module):
     def __init__(self):
@@ -2823,9 +2804,7 @@ def run_simple_model(rank, world_size):
 
     print(f"Rank {rank}, before all_reduce, grads: {model.param.grad=}")
     all_reduce(model.param.grad, rank, world_size)  # Synchronize gradients
-    print(
-        f"Rank {rank}, after all_reduce, synced grads (summed over processes): {model.param.grad=}"
-    )
+    print(f"Rank {rank}, after all_reduce, synced grads (summed over processes): {model.param.grad=}")
 
     optimizer.step()  # Step with the optimizer (this will update all models the same way)
     print(f"Rank {rank}, new param: {model.param.data}")
@@ -2853,20 +2832,20 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Rank 1, before all_reduce, grads: model.param.grad=tensor([2.], device='cuda:1')
 Rank 0, before all_reduce, grads: model.param.grad=tensor([4.], device='cuda:0')
 Rank 0, after all_reduce, synced grads (summed over processes): model.param.grad=tensor([6.], device='cuda:0')
 Rank 1, after all_reduce, synced grads (summed over processes): model.param.grad=tensor([6.], device='cuda:1')
 Rank 0, new param: tensor([1.4000], device='cuda:0')
 Rank 1, new param: tensor([1.4000], device='cuda:1')</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Full training loop
 
 We'll now use everything we've learned to put together a full training loop! Rather than finetuning it which we've been doing so far, you'll be training your resnet from scratch (although still using the same CIFAR10 dataset). We've given you a function `get_untrained_resnet` which uses the `ResNet34` class from yesterday's solutions, although you're encouraged to replace this function with your implementation if you've completed those exercises.
@@ -2910,13 +2889,13 @@ for imgs, labels in self.train_loader:
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - complete `DistResNetTrainer`
 
 > ```yaml
@@ -2934,11 +2913,12 @@ A few last tips before we get started:
 - If your code is running slowly, we recommend you also `wandb.log` the duration of each stage of the training step from the rank 0 process (fwd pass, bwd pass, and `all_reduce` for parameter syncing), as well as logging the duration of the training & evaluation phases across the epoch. These kinds of logs are generally very helpful for debugging slow code.
 - Since running this code won't directly return your model as output, it's good practice to save your model at the end of training using `torch.save`.
 - We recommend you increment `examples_seen` by the total number of examples across processes, i.e. `len(input) * world_size`. This will help when you're comparing across different runs with different world sizes (it's convenient for them to have a consistent x-axis).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 def get_untrained_resnet(n_classes: int) -> ResNet34:
     """
@@ -2982,21 +2962,11 @@ class DistResNetTrainer:
         self.trainset, self.testset = get_cifar()
         self.train_sampler = self.test_sampler = None
         if self.args.world_size > 1:
-            self.train_sampler = DistributedSampler(
-                self.trainset, num_replicas=self.args.world_size, rank=self.rank
-            )
-            self.test_sampler = DistributedSampler(
-                self.testset, num_replicas=self.args.world_size, rank=self.rank
-            )
-        dataloader_shared_kwargs = dict(
-            batch_size=self.args.batch_size, num_workers=2, pin_memory=True
-        )
-        self.train_loader = DataLoader(
-            self.trainset, sampler=self.train_sampler, **dataloader_shared_kwargs
-        )
-        self.test_loader = DataLoader(
-            self.testset, sampler=self.test_sampler, **dataloader_shared_kwargs
-        )
+            self.train_sampler = DistributedSampler(self.trainset, num_replicas=self.args.world_size, rank=self.rank)
+            self.test_sampler = DistributedSampler(self.testset, num_replicas=self.args.world_size, rank=self.rank)
+        dataloader_shared_kwargs = dict(batch_size=self.args.batch_size, num_workers=2, pin_memory=True)
+        self.train_loader = DataLoader(self.trainset, sampler=self.train_sampler, **dataloader_shared_kwargs)
+        self.test_loader = DataLoader(self.testset, sampler=self.test_sampler, **dataloader_shared_kwargs)
         self.examples_seen = 0
 
         if self.rank == 0:
@@ -3146,11 +3116,11 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus - DDP
 
 In practice, the most convenient way to use DDP is to wrap your model in `torch.nn.parallel.DistributedDataParallel`, which removes the need for explicitly calling `broadcast` at the start and `all_reduce` at the end of each training step. When you define a model in this way, it will automatically broadcast its weights to all processes, and the gradients will sync after each `loss.backward()` call. Here's the example `SimpleModel` code from above, rewritten to use these features:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3190,25 +3160,26 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Can you use these features to rewrite your ResNet training code? Can you compare it to the code you wrote and see how much faster the built-in DDP version is? Note, you won't be able to separate the time taken for backward passes and gradient synchronization since these happen in the same line, but you can assume that the time taken for the backward pass is approximately unchanged and so any speedup you see is due to the better gradient synchronization.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus - ring operations
 
 Our all reduce operation would scale quite badly when we have a large number of models. It chooses a single process as the source process to receive then send out all data, and so this process risks becoming a bottleneck. One of the most popular alternatives is **ring all-reduce**. Broadly speaking, ring-based algorithms work by sending data in a cyclic pattern (i.e. worker `n` sends it to worker `n+1 % N` where `N` is the total number of workers). After each sending round, we perform a reduction operation to the data that was just sent. [This blog post](https://andrew.gibiansky.com/blog/machine-learning/baidu-allreduce/) illustrates the ring all-reduce algorithm for the sum operation.
 
 Can you implement the ring all-reduce algorithm by filling in the function below & passing tests? Once you've implemented it, you can compare the speed of your ring all-reduce vs the all-reduce we implemented earlier - is it faster? Do you expect it to be faster in this particular case?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [keep-main]
+
 
 def ring_all_reduce(tensor: Tensor, rank, world_size, op: Literal["sum", "mean"] = "sum") -> None:
     """
@@ -3279,7 +3250,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution</summary>
 
@@ -3290,37 +3261,37 @@ SOLUTION
 We should expect this algorithm to be better when we scale up the number of GPUs, but it won't always be faster in small-world settings like ours, because the naive allreduce algorithm requires fewer individual communication steps and this could outweigh the benefits brought by the ring-based allreduce.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # ☆ Bonus
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Congratulations for getting to the end of the main content! This section gives some suggestions for more features of Weights and Biases to explore, or some other experiments you can run.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Scaling Laws
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 These bonus exercises are taken directly from Jacob Hilton's [online deep learning curriculum](https://github.com/jacobhilton/deep_learning_curriculum/blob/master/2-Scaling-Laws.md) (which is what the original version of the ARENA course was based on).
 
 First, you can start by reading the [Chinchilla paper](https://arxiv.org/abs/2203.15556). This is a correction to the original scaling laws paper: parameter count scales linearly with token budget for compute-optimal models, not ~quadratically. The difference comes from using a separately-tuned learning rate schedule for each token budget, rather than using a single training run to measure performance for every token budget. This highlights the importance of hyperparameter tuning for measuring scaling law exponents.
@@ -3339,13 +3310,13 @@ Perform your own study of scaling laws for MNIST.
 How does validation accuracy behave?
 - Study how the compute-efficient model size varies with compute. This should also follow an approximate power law. Try to estimate its exponent.
 - Repeat your entire experiment with 20% [dropout](https://pytorch.org/docs/stable/generated/torch.nn.Dropout.html) to see how this affects the scaling exponents.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Other WandB features
 
 Here are a few more Weights & Biases features you might also want to play around with:
@@ -3353,13 +3324,13 @@ Here are a few more Weights & Biases features you might also want to play around
 * [Logging media and objects in experiments](https://docs.wandb.ai/guides/track/log?fbclid=IwAR3NxKsGpEjZwq3vSwYkohZllMpBwxHgOCc_k0ByuD9XGUsi_Scf5ELvGsQ) - you'll be doing this during the RL week, and it's useful when you're training generative image models like VAEs and diffusion models.
 * [Code saving](https://docs.wandb.ai/guides/app/features/panels/code?fbclid=IwAR2BkaXbRf7cqEH8kc1VzqH_kOJWGxqjUb_JCBq_SCnXOx1oF-Rt-hHydb4) - this captures all python source code files in the current director and all subdirectories. It's great for reproducibility, and also for sharing your code with others.
 * [Saving and loading PyTorch models](https://wandb.ai/wandb/common-ml-errors/reports/How-to-Save-and-Load-Models-in-PyTorch--VmlldzozMjg0MTE?fbclid=IwAR1Y9MzFTxIiVBJG06b4ppitwKWR4H5_ncKyT2F_rR5Z_IHawmpBTKskPcQ) - you can do this easily using `torch.save`, but it's also possible to do this directly through Weights and Biases as an **artifact**.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The Optimizer's Curse
 
 The [optimizer's curse](https://www.lesswrong.com/posts/5gQLrJr2yhPzMCcni/the-optimizer-s-curse-and-how-to-beat-it) applies to tuning hyperparameters. The main take-aways are:
@@ -3368,5 +3339,4 @@ The [optimizer's curse](https://www.lesswrong.com/posts/5gQLrJr2yhPzMCcni/the-op
 - Look at the overall trends and correlations in context and try to make sense of the values you're seeing. Just because you ran a long search process doesn't mean your best output is really the best.
 
 For more on this, see [Preventing "Overfitting" of Cross-Validation Data](https://ai.stanford.edu/~ang/papers/cv-final.pdf) by Andrew Ng.
-'''
-
+"""

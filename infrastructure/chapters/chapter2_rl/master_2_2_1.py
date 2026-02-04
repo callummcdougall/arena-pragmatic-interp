@@ -2,43 +2,43 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "DQN", "icon": "2-circle-fill", "subtitle" : "(100%)"},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [2.2.1] - Deep Q Networks
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-22.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In this section, you'll implement Deep Q-Learning, often referred to as DQN for "Deep Q-Network". This was used in a landmark paper [Playing Atari with Deep Reinforcement Learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). 
 
 <!-- 
@@ -46,13 +46,13 @@ You'll also implement Vanilla Policy Gradient (VPG), the first policy gradient a
 This was the first working version of deep learning in the RL setting.
 
 At the time, the idea that convolutional neural networks could look at Atari game pixels and "see" gameplay-relevant features like a Space Invader was new and noteworthy. In 2022, we take for granted that convnets work, so we're going to focus on the RL aspect and not the vision aspect today. -->
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 
@@ -68,15 +68,15 @@ You'll apply the technique of DQN to master the famous CartPole environment (bel
 > - Learn more about RL debugging, and build probe environments to debug your agents
 > - Create a replay buffer to store environment transitions
 > - Implement DQN using PyTorch, on the CartPole environment
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup (don't read, just run!)
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -97,23 +97,18 @@ from __future__ import annotations
 # ! CELL TYPE: code
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
-
 # import os
 # import sys
 # from pathlib import Path
-
 # IN_COLAB = "google.colab" in sys.modules
-
 # chapter = "chapter2_rl"
 # repo = "ARENA_3.0"
 # branch = "main"
-
 # # Install dependencies
 # try:
 #     import jaxtyping
 # except:
 #     %pip install wandb==0.18.7 einops "gymnasium[atari, accept-rom-license, other]==0.29.0" pygame jaxtyping
-
 # # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
 # root = (
 #     "/content"
@@ -122,29 +117,22 @@ from __future__ import annotations
 #     if repo not in os.getcwd()
 #     else str(next(p for p in Path.cwd().parents if p.name == repo))
 # )
-
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
 #         !sudo apt-get install unzip
 #         %pip install jupyter ipython --upgrade
-
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
 #         !rmdir {root}/{repo}-{branch}
-
-
 # if f"{root}/{chapter}/exercises" not in sys.path:
 #     sys.path.append(f"{root}/{chapter}/exercises")
-
 # os.chdir(f"{root}/{chapter}/exercises")
-
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
 import os
 import sys
 import time
@@ -185,9 +173,7 @@ from part21_dqn.utils import make_env
 from plotly_utils import cliffwalk_imshow, line, plot_cartpole_obs_and_dones
 from rl_utils import generate_and_plot_trajectory
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # FILTERS: py
 MAIN = __name__ == "__main__"
@@ -197,25 +183,25 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Deep Q-Learning
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In this section, you'll implement Deep Q-Learning, often referred to as DQN for "Deep Q-Network". This was used in a landmark paper [Playing Atari with Deep Reinforcement Learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf).
 
 At the time, the paper was very exciting: The agent would play the game by only looking at the same screen pixel data that a human player would be looking at, rather than a description of where the enemies in the game world are. The idea that convolutional neural networks could look at Atari game pixels and "see" gameplay-relevant features like a Space Invader was new and noteworthy. In 2022, we take for granted that convnets work, so we're going to focus on the RL aspect solely, and not the vision component.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Optional Readings
 
 * [Deep Q Networks Explained](https://www.lesswrong.com/posts/kyvCNgx9oAwJCuevo/deep-q-networks-explained) (25 minutes)
@@ -237,13 +223,13 @@ r'''
 - [Deep Reinforcement Learning Doesn't Work Yet](https://www.alexirpan.com/2018/02/14/rl-hard.html) - 2018 article describing difficulties preventing industrial adoption of RL.
 - [Deep Reinforcement Learning Works - Now What?](https://tesslerc.github.io/posts/drl_works_now_what/) - 2020 response to the previous article highlighting recent progress.
 - [Seed RL](https://github.com/google-research/seed_rl) - example of distributed RL using Docker and GCP.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Conceptual overview of DQN
 
 DQN is the natural extension of Q-Learning into the domain of deep learning. The main difference is that, instead of a table to store all the Q-values for each state-action pair, we train a neural network to learn this function for us. The usual implementation (which we'll use here) is for the Q-network to take the state as input, and output a vector of optimalQ-values for each action, i.e. we're learning the function:
@@ -260,23 +246,23 @@ Below is an algorithm showing the conceptual overview of DQN. We cycle through t
 * Repeat this until convergence.
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/ppo-alg-conceptual-2.png" width="750">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Fast Feedback Loops
 
 We want to have faster feedback loops, and learning from Atari pixels doesn't achieve that. It might take 15 minutes per training run to get an agent to do well on Breakout, and that's if your implementation is relatively optimized. Even waiting 5 minutes to learn Pong from pixels is going to limit your ability to iterate, compared to using environments that are as simple as possible.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### CartPole
 
 The classic environment "CartPole-v1" is simple to understand, yet hard enough for a RL agent to be interesting, by the end of the day your agent will be able to do this and more! (Click to watch!)
@@ -300,7 +286,7 @@ The description of the task is [here](https://gymnasium.farama.org/environments/
 The simple physics involved would be very easy for a model-based algorithm to fit, (this is a common assignment in control theory using [proportional-integral-derivative](https://en.wikipedia.org/wiki/PID_controller) (PID) controllers) but today we're doing it model-free: your agent has no idea that these observations represent positions or velocities, and it has no idea what the laws of physics are. The network has to learn in which direction to bump the cart in response to the current state of the world.
 
 Each environment can have different versions registered to it. By consulting [the Gym source](https://github.com/Farama-Foundation/Gymnasium/blob/v0.29.0/gymnasium/envs/__init__.py) you can see that CartPole-v0 and CartPole-v1 are the same environment, except that v1 has longer episodes. Again, a minor change like this can affect what algorithms score well; an agent might consistently survive for 200 steps in an unstable fashion that means it would fall over if ran for 500 steps.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -315,16 +301,16 @@ print(env.observation_space)  # Box(4): each action can take a continuous range 
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Discrete(2)
 Box([-4.8000002e+00 -3.4028235e+38 -4.1887903e-01 -3.4028235e+38], [4.8000002e+00 3.4028235e+38 4.1887903e-01 3.4028235e+38], (4,), float32)</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Outline of the Exercises
 
 The exercises are roughly split into 4 sections:
@@ -333,13 +319,13 @@ The exercises are roughly split into 4 sections:
 2. Implement a replay buffer to store experiences $e_t = (s_t, a_t, r_{t+1}, d_{t+1}, s_{t+1})$.
 3. Implement the policy which chooses actions based on the Q-network, plus epsilon greedy randomness to encourage exploration.
 4. Piece everything together into a training loop and train your agent.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The Q-Network
 
 The Q-Network takes in an observation $s$ and outputs a vector $[Q^*(s, a^1), \ldots Q^*(s,a^n)]$ representing an estimate of the optimal Q-value for the given state $s$, and each possible action $\mathcal{A} = \{a^1, \ldots, a^n\}$. This replaces our Q-value table used in Q-learning.
@@ -385,13 +371,13 @@ If you end with a ReLU, then your network can only predict 0 or positive Q-value
 The network is learning Q-values (the sum of all future expected discounted rewards from this state/action pair), not rewards. Correspondingly, once the agent has learned a good policy, the Q-value associated with state action pair (pole is slightly left of vertical, move cart left) should be large, as we would expect a long episode (and correspondingly lots of reward) by taking actions to help to balance the pole. Pairs like (cart near right boundary, move cart right) cause the episode to terminate, and as such the network will learn low Q-values.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `QNetwork`
 
 > ```yaml
@@ -402,11 +388,12 @@ r'''
 > ```
 
 Note - in this implementation we can assume that `obs_shape` is a tuple of length 1 (in the case of CartPole this will be `(4,)`), so you can treat it as just an integer value above, e.g. your first linear layer should be from `obs_shape[0]` to `120`.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class QNetwork(nn.Module):
     """
@@ -415,9 +402,7 @@ class QNetwork(nn.Module):
 
     layers: nn.Sequential
 
-    def __init__(
-        self, obs_shape: tuple[int], num_actions: int, hidden_sizes: list[int] = [120, 84]
-    ):
+    def __init__(self, obs_shape: tuple[int], num_actions: int, hidden_sizes: list[int] = [120, 84]):
         super().__init__()
         assert len(obs_shape) == 1, "Expecting a single vector of observations"
         # EXERCISE
@@ -454,7 +439,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Replay Buffer
 
 The goal of DQN is to reduce the reinforcement learning problem to a supervised learning problem. In supervised learning, training examples should be drawn **identically and independantly distributed (i.i.d.)** from some distribution, and we hope to generalize to future examples from that distribution. Obviously perfect i.i.d. sampling isn't attainable, but we can approximate this by filling a buffer of past experiences and sampling from it. Note that for very complex problems we may need a very large buffer, because we want the policy to get a representative sample of all the diverse scenarios that can happen in the environment. [OpenAI Five](https://cdn.openai.com/dota-2.pdf) used batch sizes of over 2 million experiences for Dota 2! However we'll be working with the fairly simple CartPole environment, and so we can get away with a much smaller buffer.
@@ -474,11 +459,12 @@ You should read these implementations carefully, making sure you understand how 
 - The `add` method adds multiple experiences at once: the tensors like `obs` have shape `(num_envs, *obs_shape)`. This is because we're using the `SyncVectorEnv` class which allows us to step through & generate experiences for multiple environments simultaneously. We'll see how this works in practice later.
 - The `add` method will add these experiences to the end of the buffer, slicing the buffer if it's too long. Note that the slicing is done so that we remove the oldest experiences when the buffer is full.
 - The `sample` method will return a `ReplayBufferSamples` object containing the experiences sampled from the buffer. These are sampled with replacement, and the data is converted to PyTorch tensors on the correct device.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class ReplayBufferSamples:
@@ -568,11 +554,12 @@ class ReplayBuffer:
             next_obs=t.tensor(self.next_obs[indices], dtype=t.float32, device=device),
         )
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Next, you can run the following code to visualize your cart's position and angle, and see how these look in both the buffer and the buffer's random samples. Do the samples look correctly shuffled? Also, based on the [CartPole source code](https://github.com/Farama-Foundation/Gymnasium/blob/v0.29.0/gymnasium/envs/classic_control/cartpole.py), do the angles & positions at which the cart terminates make sense? points look like they make sense? (Note, the min/max values in the table are different to the termination ranges, the latter can be found *below* the table in the docstring.)
 
 Note that the code below uses the `SyncVectorEnv` class, which is what lets us step through multiple environments at once. We create it by passing it a list of functions which can be called to create environments (see the `make_env` function in `utils.py` for exactly how this works). Note that in this case we're just passing it a single environment; tomorrow we'll actually make full use of `SyncVectorEnv` by giving it multiple environments.
@@ -599,7 +586,7 @@ for i in range(256):
 <!-- Lastly, note how there's actually a slight epsiode mismatch between $s_t$ and $s_{t+1}$ in the plots below. The vertical lines show the values of $t$ where $d_{t+1} = 1$, so we can see that at these points $s_t$ and $s_{t+1}$ both refer to the terminated episode (they're the pre-final and final observations respectively), but immediately after these points $s_t$ refers to the terminal observation while $s_{t+1}$ refers to the first observation of the new episode. This isn't really a problem though, because we don't care what action our agent learns to take when $s_t$ is a terminal state (i.e. out of bounds). If we were being careful then we'd want to filter these terms out of our buffer, but for our purposes this week it doesn't really matter if we keep them in. -->
 
 Lastly, note how when we terminate environments we do something slightly different. If `envs.step` results in some environments terminating, it'll actually return `next_obs` as the observation for the next environment. In this case, we want to use this as our starting observation for the next step, but we need to make sure we record the correct terminal observation in our buffer - we do this by extracting it from the `infos` dict, which is where it gets stored. You can see this in the plots below: the vertical lines are the values $t$ where $d_{t+1}=1$ i.e. $s_{t+1}$ is terminal, and we can see that $s_t, s_{t+1}$ both refer to the terminated episode at this point and both refer to the new episode immediately after.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -659,17 +646,17 @@ plot_cartpole_obs_and_dones(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-22/2205-A.html" width="820" height="470"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-22/2205-B.html" width="820" height="470"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-22/2205-C.html" width="820" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Exploration
 
 DQN makes no attempt to explore intelligently. The exploration strategy is the same as
@@ -714,13 +701,13 @@ In 2019, an excellent paper [First return, then explore](https://arxiv.org/pdf/2
 noisy TV problem, where agents that seek novelty become entranced by a source of randomness in the
 environment (like a analog TV out of tune displaying white noise), and ignore everything else
 in the environment.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement linear scheduler
 
 > ```yaml
@@ -731,11 +718,12 @@ r'''
 > ```
 
 For now, implement the basic linearly decreasing exploration schedule.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def linear_schedule(
     current_step: int,
@@ -756,18 +744,14 @@ def linear_schedule(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    return start_e + (end_e - start_e) * min(
-        current_step / (exploration_fraction * total_timesteps), 1
-    )
+    return start_e + (end_e - start_e) * min(current_step / (exploration_fraction * total_timesteps), 1)
     # END SOLUTION
 
 
 # HIDE
 if MAIN:
     epsilons = [
-        linear_schedule(
-            step, start_e=1.0, end_e=0.05, exploration_fraction=0.5, total_timesteps=500
-        )
+        linear_schedule(step, start_e=1.0, end_e=0.05, exploration_fraction=0.5, total_timesteps=500)
         for step in range(500)
     ]
     line(
@@ -795,27 +779,27 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-22/2206.html" width="620" height="420"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Epsilon Greedy Policy
 
 In DQN, the policy is implicitly defined by the Q-network: we take the action with the maximum predicted reward. This gives a bias towards optimism. By estimating the maximum of a set of values $v_1, \ldots, v_n$ using the maximum of some noisy estimates $\hat{v}_1, \ldots, \hat{v}_n$ with $\hat{v}_i \approx v$, we get unlucky and get very large positive noise on some samples, which the maximum then chooses. Hence, the agent will choose actions that the Q-network is overly optimistic about.
 
 See Sutton and Barto, Section 6.7 if you'd like a more detailed explanation, or the original [Double Q-Learning](https://proceedings.neurips.cc/paper/2010/file/091d584fced301b442654dd8c23b3fc9-Paper.pdf) paper which notes this maximisation bias, and introduces a method to correct for it using two separate Q-value estimators, each used to update the other.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement the epsilon greedy policy
 
 > ```yaml
@@ -834,11 +818,12 @@ Other tips:
 - Although you can technically use `envs.action_space.sample()` to sample actions, it's better practice to work with the random number generator `rng` that we've provided. You can use `rng.random()` to generate random numbers in the range $[0,1)$, and `rng.integers(0, n, size)` for an array of shape `size` random integers in the range $0, 1, \ldots, n-1$.
 - Don't forget to convert the result back to a `np.ndarray`, as this function expects.
 - Use `envs.single_action_space.n` to get the number of actions.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def epsilon_greedy_policy(
     envs: gym.vector.SyncVectorEnv,
@@ -885,20 +870,20 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm confused about the action shape here.</summary>
 
 In our case, the action shape is `envs.single_action_space.shape = ()` (i.e. trivial, because our action is just a single integer not a vector or tensor) and the number of possible actions is `envs.single_action_space.n = 2`. This means your return type should just be a vector of ints of length `num_envs`, with each element being uniformly sampled from `[0, 1]`.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Probe Environments
 
 Extremely simple probe environments are a great way to debug your algorithm. The first one is given below.
@@ -908,11 +893,12 @@ Let's try and break down how this environment works. We see that the function `s
 ### A note on action spaces
 
 The space we're using here is `gym.spaces.Box`. This means we're dealing with real-valued quantities, i.e. continuous not discrete. The first two arguments of `Box` are `low` and `high`, and these define a box in $\mathbb{R}^n$. For instance, if these arrays are `(0, 0)` and `(1, 1)` respectively, this defines the box $0 \leq x, y \leq 1$ in 2D space.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class Probe1(gym.Env):
     """
@@ -949,7 +935,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - read & understand other probe environments
 
 > ```yaml
@@ -962,11 +948,12 @@ r'''
 For each of the probes below, read their implementation code, and understand how they correspond to their docstrings (and to the [descriptions](https://andyljones.com/posts/rl-debugging.html#:~:text=Use%20probe%20environments) given in Andy Jones' post).
 
 It's very important to understand how these probes work, and why they're useful tools for debugging. When you're working on your own RL projects, you might have to write your own probes to suit your particular use cases.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class Probe2(gym.Env):
     """
@@ -1086,7 +1073,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 A brief summary of these, along with recommendations of where to go to debug if one of them fails (note that these won't be true 100% of the time, but should hopefully give you some useful direction):
 
 <details>
@@ -1099,13 +1086,13 @@ A brief summary of these, along with recommendations of where to go to debug if 
 5. **Tests the agent's ability to map observations to actions**. If this fails, you should look at the code which handles multiple timesteps, as well as the code that handles the agent's map from observations to actions.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Main DQN Algorithm
 
 We now combine all the elements we have designed thus far into the final DQN algorithm. Here, we assume the environment returns three parameters $(s_{new}, r, d)$, a new state $s_{new}$, a reward $r$ and a boolean $d$ indicating whether interaction has terminated yet.
@@ -1134,13 +1121,13 @@ Here, $\theta_\text{target}$ is a previous copy of the parameters $\theta$, so w
 Below is the full DQN algorithm from a paper, for reference. The notation isn't identical to ours (e.g. they use an if/else statement to handle the terminal state case), but the basic algorithm is the same.
 
 <img src="https://raw.githubusercontent.com/chloeli-15/ARENA_img/refs/heads/main/img/ch2-dqn-algo.png" width="700">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### DQN Dataclass
 
 Below is a dataclass for training your DQN. You can use the `arg_help` method to see a description of each argument (it will also highlight any arguments which have ben changed from their default values).
@@ -1156,11 +1143,12 @@ This is shown in the diagram below (the actual numbers aren't representative of 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/dqn-breakdown.png" width="1200">
 
 For example, in the code below we decrease `total_timesteps`, and this also decreases total training steps (which is computed in the `__post_init__` method of our dataclass, as a function of `total_timesteps`).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class DQNArgs:
@@ -1194,9 +1182,7 @@ class DQNArgs:
 
     def __post_init__(self):
         assert self.total_timesteps - self.buffer_size >= self.steps_per_train
-        self.total_training_steps = (
-            self.total_timesteps - self.buffer_size
-        ) // self.steps_per_train
+        self.total_training_steps = (self.total_timesteps - self.buffer_size) // self.steps_per_train
         self.video_save_path = section_dir / "videos"
 
 
@@ -1243,15 +1229,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-22/2207.html" width="920" height="640"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - fill in the agent class
 
 > ```yaml
@@ -1274,11 +1260,12 @@ You should now fill in the methods for the `DQNAgent` class below. This is a cla
     - Sample actions according to the epsilon-greedy policy (i.e. using your `epsilon_greedy_policy` function), and return them
 
 A small note on code practices here - the implementation below was designed to follow **separation of concerns** (SoC), a design principle used in software engineering. The `DQNAgent` class only responsible for interacting with the environment; it doesn't do anything like create the Q-network or buffer on initialization. This is further reflected in the fact that we don't pass in `args` to our DQN agent, but instead pass in all the relevant variables separately (if we were forced to pass in `args`, this would be a sign that the DQN agent class might be doing too much work!).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class DQNAgent:
     """Base Agent class handling the interaction with the environment."""
@@ -1362,15 +1349,15 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Before we move on to the big exercise of today (completing the `DQNTrainer` class), we'll briefly discuss logging to Weights and Biases in RL, plus some general advice on what kinds of variables you should be logging.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Logging to `wandb` in RL
 
 In previous exercises in this chapter, we've just trained the agent, and then plotted the reward per episode after training. For small toy examples that train in a few seconds this is fine, but for longer runs we'd like to watch the run live and make sure the agent is doing something interesting (especially if we were planning to run the model overnight). Luckily, **Weights and Biases** has got us covered! When you run your experiments, you'll be able to view not only *live plots* of the loss and average reward per episode while the agent is training - you can also log and view animations, which visualise your agent's progress in real time! The code below will handle all logging.
@@ -1393,13 +1380,13 @@ Initially they should be near zero, thanks to the randomly initialized model wei
 Note, the Q values won't increase smoothly, they'll spike up immediately after we copy over the weights from our Q-network to our target network. This is because each time we copy over weights, our gradient changes and the Q-network rapidly "catches up" to this new target network, causing the Q values to change rapidly. However, our copying over of weights will be frequent enough that these jumps will be relatively small, and so the curve should still appear smooth.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - write DQN training loop
 
 > ```yaml
@@ -1442,11 +1429,12 @@ When you get to logging, there are 2 types of data you can log:
 Don't be discouraged if your code takes a while to work - it's normal for debugging RL to take longer than you would expect. Add asserts or your own tests, implement an appropriate probe environment, try anything in the Andy Jones post that sounds promising, and try to notice confusion. Reinforcement Learning is often so tricky as even if the algorithm has bugs, the agent might still learn something useful regardless (albeit maybe not as well), or even if everything is correct, the agent might just fail to learn anything useful (like how DQN failed to do anything on Montezuma's Revenge.)
 
 Since the environment is already known to be one DQN can solve, and we've already provided hyperparameters that work for this environment, hopefully that's isolated a lot of the problems one would usually have with solving real world problems with RL.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_episode_data_from_infos(infos: dict) -> dict[str, int | float] | None:
     """
@@ -1469,10 +1457,7 @@ class DQNTrainer:
         self.rng = np.random.default_rng(args.seed)
         self.run_name = f"{args.env_id}__{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
         self.envs = gym.vector.SyncVectorEnv(
-            [
-                make_env(idx=idx, run_name=self.run_name, **args.__dict__)
-                for idx in range(args.num_envs)
-            ]
+            [make_env(idx=idx, run_name=self.run_name, **args.__dict__) for idx in range(args.num_envs)]
         )
 
         # Define some basic variables from our environment (note, we assume a single discrete action space)
@@ -1554,19 +1539,13 @@ class DQNTrainer:
         # raise NotImplementedError()
         # END EXERCISE
         # SOLUTION
-        data = self.buffer.sample(
-            self.args.batch_size, device
-        )  # s_t, a_t, r_{t+1}, d_{t+1}, s_{t+1}
+        data = self.buffer.sample(self.args.batch_size, device)  # s_t, a_t, r_{t+1}, d_{t+1}, s_{t+1}
 
         with t.inference_mode():
             target_max = self.target_network(data.next_obs).max(-1).values
         predicted_q_vals = self.q_network(data.obs)[range(len(data.actions)), data.actions]
 
-        td_error = (
-            data.rewards
-            + self.args.gamma * target_max * (1 - data.terminated.float())
-            - predicted_q_vals
-        )
+        td_error = data.rewards + self.args.gamma * target_max * (1 - data.terminated.float()) - predicted_q_vals
         loss = td_error.pow(2).mean()
         loss.backward()
         self.optimizer.step()
@@ -1608,15 +1587,17 @@ class DQNTrainer:
                 pbar.set_postfix(**data)
 
             self.training_step(step)
-            
+
             if self.args.steps_per_live_video is not None and step % self.args.steps_per_live_video == 0:
                 from IPython.display import display
+
                 html_animation = generate_and_plot_trajectory(self, self.args)
                 display(html_animation)
 
         self.envs.close()
         if self.args.use_wandb:
             wandb.finish()
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1745,13 +1726,14 @@ def training_step(self, step: int) -> Float[Tensor, ""]:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here's some boilerplate code to test out your various probes, which you should make sure you're passing before testing on Cartpole.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def test_probe(probe_idx: int):
     """
@@ -1799,9 +1781,9 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed the tests for all 5 probe environments, you should test your model on Cartpole. We recommend you start by not using wandb until you can get it running without error, because this will improve your feedback loops (however if you've passed all probe environments then there's a good chance this code will just work for you).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1815,7 +1797,7 @@ trainer.train()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Catastrophic forgetting
 
 Note - you might see performance frequently drop off after it's achieved the maximum for a while, before eventually recovering again and repeating the cycle. Here's an example CartPole run using the solution code:
@@ -1825,13 +1807,13 @@ Note - you might see performance frequently drop off after it's achieved the max
 This is a well-known RL phenomena called **catastrophic forgetting**. It happens when the replay buffer mostly contains successful experiences, and the model forgets how to adapt or recover from bad states. One way to fix this is to change your buffer to keep 10 of experiences from previous epochs, and 90% of experiences from the current phase. Can you implement this?
 
 When we cover PPO tomorrow, we'll also introduce **reward shaping**, which is another way this kind of behaviour can be mitigated.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Beyond CartPole
 
 If things go well and your agent masters CartPole, the next harder challenges are [Acrobot-v1](https://github.com/Farama-Foundation/Gymnasium/blob/v0.29.0/gymnasium/envs/classic_control/acrobot.py), and [MountainCar-v0](https://github.com/Farama-Foundation/Gymnasium/blob/v0.29.0/gymnasium/envs/classic_control/mountain_car.py). These also have discrete action spaces, which are the only type we're dealing with today. Feel free to Google for appropriate hyperparameters for these other problems - in a real RL problem you would have to do hyperparameter search using the techniques we learned on a previous day because bad hyperparameters in RL often completely fail to learn, even if the algorithm is perfectly correct.
@@ -1902,13 +1884,13 @@ trainer.train()
 
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus
 
 ### Target Network
@@ -1924,5 +1906,4 @@ Can DQN still learn to solve CartPole with a Q-network with fewer parameters? Co
 ### Dueling DQN
 
 Implement dueling DQN according to [the paper](https://arxiv.org/pdf/1511.06581.pdf) and compare its performance.
-'''
-
+"""

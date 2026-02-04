@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Whirlwind Tour of PPO", "icon": "0-circle-fill", "subtitle" : "(10%)"},
@@ -14,37 +14,37 @@ r'''
     {"title": "Bonus", "icon": "star", "subtitle" : ""}
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [2.3] - PPO
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-23.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Proximal Policy Optimization (PPO) is a cutting-edge reinforcement learning algorithm that has gained significant attention in recent years. As an improvement over traditional policy optimization methods, PPO addresses key challenges such as sample efficiency, stability, and robustness in training deep neural networks for reinforcement learning tasks. With its ability to strike a balance between exploration and exploitation, PPO has demonstrated remarkable performance across a wide range of complex environments, including robotics, game playing, and autonomous control systems.
 
 In this section, you'll build your own agent to perform PPO on the CartPole environment. By the end, you should be able to train your agent to near perfect performance in about 30 seconds. You'll also be able to try out other things like **reward shaping**, to make it easier for your agent to learn to balance, or to do fun tricks! There are also additional exercises which allow you to experiment with other tasks, including **Atari** and the 3D physics engine **MuJoCo**.
@@ -54,13 +54,13 @@ A lot of the setup as we go through these exercises will be similar to what we d
 For a lecture on the material today, which provides some high-level understanding before you dive into the material, watch the video below:
 
 <iframe width="540" height="304" src="https://www.youtube.com/embed/NyV1eb0vWLA" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 0️⃣ Whirlwind Tour of PPO
@@ -130,13 +130,13 @@ The last new set of environments we'll look at is MuJoCo. This is a 3D physics e
 ### ☆ Bonus
 
 We conclude with a set of optional bonus exercises, which you can try out before moving on to the RLHF sections.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Notes on today's workflow
 
 Your implementation might get good benchmark scores by the end of the day, but don't worry if it struggles to learn the simplest of tasks. RL can be frustrating because the feedback you get is extremely noisy: the agent can fail even with correct code, and succeed with buggy code. Forming a systematic process for coping with the confusion and uncertainty is the point of today, more so than producing a working PPO implementation.
@@ -147,13 +147,13 @@ Some parts of your process could include:
 - Implementing some of the even more basic gymnasium environments and testing your agent on those.
 - Getting a sense for the meaning of various logged metrics, and what this implies about the training process
 - Noticing confusion and sections that don't make sense, and investigating this instead of hand-waving over it.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Readings
 
 In section 0️⃣, we've included a whirlwind tour of PPO which is specifically tailored to today's exercises. Going through the entire thing isn't required (since it can get quite mathematically dense), but **we strongly recommend everyone at least read the summary boxes at the end of each subsection**. Many of the resources listed below are also useful, but they don't cover everything which is specifically relevant to today's exercises.
@@ -185,15 +185,15 @@ If you find this section sufficient then you can move on to the exercises, if no
     - This contains more debugging tips that may be of use.
 - [Lilian Weng Blog on PPO](https://lilianweng.github.io/posts/2018-04-08-policy-gradient/#ppo)
     - Her writing on ML topics is consistently informative and informationally dense.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -240,7 +240,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -297,6 +297,7 @@ if str(exercises_dir) not in sys.path:
 
 import part3_ppo.tests as tests
 from part1_intro_to_rl.utils import set_global_seeds
+from part3_ppo.utils import arg_help
 from part21_dqn.solutions import (
     Probe1,
     Probe2,
@@ -305,9 +306,8 @@ from part21_dqn.solutions import (
     Probe5,
     get_episode_data_from_infos,
 )
-from rl_utils import make_env, prepare_atari_env
-from part3_ppo.utils import arg_help
 from plotly_utils import plot_cartpole_obs_and_dones
+from rl_utils import make_env, prepare_atari_env
 
 # Register our probes from last time
 for idx, probe in enumerate([Probe1, Probe2, Probe3, Probe4, Probe5]):
@@ -315,9 +315,7 @@ for idx, probe in enumerate([Probe1, Probe2, Probe3, Probe4, Probe5]):
 
 Arr = np.ndarray
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # FILTERS: py
 MAIN = __name__ == "__main__"
@@ -327,27 +325,27 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 0️⃣ Whirlwind tour of PPO
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 This section is quite mathematically dense, and you'll cover a lot of it again as you go through the exercises (plus, understanding all the details behind PPO isn't strictly necessary to get all the benefits from this chapter). 
 
 At the end of each subsection we've included a box which summarizes the main points covered so far which should help distill out the main ideas as you're reading, as well as a couple of questions which help you check your understanding. We strongly recommend reading at least the contents of these boxes and attempting the questions, and also reading the section at the end describing today's setup.
 
 Also, an important note - to simplify notation, everything here assumes a finite-horizon setting and no discount factor i.e. $\gamma = 1$. If we remove these assumptions, not a whole lot changes, but we wanted to higlight it to avoid confusion.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Policy Gradient methods vs DQN
 
 We'll start by discussing the general class of **policy gradient methods** (of which PPO is a member), and compare it to DQN. To recap, DQN works as follows:
@@ -372,13 +370,13 @@ A question remains here - how can we take the derivative of expected future retu
 | **Techniques to improve stability?** | We use a "lagged copy" of our network to sample actions from; in this way, we don't update too fast after only having seen a small number of possible states. In the DQN code, this was `q_network` and `target_network`. | We use a "lagged copy" of our policy in mathematical notation, this is $\theta$ and $\theta_{old}$. In the code, we won't actually need to make a different network for this. We clip the objective function to make sure large policy changes aren't incentivized past a certain point (this is the "proximal" part of PPO).                                     |
 | **Suitable for continuous action spaces?** | No. Our Q-function $Q$ is implemented as a network which takes in states and returns Q-values for each discrete action. It's not even good for large action spaces! | Yes. Our policy function $\pi$ can take continuous argument $a$.                                                                                                                                                                                                                                                       |
 -->
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Policy Gradient objective function
 
 > Note, this is the most mathematically dense part of the material, and probably the part that's most fine to skip.
@@ -470,13 +468,13 @@ exactly as we want! We can now perform gradient ascent on this objective functio
 The advantage function scales updates; positive $A_\theta$ will cause us to increase the action likelihood (becasuse the probability of that action will have a positive coefficient in the objective function), and negative $A_\theta$ will cause us to decrease the action likelihood.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Actor & critic
 
 Unlike DQN, we require 2 different networks for policy gradient methods:
@@ -519,13 +517,13 @@ Note that SARSA differed from Q-Learning/DQN because the latter also included a 
 
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Generalized Advantage Estimation
 
 We've got a lot of the pieces in place for PPO now - we have an actor and critic network, and we have 2 objective functions: one to train the critic to estimate the value function $V_\theta(s_t)$ accurately (which are used to estimate the advantage function $\hat{A}_\theta(s_t, a_t)$), and one which trains the actor to maximize the expected future reward based on these advantage estimates. 
@@ -553,13 +551,13 @@ Note that the fact that we use GAE also helps a lot for our critic network - in 
 GAE is much more stable, because using the entire trajectory means we're only taking into account the actual reward accumulated (which can have much higher variance than an advantage estimate, assuming we already have a good policy). Additionally, GAE allows us to credit individual actions for the future rewards they lead to, which is something we couldn't do with the realized return trajectory.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## PPO
 
 We're pretty much there now - we've established all the theoretical pieces we need for PPO, and there's just 3 final things we need to add to the picture.
@@ -606,13 +604,13 @@ Clipping prevents large policy changes by capping gradients when the update exce
 This is good because we don't want to change our policy too quickly, based on possibly a limited set of experiences.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Today's setup
 
 We've now covered all the theory we need to understand about PPO! To conclude, we'll briefly go through how our PPO algorithm is going to be set up in practice today, and relate it to what we've discussed in the previous sections.
@@ -620,13 +618,13 @@ We've now covered all the theory we need to understand about PPO! To conclude, w
 A full diagram of our implementation is shown below:
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/ppo-alg-conceptual.png" width="900">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We have 2 main phases: the **rollout phase** (where we generate a batch of experiences from our frozen network $\theta_\text{target}$) and the **learning phase** (where we update our policy $\pi_\theta$ based on the experiences generated in the rollout phase, as well as the outputs of our current network $\theta$). This is quite similar to the setup we used for DQN (where we'd alternate between generating experiences for our buffer and learning from those experiences) - the difference here is that rather than the rollout phase adding to our buffer, it'll be emptying our buffer and creating an entirely new one. So as not to be wasteful, the learning phase will iterate over our buffer multiple times before we repeat the cycle.
 
 Just like we had `ReplayBuffer`, `DQNAgent` and `DQNTrainer` as our 3 main classes yesterday, here we have 3 main classes:
@@ -640,21 +638,21 @@ As we can see in the diagram, the learning phase has us compute an objective fun
 - The **entropy bonus** (for encouraging policy exploration) - this trains only our actor network
 - The **clipped surrogate objective function** (for policy improvement) - this trains only our actor network (although it uses the critic network's estimates from $\theta_\text{target}$), and it's the most important of the three terms
 - The **value function loss** (for improving our value function estimates) - this trains only our critic network
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Setting up our agent
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In this section, we'll do the following:
 
 * Define a dataclass to hold our PPO arguments
@@ -664,23 +662,24 @@ In this section, we'll do the following:
 * Fill in our `PPOAgent` class (a wrapper around our networks and our replay memory, which will turn them into an agent)
 
 As a reminder, we'll be continually referring back to [The 37 Implementation Details of Proximal Policy Optimization](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#solving-pong-in-5-minutes-with-ppo--envpool) as we go through these exercises. Most of our sections wil refer to one or more of these details.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## PPO Arguments
 
 Just like for DQN, we've provided you with a dataclass containing arguments for your `train_ppo` function. We've also given you a function from `utils` to display all these arguments (including which ones you've changed). Lots of these are the same as for the DQN dataclass.
 
 Don't worry if these don't all make sense right now, they will by the end.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class PPOArgs:
@@ -718,14 +717,10 @@ class PPOArgs:
     def __post_init__(self):
         self.batch_size = self.num_steps_per_rollout * self.num_envs
 
-        assert self.batch_size % self.num_minibatches == 0, (
-            "batch_size must be divisible by num_minibatches"
-        )
+        assert self.batch_size % self.num_minibatches == 0, "batch_size must be divisible by num_minibatches"
         self.minibatch_size = self.batch_size // self.num_minibatches
         self.total_phases = self.total_timesteps // self.batch_size
-        self.total_training_steps = (
-            self.total_phases * self.batches_per_learning_phase * self.num_minibatches
-        )
+        self.total_training_steps = self.total_phases * self.batches_per_learning_phase * self.num_minibatches
 
         self.video_save_path = section_dir / "videos"
 
@@ -765,36 +760,34 @@ ARG_HELP_STRINGS = dict(
 
 
 if MAIN:
-    args = PPOArgs(
-        num_minibatches=2
-    )  # changing this also changes minibatch_size and total_training_steps
+    args = PPOArgs(num_minibatches=2)  # changing this also changes minibatch_size and total_training_steps
     arg_help(args)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 A note on the `num_envs` argument - note that unlike yesterday, `envs` will actually have multiple instances of the environment inside (we did still have this argument yesterday but it was always set to 1). From the [37 implementation details of PPO](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=vectorized%20architecture) post:
 
 > _In this architecture, PPO first initializes a vectorized environment `envs` that runs $N$ (usually independent) environments either sequentially or in parallel by leveraging multi-processes. `envs` presents a synchronous interface that always outputs a batch of $N$ observations from $N$ environments, and it takes a batch of $N$ actions to step the $N$ environments. When calling `next_obs = envs.reset()`, next_obs gets a batch of $N$ initial observations (pronounced "next observation"). PPO also initializes an environment `done` flag variable next_done (pronounced "next done") to an $N$-length array of zeros, where its i-th element `next_done[i]` has values of 0 or 1 which corresponds to the $i$-th sub-environment being *not done* and *done*, respectively._
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Actor-Critic Implementation ([detail #2](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Orthogonal%20Initialization%20of%20Weights%20and%20Constant%20Initialization%20of%20biases))
 
 PPO requires two networks, an `actor` and a `critic`. The actor is the most important one; its job is to learn an optimal policy $\pi_\theta(a_t \mid s_t)$ (it does this by training on the clipped surrogate objective function, which is essentially a direct estimation of the discounted sum of future rewards with some extra bells and whistles thrown in). Estimating this also requires estimating the **advantage function** $A_\theta(s_t, a_t)$, which in requires estimating the values $V_\theta(s_t)$ - this is why we need a critic network, which learns $V_\theta(s_t)$ by minimizing the TD residual (in a similar way to how our Q-network learned the $Q(s_t, a_t)$ values).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `get_actor_and_critic`
 
 > ```yaml
@@ -809,11 +802,12 @@ You should implement the `Agent` class according to the diagram. We are doing se
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/ppo_mermaid.svg" width="500">
 
 We've given you a "high level function" `get_actor_and_critic` which calls one of three possible functions, depending on the `mode` argument. You'll implement the other two modes later. This is one way to keep our code modular.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def layer_init(layer: nn.Linear, std=np.sqrt(2), bias_const=0.0):
     t.nn.init.orthogonal_(layer.weight, std)
@@ -841,13 +835,9 @@ def get_actor_and_critic(
     if mode == "classic-control":
         actor, critic = get_actor_and_critic_classic(num_obs, num_actions)
     if mode == "atari":
-        actor, critic = get_actor_and_critic_atari(
-            obs_shape, num_actions
-        )  # you'll implement these later
+        actor, critic = get_actor_and_critic_atari(obs_shape, num_actions)  # you'll implement these later
     if mode == "mujoco":
-        actor, critic = get_actor_and_critic_mujoco(
-            num_obs, num_actions
-        )  # you'll implement these later
+        actor, critic = get_actor_and_critic_mujoco(num_obs, num_actions)  # you'll implement these later
 
     return actor.to(device), critic.to(device)
 
@@ -885,7 +875,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Question - what do you think is the benefit of using a small standard deviation for the last actor layer?</summary>
 
@@ -893,13 +883,13 @@ The purpose is to center the initial `agent.actor` logits around zero, in other 
 
 [Studies suggest](https://openreview.net/pdf?id=nIAxjsniDzg) this is one of the more important initialisation details, and performance is often harmed without it.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Generalized Advantage Estimation ([detail #5](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Generalized%20Advantage%20Estimation))
 
 The **advantage function** $A_\theta(s_t, a_t)$ is defined as $Q_\theta(s_t, a_t) - V_\theta(s_t)$, i.e. it's the difference between expected future reward when we take action $a_t$ vs taking the expected action according to policy $\pi_\theta$ from that point onwards. It's an important part of our objective function, because it tells us whether we should try and take more or less of action $a_t$ in state $s_t$.
@@ -938,13 +928,13 @@ $$
 and so on. This exactly matches the formula given above.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `compute_advantages`
 
 > ```yaml
@@ -957,11 +947,12 @@ r'''
 Below, you should fill in `compute_advantages`. We recommend using a reversed for loop over $t$ to get it working, and using the recursive formula for GAE given above - don't worry about trying to vectorize it.
 
 Tip - make sure you understand what the indices are of the tensors you've been given! The tensors `rewards`, `values` and `terminated` contain $r_t$, $V(s_t)$ and $d_t$ respectively for all $t = 0, 1, ..., T-1$, and `next_value`, `next_terminated` are the values $V(s_T)$ and $d_T$ respectively (required for the calculation of the very last advantage $A_{T-1}$).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @t.inference_mode()
 def compute_advantages(
@@ -996,9 +987,7 @@ def compute_advantages(
     advantages = t.zeros_like(deltas)
     advantages[-1] = deltas[-1]
     for s in reversed(range(T - 1)):
-        advantages[s] = (
-            deltas[s] + gamma * gae_lambda * (1.0 - terminated[s + 1]) * advantages[s + 1]
-        )
+        advantages[s] = deltas[s] + gamma * gae_lambda * (1.0 - terminated[s + 1]) * advantages[s + 1]
 
     return advantages
     # END SOLUTION
@@ -1013,20 +1002,20 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I get <code>RuntimeError: Subtraction, the `-` operator, with a bool tensor is not supported</code></summary>
 
 This is probably because you're trying to perform an operation on a boolean tensor `terminated` or `next_terminated` which was designed for floats. You can fix this by casting the boolean tensor to a float tensor.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Replay Memory
 
 Our replay memory has some similarities to the replay buffer from yesterday, as well as some important differences.
@@ -1049,13 +1038,13 @@ We store some of the same variables as before - $(s_t, a_t, d_t)$, but with the 
     - They are used to train the value network, in a way which is equivalent to minimizing the TD residual loss used in DQN.
 
 Don't worry if you don't understand all of this now, we'll get to all these variables later.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `minibatch_indices`
 
 > ```yaml
@@ -1070,11 +1059,12 @@ We'll start by implementing the `get_minibatch_indices` function, as described i
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/ppo-buffer-sampling-4.png" width="600">
 
 The test code below should also make it clear what your function should be returning.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_minibatch_indices(rng: Generator, batch_size: int, minibatch_size: int) -> list[np.ndarray]:
     """
@@ -1113,7 +1103,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### `ReplayMemory` class
 
 Next, we've given you the `ReplayMemory` class. This follows a very similar structure to the DQN equivalent `ReplayBuffer` yesterday, with a bit of added complexity. We'll highlight the key differences below:
@@ -1128,11 +1118,12 @@ Next, we've given you the `ReplayMemory` class. This follows a very similar stru
 The samples are not in chronological order, they're shuffled. The formula for computing advantages required the data to be in chronological order.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 @dataclass
 class ReplayMinibatch:
@@ -1238,9 +1229,7 @@ class ReplayMemory:
         )
 
         # Compute advantages & returns
-        advantages = compute_advantages(
-            next_value, next_terminated, rewards, values, terminated, gamma, gae_lambda
-        )
+        advantages = compute_advantages(next_value, next_terminated, rewards, values, terminated, gamma, gae_lambda)
         returns = advantages + values
 
         # Return a list of minibatches
@@ -1261,11 +1250,12 @@ class ReplayMemory:
 
         return minibatches
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Like before, here's some code to generate and plot observations.
 
 The first plot shows the current observations $s_t$ (with dotted lines indicating a terminated episode $d_{t+1} = 1$). The solid lines indicate the transition between different environments in `envs` (because unlike yesterday, we're actually using more than one environment in our `SyncVectorEnv`). There are `batch_size = num_steps_per_rollout * num_envs = 128 * 2 = 256` observations in total, with `128` coming from each environment.
@@ -1273,7 +1263,7 @@ The first plot shows the current observations $s_t$ (with dotted lines indicatin
 The second plot shows a single minibatch of sampled experiences from full memory. Each minibatch has size `minibatch_size = 128`, and `minibatches` contains in total `batches_per_learning_phase * (batch_size // minibatch_size) = 2 * 2 = 4` minibatches.
 
 Note that we don't need to worry about terminal observations here, because we're not actually logging `next_obs` (unlike DQN, this won't be part of our loss function).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1312,9 +1302,7 @@ plot_cartpole_obs_and_dones(
     # END FILTERS
 )
 
-next_value = next_done = t.zeros(envs.num_envs).to(
-    device
-)  # dummy values, just so we can see demo of plot
+next_value = next_done = t.zeros(envs.num_envs).to(device)  # dummy values, just so we can see demo of plot
 minibatches = memory.get_minibatches(next_value, next_done, gamma=0.99, gae_lambda=0.95)
 
 plot_cartpole_obs_and_dones(
@@ -1330,29 +1318,29 @@ plot_cartpole_obs_and_dones(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-23/2301-A.html" width="820" height="470"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-23/2301-B.html" width="820" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## PPO Agent
 
 As the final task in this section, you should fill in the agent's `play_step` method. This is conceptually similar to what you did during DQN, but with a few key differences:
 
 - In DQN we selected actions based on our Q-network & an epsilon-greedy policy, but instead your actions will be generated directly from your actor network
 - Here, you'll have to compute the extra data `logprobs` and `values`, which we didn't have to deal with in DQN
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `PPOAgent`
 
 > ```yaml
@@ -1370,11 +1358,12 @@ A few tips:
 - Make sure to use inference mode when using `obs` to compute `logits` and `values`, since all you're doing here is getting experiences for your memory - you aren't doing gradient descent based on these values.
 - Check the shape of your arrays when adding them to memory (the `add` method has lots of `assert` statements here to help you), and also make sure that they are arrays not tensors by calling `.cpu().numpy()` on them.
 - Remember to update `self.next_obs` and `self.next_terminated` at the end of the function!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class PPOAgent:
     critic: nn.Sequential
@@ -1394,12 +1383,8 @@ class PPOAgent:
         self.memory = memory
 
         self.step = 0  # Tracking number of steps taken (across all environments)
-        self.next_obs = t.tensor(
-            envs.reset()[0], device=device, dtype=t.float
-        )  # need starting obs (in tensor form)
-        self.next_terminated = t.zeros(
-            envs.num_envs, device=device, dtype=t.bool
-        )  # need starting termination=False
+        self.next_obs = t.tensor(envs.reset()[0], device=device, dtype=t.float)  # need starting obs (in tensor form)
+        self.next_terminated = t.zeros(envs.num_envs, device=device, dtype=t.bool)  # need starting termination=False
 
     def play_step(self) -> list[dict]:
         """
@@ -1424,9 +1409,7 @@ class PPOAgent:
         actions = dist.sample()
 
         # Step environment based on the sampled action
-        next_obs, rewards, next_terminated, next_truncated, infos = self.envs.step(
-            actions.cpu().numpy()
-        )
+        next_obs, rewards, next_terminated, next_truncated, infos = self.envs.step(actions.cpu().numpy())
 
         # Calculate logprobs and values, and add this all to replay memory
         logprobs = dist.log_prob(actions).cpu().numpy()
@@ -1455,9 +1438,7 @@ class PPOAgent:
         """
         with t.inference_mode():
             next_value = self.critic(self.next_obs).flatten()
-        minibatches = self.memory.get_minibatches(
-            next_value, self.next_terminated, gamma, gae_lambda
-        )
+        minibatches = self.memory.get_minibatches(next_value, self.next_terminated, gamma, gae_lambda)
         self.memory.reset()
         return minibatches
 
@@ -1471,35 +1452,35 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Learning Phase
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In the last section, we wrote a lot of setup code (including handling most of how our rollout phase will work). Next, we'll turn to the learning phase.
 
 In the next exercises, you'll write code to compute your total objective function. This is given by equation $(9)$ in the paper, and is the sum of three terms - we'll implement each one individually.
 
 Note - the convention we've used in these exercises for signs is that **your function outputs should be the expressions in equation $(9)$**, in other words you will compute $L_t^{CLIP}(\theta)$, $c_1 L_t^{VF}(\theta)$ and $c_2 S[\pi_\theta](s_t)$. We will then perform **gradient ascent** by passing `maximize=True` into our optimizers. An equally valid solution would be to just return the negative of the objective function.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Objective function
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Clipped Surrogate Objective ([detail #8](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Clipped%20surrogate%20objective,-(ppo2/model)))
 
 For each minibatch, calculate $L^{CLIP}$ from equation $(7)$ in [the paper](https://arxiv.org/abs/1707.06347). This will allow us to improve the parameters of our actor.
@@ -1538,13 +1519,13 @@ Why can we assume $x$ is close to 1? That brings us to the second part of the ob
 You might find the illustration below more helpful for explaining how the clipping works:
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/advantages.png" width="800">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - write `calc_clipped_surrogate_objective`
 
 > ```yaml
@@ -1563,11 +1544,12 @@ A few things to note:
     - If you're wondering why we're using a `Categorical` type rather than just using `log_prob` directly, it's because we'll be using them to sample actions later on in our `train_ppo` function. Also, categoricals have a useful method for returning the entropy of a distribution (which will be useful for the entropy term in the loss function).
 - Our `mb_action` has shape `(minibatch_size, *action_shape)`, but in most of the environments we're dealing with (CartPole, and later the Breakout Atari env) the action shape is an empty tuple, which is why we have the assert statement at the start of this function.
 - The clip formula can be a bit finnicky (i.e. when you take signs and max/mins), we recommend breaking the computation onto a few separate lines rather than doing it all in one go!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_clipped_surrogate_objective(
     dist: Categorical,
@@ -1617,7 +1599,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Value Function Loss ([detail #9](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Value%20Function%20Loss%20Clipping))
 
 The value function loss lets us improve the parameters of our critic. Today we're going to implement the simple form: this is just the mean squared difference between the following two terms:
@@ -1628,13 +1610,13 @@ The value function loss lets us improve the parameters of our critic. Today we'r
 Note that the observed returns are equivalent to the observed next-step Q values, meaning the squared difference between these two is the TD error. It's analogous to the TD error we used during SARSA - the purpose is to bring $V_\theta(s_t)$ closer in line with the actual value estimated with the benefit of seeing more future actions. Remember that because we're using GAE, the observed returns $V_t^\text{target}$ don't just take into account the next action, but many future actions in the trajectory.
 
 *Note - the PPO paper did a more complicated thing with clipping, but we're going to deviate from the paper and NOT clip, since [detail #9](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Value%20Function%20Loss%20Clipping) gives evidence that it isn't beneficial.*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - write `calc_value_function_loss`
 
 > ```yaml
@@ -1645,11 +1627,12 @@ r'''
 > ```
 
 Implement `calc_value_function_loss` which returns the term denoted $c_1 L_t^{VF}$ in equation $(9)$.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_value_function_loss(
     values: Float[Tensor, "minibatch_size"],
@@ -1686,7 +1669,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Entropy Bonus ([detail #10](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Overall%20Loss%20and%20Entropy%20Bonus))
 
 The entropy bonus term is intended to incentivize exploration by increasing the entropy of the actions distribution. For a discrete probability distribution $p$, the entropy $H$ is defined as
@@ -1708,13 +1691,13 @@ The maximum entropy is $\ln(2) \approx 0.693$ under the uniform random policy ov
 </details>
 
 Separately from its role in the loss function, the entropy of our action distribution is a useful diagnostic to have: if the entropy of agent's actions is near the maximum, it's playing nearly randomly which means it isn't learning anything (assuming the optimal policy isn't random). If it is near the minimum especially early in training, then the agent might not be exploring enough.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - write `calc_entropy_bonus`
 
 > ```yaml
@@ -1723,11 +1706,12 @@ r'''
 > 
 > You should spend up to ~10 minutes on this exercise.
 > ```
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def calc_entropy_bonus(dist: Categorical, ent_coef: float):
     """Return the entropy bonus term, suitable for gradient ascent.
@@ -1755,17 +1739,17 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Adam Optimizer & Scheduler (details [#3](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=The%20Adam%20Optimizer%E2%80%99s%20Epsilon%20Parameter) & [#4](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Adam%20Learning%20Rate%20Annealing))
 
 Even though Adam is already an adaptive learning rate optimizer, empirically it's still beneficial to decay the learning rate.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `PPOScheduler`
 
 > ```yaml
@@ -1780,11 +1764,12 @@ Implement a linear decay from `initial_lr` to `end_lr` over `total_training_step
 Recall from our look at optimizers in the first week: we edit hyperparameters like learning rate of an optimizer by iterating through `optimizer.param_groups` and setting the `param_group["lr"]` attribute.
 
 We've implemented the `make_optimizer` function for you. Note that we've passed in `itertools.chain` to the optimizer - this creates a single iterable out of multiple iterables, and is necessary because the optimizer expects a single iterable. Another option would just be to convert the parameters to lists and concatenate them.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class PPOScheduler:
     def __init__(self, optimizer: Optimizer, initial_lr: float, end_lr: float, total_phases: int):
@@ -1839,27 +1824,27 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Training Loop
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Writing your training loop
 
 Finally, we can package this all together into our full training loop. The `train` function has been written for you: it just performs an alternating sequence of rollout & learning phases, a total of `args.total_phases` times each. You can see in the `__post_init__` method of our dataclass how this value was calculated by dividing the total agent steps by the batch size (which is the number of agent steps required per rollout phase).
 
 Your job will be to fill in the logic for the rollout & learning phases. This will involve using many of the functions you've written in the last 2 sections.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - complete the `PPOTrainer` class
 
 > ```yaml
@@ -1897,11 +1882,12 @@ Once you get this working, you should also add logging:
 We recommend not focusing too much on wandb & logging initially, just like yesterday. Once again you have the probe environments to test your code, and even after that point you'll get better feedback loops by turning off wandb until you're more confident in your solution. The most important thing to log is the episode length & reward in `rollout_phase`, and if you have this appearing on your progress bar then you'll be able to get a good sense of how your agent is doing. Even without this and without wandb, videos of your runs will automatically be saved to the folder `part3_ppo/videos/run_name`, with `run_name` being the name set at initialization for your `PPOTrainer` class.
 
 If you get stuck at any point during this implementation, you can look at the solutions or send a message in the Slack channel for help.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class PPOTrainer:
     def __init__(self, args: PPOArgs):
@@ -1909,10 +1895,7 @@ class PPOTrainer:
         self.args = args
         self.run_name = f"{args.env_id}__{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
         self.envs = gym.vector.SyncVectorEnv(
-            [
-                make_env(idx=idx, run_name=self.run_name, **args.__dict__)
-                for idx in range(args.num_envs)
-            ]
+            [make_env(idx=idx, run_name=self.run_name, **args.__dict__) for idx in range(args.num_envs)]
         )
 
         # Define some basic variables from our environment
@@ -1933,9 +1916,7 @@ class PPOTrainer:
 
         # Create our networks & optimizer
         self.actor, self.critic = get_actor_and_critic(self.envs, mode=args.mode)
-        self.optimizer, self.scheduler = make_optimizer(
-            self.actor, self.critic, args.total_training_steps, args.lr
-        )
+        self.optimizer, self.scheduler = make_optimizer(self.actor, self.critic, args.total_training_steps, args.lr)
 
         # Create our agent
         self.agent = PPOAgent(self.envs, self.actor, self.critic, self.memory)
@@ -2067,11 +2048,12 @@ class PPOTrainer:
         if self.args.use_wandb:
             wandb.finish()
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution (simpler, no logging)</summary>
 
@@ -2185,13 +2167,13 @@ def compute_ppo_objective(self, minibatch: ReplayMinibatch) -> Float[Tensor, ""]
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here's some code to run your model on the probe environments (and assert that they're all working fine).
 
 A brief recap of the probe environments, along with recommendations of where to go to debug if one of them fails (note that these won't be true 100% of the time, but should hopefully give you some useful direction):
@@ -2201,11 +2183,12 @@ A brief recap of the probe environments, along with recommendations of where to 
 * **Probe 3 tests the agent's ability to handle time & reward delay**. If this fails, it means the agent has problems with multi-step scenarios of discounting future rewards. You should look at how your agent step function works.
 * **Probe 4 tests the agent's ability to learn from actions leading to different rewards**. If this fails, it means the agent has failed to change its policy for different rewards, and you should look closer at how your agent is updating its policy based on the rewards it receives & the loss function.
 * **Probe 5 tests the agent's ability to map observations to actions**. If this fails, you should look at the code which handles multiple timesteps, as well as the code that handles the agent's map from observations to actions.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def test_probe(probe_idx: int):
     """
@@ -2246,9 +2229,7 @@ def test_probe(probe_idx: int):
     t.testing.assert_close(value, expected_value, atol=tolerances[probe_idx - 1], rtol=0)
     expected_probs = expected_probs_for_probes[probe_idx - 1]
     if expected_probs is not None:
-        t.testing.assert_close(
-            probs, t.tensor(expected_probs).to(device), atol=tolerances[probe_idx - 1], rtol=0
-        )
+        t.testing.assert_close(probs, t.tensor(expected_probs).to(device), atol=tolerances[probe_idx - 1], rtol=0)
     print("Probe tests passed!\n")
 
 
@@ -2260,11 +2241,11 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed the tests for all 5 probe environments, you should test your model on Cartpole.
 
 See an example wandb run you should be getting [here](https://api.wandb.ai/links/callum-mcdougall/fdmhh8gq).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2278,7 +2259,7 @@ trainer.train()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Question - if you've done this correctly (and logged everything), clipped surrogate objective will be close to zero. Does this mean that this term is not the most important in the objective function?</summary>
 
@@ -2289,13 +2270,13 @@ Clipped surrogate objective is a moving target. At each rollout phase, we genera
 As we make update steps in the learning phase, the policy values $\pi(a_t \mid s_t)$ will increase for actions which have positive advantages, and decrease for actions which have negative advantages, so the clipped surrogate objective will no longer be zero in expectation. But (thanks to the fact that we're clipping changes larger than $\epsilon$) it will still be very small.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Reward Shaping
 
 Yesterday during DQN, we covered **catastrophic forgetting** - this is the phenomena whereby the replay memory mostly contains successful experiences, and the model forgets how to adapt or recover from bad states. In fact, you might find it even more severe here than for DQN, because PPO is an on-policy method (we generate a new batch of experiences for each learning phase) unlike DQN. Here's an example reward trajectory from a PPO run on CartPole, using the solution code:
@@ -2353,13 +2334,13 @@ For a fairer test, measure the length of your episodes - hopefully your agent le
 </details>
 
 Note - if you want to use the maximum possible values of `x` and `theta` in your reward function (to keep it bounded between 0 and 1) then you can. These values can be found at the [documentation page](https://github.com/Farama-Foundation/Gymnasium/blob/v0.29.0/gymnasium/envs/classic_control/cartpole.py#L51) (note - the table contains the max possible values, not max unterminated values - those are below the table). You can also use `self.x_threshold` and `self.theta_threshold_radians` to get these values directly (again, see the source code for how these are calculated).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement reward shaping
 
 > ```yaml
@@ -2370,7 +2351,7 @@ r'''
 > ```
 
 See [this link](https://api.wandb.ai/links/callum-mcdougall/p7e739rp) for what an ideal wandb run here should look like (using the reward function in the solutions).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2416,7 +2397,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution (one possible implementation)</summary>
 
@@ -2464,19 +2445,20 @@ To illustrate the point about different forms of reward optimizing different kin
 <br>
 
 Now, change the environment such that the reward incentivises the agent to spin very fast. You may change the termination conditions of the environment (i.e. return a different value for `done`) if you think this will help.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 See [this link](https://api.wandb.ai/links/callum-mcdougall/86y2vtsk) for what an ideal wandb run here should look like (using the reward function in the solutions).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class SpinCart(CartPoleEnv):
     def step(self, action):
@@ -2512,7 +2494,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Solution (one possible implementation)</summary>
 
@@ -2537,21 +2519,21 @@ class SpinCart(gym.envs.classic_control.cartpole.CartPoleEnv):
 </details>
 
 Another thing you can try is "dancing". It's up to you to define what qualifies as "dancing" - work out a sensible definition, and the reward function to incentive it.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 4️⃣ Atari
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Introduction
 
 In this section, you'll extend your PPO implementation to play Atari games.
@@ -2564,7 +2546,7 @@ The environments in this game are very different. Rather than having observation
 * Reward shaping is much more difficult, because our observations are low-level and don't contain easily-accessible information about the high-level abstractions in the game (finding these abstractions in the first place is part of the model's challenge!)
 
 The action space is also different for each environment. For example, in Breakout, the environment has 4 actions - run the code below to see this (if you get an error, try restarting the kernel and running everything again, minus the library installs).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2579,18 +2561,18 @@ print(env.observation_space)  # Box(0, 255, (210, 160, 3), uint8): an RGB image 
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Discrete(4)
 Box(0, 255, (210, 160, 3), uint8)</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 These 4 actions are "do nothing", "fire the ball", "move right", and "move left" respectively, which you can see from:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2602,23 +2584,24 @@ print(env.get_action_meanings())
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">['NOOP', 'FIRE', 'RIGHT', 'LEFT']</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can see more details on the game-specific [documentation page](https://ale.farama.org/environments/breakout/). On this documentation page, you can also see information like the reward for this environment. In this case, the reward comes from breaking bricks in the wall (more reward from breaking bricks higher up). This is a more challenging reward function than the one for CartPole, where a very simple strategy (move in the direction you're tipping) leads directly to a higher reward by marginally prolonging episode length.
 
 We can also run the code below to take some random steps in our environment and animate the results:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def display_frames(frames: Int[Arr, "timesteps height width channels"], figsize=(4, 5)):
     fig, ax = plt.subplots(figsize=figsize)
@@ -2634,9 +2617,7 @@ def display_frames(frames: Int[Arr, "timesteps height width channels"], figsize=
 
 
 # FILTERS: ~
-def save_display_frames(
-    frames: Int[Arr, "timesteps height width channels"], filename: str, figsize=(4, 5)
-):
+def save_display_frames(frames: Int[Arr, "timesteps height width channels"], filename: str, figsize=(4, 5)):
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(frames[0])
     plt.close()
@@ -2674,37 +2655,37 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-23/2302.html" width="500" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Playing Breakout
 
 Just like for Cartpole and MountainCar, we're given you a Python file to play Atari games yourself. The file is called `play_breakout.py`, and running it (i.e. `python play_breakout.py`) will open up a window for you to play the game. Take note of the key instructions, which will be printed in your terminal.
 
 You should also be able to try out other games, by changing the relevant parts of the `play_breakout.py` file to match those games' [documentation pages](https://ale.farama.org/environments/complete_list/).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Implementational details of Atari
 
 The [37 Implementational Details of PPO](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Atari%2Dspecific%20implementation%20details) post describes how to get PPO working for games like Atari. In the sections below, we'll go through these steps.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Wrappers (details [#1-7](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=The%20Use%20of%20NoopResetEnv), and [#9](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Scaling%20the%20Images%20to%20Range%20%5B0%2C%201%5D))
 
 All the extra details except for one are just wrappers on the environment, which implement specific behaviours. For example:
@@ -2715,7 +2696,7 @@ All the extra details except for one are just wrappers on the environment, which
 We've written some environment wrappers for you (and imported some others from the `gymnasium` library), combining them all together into the `prepare_atari_env` function in the `part3_ppo/utils.py` file. You can have a read of this and see how it works, but since we're implementing these for you, you won't have to worry about them too much.
 
 The code below visualizes the results of them (with the frames stacked across rows, so we can see them all at once). You might want to have a think about how the kind of information your actor & critic networks are getting here, and how this might make the RL task easier.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2728,9 +2709,7 @@ obs, info = env_wrapped.reset()
 for _ in tqdm(range(nsteps)):
     action = env_wrapped.action_space.sample()
     obs, reward, terminated, truncated, info = env_wrapped.step(action)
-    obs = einops.repeat(
-        np.array(obs), "frames h w -> h (frames w) 3"
-    )  # stack frames across the row
+    obs = einops.repeat(np.array(obs), "frames h w -> h (frames w) 3")  # stack frames across the row
     frames.append(obs)
 
 display_frames(np.stack(frames), figsize=(12, 3))
@@ -2743,25 +2722,25 @@ display_frames(np.stack(frames), figsize=(12, 3))
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-23/2303.html" width="1250" height="420"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Shared CNN for actor & critic ([detail #8](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Shared%20Nature%2DCNN%20network))
 
 This is the most interesting one conceptually. If we have a new observation space then it naturally follows that we need a new architecture, and if we're working with images then using a convolutional neural network is reasonable. But another particularly interesting feature here is that we use a **shared architecture** for the actor and critic networks. The idea behind this is that the early layers of our model extract features from the environment (i.e. they find the high-level abstractions contained in the image), and then the actor and critic components perform **feature extraction** to turn these features into actions / value estimates respectively. This is commonly referred to as having a **policy head** and a **value head**. We'll see this idea come up later, when we perform RL on transformers.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - rewrite `get_actor_and_critic`
 
 > ```yaml
@@ -2824,15 +2803,14 @@ For instance, if `L = 84` then `m = 10` and `L_new = m-3 = 7`. So the linear lay
 Now, you can fill in the `get_actor_and_critic_atari` function below, which is called when we call `get_actor_and_critic` with `mode == "atari"`.
 
 Note that we take the observation shape as argument, not the number of observations. It should be `(4, L, L)` as indicated by the diagram. The shape `(4, L, L)` is a reflection of the fact that we're using 4 frames of history per input (which helps the model calculate things like velocity), and each of these frames is a monochrome resized square image.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def get_actor_and_critic_atari(
-    obs_shape: tuple[int,], num_actions: int
-) -> tuple[nn.Sequential, nn.Sequential]:
+
+def get_actor_and_critic_atari(obs_shape: tuple[int,], num_actions: int) -> tuple[nn.Sequential, nn.Sequential]:
     """
     Returns (actor, critic) in the "atari" case, according to diagram above.
     """
@@ -2873,13 +2851,13 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training Atari
 
 Now, you should be able to run an Atari training loop!
 
 We recommend you use the following parameters, for fidelity:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2901,7 +2879,7 @@ trainer.train()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Note that this will probably take a lot longer to train than your previous experiments, because the architecture is much larger, and finding an initial strategy is much harder than it was for CartPole. Don't worry if it starts off with pretty bad performance (on my machine the code above takes about 40 minutes to run, and I only start seeing any improvement after about the 5-10 minute mark, or approx 70k total agent steps). You can always experiment with different methods to try and boost performance early on, like an entroy bonus which is initially larger then decays (analogous to our epsilon scheduling in DQN, which would reduce the probability of exploration over time).
 
 Here is a video produced from a successful run, using the parameters above:
@@ -2913,13 +2891,13 @@ Here is a video produced from a successful run, using the parameters above:
 and here's the corresponding plot of episodic returns (with episoic lengths following a similar pattern):
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/wandb-atari-returns.png" width="550">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### A note on debugging crashed kernels
 
 > *This section is more relevant if you're doing these exercises on VSCode; you can skip it if you're in Colab.*
@@ -2933,33 +2911,33 @@ which annoyingly doesn't tell you much about the nature or location of the error
 For instance, you might start with `trainer.train()`, and if this fails without an informative error message then you might try replacing this function call with the actual contents of the `train` function (which should involve the methods `trainer.rollout_phase()` and `trainer.learning_phase()`). If the problem is in `rollout_phase`, you can again replace this line with the actual contents of this method.
 
 If you're working in `.py` files rather than `.ipynb`, a useful tip - as well as running `Shift + Enter` to run the cell your cursor is in, if you have text highlighted (and you've turned on `Send Selection To Interactive Window` in VSCode settings) then using `Shift + Enter` will run just the code you've highlighted. This could be a single variable name, a single line, or a single block of code.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 5️⃣ Mujoco
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 > An important note - **mujoco environments are notoriously demanding when it comes to having exactly the right library installs and versions.** For one thing, they require Python version `<3.11`, which means they currently won't **work in Colab** until a fix for this problem is found. To get them working, you'll need to go through the process of creating a new virtual environment and installing Python version `3.10` - we recommend creating a Linux-based via the instructions in the [Streamlit homepage](https://arena-chapter2-rl.streamlit.app/#how-to-access-the-course), and swapping `python=3.11` for `python=3.10` when you go through the "Workspace setup instructions" code.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Installation & Rendering
 
 Once you've gone through the step described above (a new virtual env with Python version `3.10`), you should re-run all the imports up to this point in the file, as well as the following code which will install all the Mujoco-specific packages and depenedencies:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -2974,9 +2952,9 @@ Once you've gone through the step described above (a new virtual env with Python
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 To test that this works, run the following. The first time you run this, it might take about 1-2 minutes, and throw up several warnings and messages. But the cell should still run without raising an exception, and all subsequent times you run it, it should be a lot faster (with no error messages).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2991,16 +2969,16 @@ print(env.observation_space)
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Box(-1.0, 1.0, (3,), float32)
 Box(-inf, inf, (11,), float64)</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Previously, we've dealt with discrete action spaces (e.g. going right or left in Cartpole). But here, we have a continuous action space - the actions take the form of a vector of 3 values, each in the range `[-1.0, 1.0]`. 
 
 <details>
@@ -3019,7 +2997,7 @@ They represent the **torque** applied between the three different links of the h
 How do we deal with a continuous action space, when it comes to choosing actions? Rather than our actor network's output being a vector of `logits` which we turn into a probability distribution via `Categorical(logits=logits)`, we instead have our actor output two vectors `mu` and `log_sigma`, which we turn into a normal distribution which is then sampled from.
 
 The observations take the form of a vector of 11 values describing the position, velocity, and forces applied to the joints. So unlike for Atari, we can't directly visualize the environment using its observations, instead we'll visualize it using `env.render()` which returns an array representing the environment state (thanks to the fact that we initialized the env with `render_mode="rgb_array"`).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3032,9 +3010,7 @@ obs, info = env.reset()
 for _ in tqdm(range(nsteps)):
     action = env.action_space.sample()
     obs, reward, terminated, truncated, info = env.step(action)
-    frames.append(
-        env.render()
-    )  # frames can't come from obs, because unlike in Atari our observations aren't images
+    frames.append(env.render())  # frames can't come from obs, because unlike in Atari our observations aren't images
 
 display_frames(np.stack(frames))
 
@@ -3046,35 +3022,35 @@ display_frames(np.stack(frames))
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-23/2306.html" width="500" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Implementational details of MuJoCo
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Clipping, Scaling & Normalization ([details #5-9](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Handling%20of%20action%20clipping%20to%20valid%20range%20and%20storage))
 
 Just like for Atari, there are a few messy implementational details which will be taken care of with gym wrappers. For example, if we generate our actions by sampling from a normal distribution, then there's some non-zero chance that our action will be outside of the allowed action space. We deal with this by clipping the actions to be within the allowed range (in this case between -1 and 1).
 
 See the function `prepare_mujoco_env` within `part3_ppo/utils` (and read details 5-9 on the PPO page) for more information.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Actor and Critic networks ([details #1-4](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Continuous%20actions%20via%20normal%20distributions))
 
 Our actor and critic networks are quite similar to the ones we used for cartpole. They won't have shared architecture.
@@ -3089,13 +3065,13 @@ The point of the shared architecture in Atari was that it allowed our critic and
 The only difference will be in the actor network. There will be an `actor_mu` and `actor_log_sigma` network. The `actor_mu` will have exactly the same architecture as the CartPole actor network, and it will output a vector used as the mean of our normal distribution. The `actor_log_sigma` network will just be a bias, since the standard deviation is **state-independent** ([detail #2](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=State%2Dindependent%20log%20standard%20deviation)).
 
 Because of this extra complexity, we'll create a class for our actor and critic networks.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `Actor` and `Critic`
 
 > ```yaml
@@ -3118,11 +3094,12 @@ We have our network output `log_sigma` rather than `sigma` because the standard 
 Tip - when creating your distribution, you can use the `broadcast_to` tensor method, so that your standard deviation and mean are the same shape.
 
 We've given you the function `get_actor_and_critic_mujoco` (which is called when you call `get_actor_and_critic` with `mode="mujoco"`). All you need to do is fill in the `Actor` and `Critic` classes.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class Critic(nn.Module):
     def __init__(self, num_obs):
@@ -3198,7 +3175,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - additional rewrites
 
 > ```yaml
@@ -3211,13 +3188,13 @@ r'''
 There are a few more rewrites you'll need for continuous action spaces, which is why we recommend that you create a new solutions file for this part (like we've done with `solutions.py` and `solutions_cts.py`).
 
 You'll need to make the following changes:
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 #### Logprobs and entropy
 
 Rather than `probs = Categorical(logits=logits)` as your distribution (which you sample from & pass into your loss functions), you'll just use `dist` as your distribution. Methods like `.logprobs(action)` and `.entropy()` will work on `dist` just like they did on `probs`.
@@ -3238,11 +3215,12 @@ So you'll need to sum logprobs and entropy over the last dimension. The logprobs
 You should log `mu` and `sigma` during the learning phase.
 
 Below, we've given you a template for all the things you'll need to change (with new class & function names so they don't overwrite the previous versions).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class PPOAgentCts(PPOAgent):
     def play_step(self) -> list[dict]:
@@ -3266,9 +3244,7 @@ class PPOAgentCts(PPOAgent):
 
         actions = dist.sample()
 
-        next_obs, rewards, next_terminated, next_truncated, infos = self.envs.step(
-            actions.cpu().numpy()
-        )
+        next_obs, rewards, next_terminated, next_truncated, infos = self.envs.step(actions.cpu().numpy())
 
         # DISCRETE VERSION: no need to sum logprobs
         # logprobs = dist.log_prob(actions).cpu().numpy()
@@ -3406,15 +3382,16 @@ class PPOTrainerCts(PPOTrainer):
         return total_objective_function
         # END SOLUTION
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Training MuJoCo
 
 Now, you should be ready to run your training loop! We recommend using the following parameters, to match the original implmentation which the [37 Implementational Details](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details) post is based on (but you can experiment with different values if you like).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3439,7 +3416,7 @@ trainer.train()
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should expect the reward to increase pretty fast initially and then plateau once the agent learns the solution "kick off for a very large initial jump, and don't think about landing". Eventually the agent gets past this plateau, and learns to land successfully without immediately falling over. Once it's at the point where it can string two jumps together, your reward should start increasing much faster.
 
 Here is a video produced from a successful run, using the parameters above:
@@ -3453,21 +3430,21 @@ and here's the corresponding plot of episode lengths:
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/wandb-mujoco-lengths.png" width="550">
 
 Although we've used `Hopper-v4` in these examples, you might also want to try `InvertedPendulum-v4` (docs [here](https://gymnasium.farama.org/environments/mujoco/inverted_pendulum/)). It's a much easier environment to solve, and it's a good way to check that your implementation is working (after all if it worked for CartPole then it should work here - in fact your inverted pendulum agent should converge to a perfect solution almost instantly, no reward shaping required). You can check out the other MuJoCo environments [here](https://gymnasium.farama.org/environments/mujoco/).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # ☆ Bonus
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Trust Region Methods
 
 Some versions of the PPO algorithm use a slightly different objective function. Rather than our clipped surrogate objective, they use constrained optimization (maximising the surrogate objective subject to a restriction on the [KL divergence](https://www.lesswrong.com/posts/no5jDTut5Byjqb4j5/six-and-a-half-intuitions-for-kl-divergence) between the old and new policies).
@@ -3492,13 +3469,13 @@ Rather than forcing the new policy to stay close to the previous policy, this ad
 Can you implement this? Does this approach work better than the clipped surrogate objective? What values of $\beta$ work best?
 
 Tip - you can calculate KL divergence using the PyTorch [KL Divergence function](https://pytorch.org/docs/stable/distributions.html#module-torch.distributions.kl). You could also try the approximate version, as described in [detail #12](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/#:~:text=Debug%20variables) of the "37 Implementational Details" post.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Long-term replay memory
 
 Above, we discussed the problem of **catastrophic forgetting** (where the agent forgets how to recover from bad behaviour, because the memory only contains good behaviour). One way to fix this is to have a long-term replay memory, for instance:
@@ -3507,13 +3484,13 @@ Above, we discussed the problem of **catastrophic forgetting** (where the agent 
 * (complex version) You design a custom scheduled method for removing experiences from memory, so that you always have a mix of old and new experiences.
 
 Can you implement one of these, and does it fix the catastrophic forgetting problem (without needing to use reward shaping)?
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Vectorized Advantage Calculation
 
 Try optimizing away the for-loop in your advantage calculation. It's tricky (and quite messy), so an easier version of this is: find a vectorized calculation and try to explain what it does.
@@ -3527,13 +3504,13 @@ Construct a 2D boolean array from `dones`, where the `(i, j)`-th element of the 
 </details>
 
 <!-- There are solutions available in `solutions.py` (commented out). -->
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Other Discrete Environments
 
 Two environments (supported by gym) which you might like to try are:
@@ -3541,33 +3518,33 @@ Two environments (supported by gym) which you might like to try are:
 * [`Acrobot-v1`](https://gymnasium.farama.org/environments/classic_control/acrobot/) - this is one of the [Classic Control environments](https://gymnasium.farama.org/environments/classic_control/), and it's a bit harder to learn than cartpole.
 * [`MountainCar-v0`](https://gymnasium.farama.org/environments/classic_control/mountain_car/) - this is one of the [Classic Control environments](https://gymnasium.farama.org/environments/classic_control/), and it's much harder to learn than cartpole. This is primarily because of **sparse rewards** (it's really hard to get to the top of the hill), so you'll definitely need reward shaping to get through it!
 * [`LunarLander-v2`](https://gymnasium.farama.org/environments/box2d/lunar_lander/) - this is part of the [Box2d](https://gymnasium.farama.org/environments/box2d/) environments. It's a bit harder still, because of the added environmental complexity (physics like gravity and friction, and constraints like fuel conservatino). The reward is denser (with the agent receiving rewards for moving towards the landing pad and penalties for moving away or crashing), but the increased complexity makes it overall a harder problem to solve. You might have to perform hyperparameter sweeps to find the best implementation (you can go back and look at the syntax for hyperparameter sweeps [here](https://arena-ch0-fundamentals.streamlit.app/[0.4]_Optimization)). Also, [this page](https://pylessons.com/LunarLander-v2-PPO) might be a useful reference (although the details of their implementation differs from the one we used today). You can look at the hyperparameters they used.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Continuous Action Spaces & Reward Shaping
 
 The `MountainCar-v0` environment has discrete actions, but there's also a version `MountainCarContinuous-v0` with continuous action spaces. Implementing this will require a combination of the continuous action spaces you dealt with during the MuJoCo section, and the reward shaping you used during the CartPole exercises.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Choose & build your own environment (e.g. Wordle)
 
 You can also try choosing your own task, framing it as an RL problem, and adapting your PPO algorithm to solve it. For example, training an agent to play Wordle (or a relation like Semantle) might be a suitably difficult task. [This post](https://wandb.ai/andrewkho/wordle-solver/reports/Solving-Wordle-with-Reinforcement-Learning--VmlldzoxNTUzOTc4) gives a high level account of training an agent to play Wordle - they use DQN, but they don't go too deep into the technical details (and it's possible that PPO would work better for this task).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Minigrid envs / Procgen
 
 There are many more exciting environments to play in, but generally they're going to require more compute and more optimization than we have time for today. If you want to try them out, some we recommend are:
@@ -3577,15 +3554,14 @@ There are many more exciting environments to play in, but generally they're goin
 - [Megastep](https://andyljones.com/megastep/) - RL environment that runs fully on the GPU (fast!)
 - [Procgen](https://github.com/openai/procgen) - A family of 16 procedurally generated gym environments to measure the ability for an agent to generalize. Optimized to run quickly on the CPU.
     - For this one, you might want to read [Jacob Hilton's online DL tutorial](https://github.com/jacobhilton/deep_learning_curriculum/blob/master/6-Reinforcement-Learning.md) (the RL chapter suggests implementing PPO on Procgen), and [Connor Kissane's solutions](https://github.com/ckkissane/deep_learning_curriculum/blob/master/solutions/6_Reinforcement_Learning.ipynb).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Multi-Agent PPO
 
 Multi-Agent PPO (MAPPO) is an extension of the standard PPO algorithm which trains multiple agents at once. It was first described in the paper [The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games](https://arxiv.org/abs/2103.01955). Can you implement MAPPO?
-'''
-
+"""

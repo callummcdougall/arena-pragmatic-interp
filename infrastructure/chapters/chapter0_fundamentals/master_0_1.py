@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Rays & Segments", "icon": "1-circle-fill", "subtitle": "(20%)"},
@@ -11,37 +11,37 @@ r'''
     {"title": "Video & lighting", "icon": "4-circle-fill", "subtitle": "(30%)"},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [0.1] - Ray Tracing
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-01.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Today we'll be practicing batched matrix operations in PyTorch by writing a basic graphics renderer. We'll start with an extremely simplified case and work up to rendering your very own 3D Pikachu!
 
 We'll also be touching on some general topics which will be important going forwards in this course, such as:
@@ -49,13 +49,13 @@ We'll also be touching on some general topics which will be important going forw
 * Using GPT systems to assist your learning and coding
 * Typechecking, and good coding practices
 * Debugging, with VSCode's built-in run & debug features
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ Rays & Segments
@@ -96,15 +96,15 @@ In the last set of exercises, you can implement some more mathematically complex
 > - Learn how surface normal vectors can be used to compute lighting effects
 > - Render your figures in video form (as an animated camera pan)
 > - (optional) Learn about the `pytest` library, and write your own tests for the functions you wrote
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -151,7 +151,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -226,7 +226,7 @@ rays1d = first_func(9, 10.0)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I get a NumPy-related error</summary>
 
@@ -248,21 +248,21 @@ with open(section_dir / "pikachu.pt", "rb") as f:
 
 since `section_dir` is the name of the `part1_ray_tracing` directory, and forward slashes are used to define files or directories within that directory.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Rays & Segments
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## 1D Image Rendering
 
 In our initial setup, the **camera** will be a single point at the origin, and the **screen** will be the plane at x=1.
@@ -272,29 +272,29 @@ In our initial setup, the **camera** will be a single point at the origin, and t
 The camera will emit one or more **rays**, where a ray is represented by an **origin** point and a **direction** point. Conceptually, the ray is emitted from the origin and continues in the given direction until it intersects an object.
 
 We have no concept of lighting or color yet, so for now we'll say that a pixel on our screen should show a bright color if a ray from the origin through it intersects an object, otherwise our screen should be dark.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/ray_tracing.png" width="400">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 To start, we'll let the z dimension in our `(x, y, z)` space be zero and work in the remaining two dimensions.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `make_rays_1d`
 
 > ```yaml
@@ -303,21 +303,22 @@ r'''
 > 
 > You should spend up to 10-15 minutes on this exercise.
 > ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Implement the following `make_rays_1d` function so it generates some rays coming out of the origin, which we'll take to be `(0, 0, 0)`.
 
 Calling `render_lines_with_plotly` on your rays will display them in a 3D plot.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def make_rays_1d(num_pixels: int, y_limit: float) -> Tensor:
     """
@@ -361,15 +362,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0101.html" width="620" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip - the `out` keyword argument
 
 Many PyTorch functions take an optional keyword argument `out`. If provided, instead of allocating a new tensor and returning that, the output is written directly to the `out` tensor.
@@ -388,7 +389,7 @@ Our camera ray is defined by the origin $O$ and direction $D$ and our object lin
 We can write the equations for all points on the camera ray as $R(u)=O +u D$ for $u \in [0, \infty)$ and on the object line as $O(v)=L_1+v(L_2 - L_1)$ for $v \in [0, 1]$.
 
 The following interactive widget lets you play with this parameterization of the problem. Run the cells one after another:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -398,7 +399,7 @@ fig: go.FigureWidget = setup_widget_fig_ray()
 display(fig)
 
 
-@interact(v=(0.0, 6.0, 0.01), seed=(0,10,1))
+@interact(v=(0.0, 6.0, 0.01), seed=(0, 10, 1))
 def update(v=0.0, seed=0):
     t.manual_seed(seed)
     L_1, L_2 = t.rand(2, 2)
@@ -409,19 +410,20 @@ def update(v=0.0, seed=0):
         fig.update_traces({"x": [L_1[0], L_2[0]], "y": [L_1[1], L_2[1]]}, 1)
         fig.update_traces({"x": [P(v)[0]], "y": [P(v)[1]]}, 2)
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/animation-1a.mp4" width="400" height="450" style="background-color: white;"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Setting the line equations from above equal gives the solution:
 
 $$
@@ -429,13 +431,13 @@ $$
 $$
 
 Once we've found values of $u$ and $v$ which satisfy this equation, if any (the lines could be parallel) we just need to check that $u \geq 0$ and $v \in [0, 1]$.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `intersect_ray_1d`
 
 > ```yaml
@@ -482,15 +484,14 @@ Is it possible for the solve method to fail? Give a sample input where this woul
 
 If the ray and segment are exactly parallel, then the solve will fail because there is no solution to the system of equations. For this function, handle this by catching the exception and returning False.
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def intersect_ray_1d(
-    ray: Float[Tensor, "points dims"], segment: Float[Tensor, "points dims"]
-) -> bool:
+
+def intersect_ray_1d(ray: Float[Tensor, "points dims"], segment: Float[Tensor, "points dims"]) -> bool:
     """
     ray: shape (n_points=2, n_dim=3)  # O, D points
     segment: shape (n_points=2, n_dim=3)  # L_1, L_2 points
@@ -537,7 +538,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help! My code is failing with a 'must be batches of square matrices' exception.</summary>
 
@@ -545,13 +546,13 @@ Our formula only uses the x and y coordinates - remember to discard the z coordi
 
 It's good practice to write asserts on the shape of things so that your asserts will fail with a helpful error message. In this case, you could assert that the `mat` argument is of shape (2, 2) and the `vec` argument is of shape (2,). Also, see the aside below on typechecking.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Aside - type hints
 
 Adding type hints to your code is a useful habit to get into. Some advantages of using them:
@@ -573,37 +574,37 @@ and you can also use other syntax to extend behaviour, e.g. `x: int | None` for 
 Jaxtyping also gives us useful type hint features, e.g. we have `ray: Float[Tensor, "points dims"]` to indicate a tensor of floats with dimensions `points` and `dims`. Unlike the examples above this is unlikely to be captured by syntax highlighting when you make a mistake, instead it's best to view this as an alternative to annotating the tensor shape. You may or may not prefer to use this. 
 
 When in doubt however, it's best to make assertions on the variable type or tensor shape explicitly, e.g. `assert isinstance(x, Tensor)` or `assert x.shape == ...`. We generally don't recommend static type checking like [mypy](https://mypy-lang.org/) in this course, because there aren't generally standard and robust ways to do it which will fit all IDEs & use-cases.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Batched Operations
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In this section, we'll move onto batched operations. First, it's necessary to cover some important tips for working effectively with PyTorch tensors. If you've gone through the prerequisite material then several of these should already be familiar to you.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Tensor Operations - 5 Tips
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip (1/5) - Elementwise Logical Operations on Tensors
 
 For regular booleans, the keywords `and`, `or`, and `not` are used to do logical operations and the operators `&`, `|`, and `~` do `and`, `or` and `not` on each bit of the input numbers. Analogously, we use the operators `&`, `|` `~` on tensors to perform these operations on each element of the tensor, e.g. `x & y` returns the tensor with elements `x[i] and y[i]`.
@@ -612,13 +613,13 @@ A few important gotchas here:
 
 - Don't try to use `and`, `or` or `not` on tensors, since Python will try to coerce the tensors to booleans, and you'll get an exception.
 - Remember about **operator precedence**! For instance, `v >= 0 & v <= 1` will actually throw an error because it's actually evaluated as `(v >= (0 & v)) <= 1` (because `&` has high precedence) and `0 & v` is not a valid operation. When in doubt, use parentheses to force the correct parsing: `(v >= 0) & (v <= 1)`.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip (2/5) - `einops`
 
 Einops is a useful library which we'll dive deeper with tomorrow. For now, the only important function you'll need to know is `einops.repeat`. This takes as arguments a tensor and a string, and returns a new tensor which has been repeated along the specified dimensions. For example, the following code shows how we can repeat a 2D tensor along the last dimension:
@@ -631,13 +632,13 @@ assert x_repeated.shape == (4, 3, 2)
 t.testing.assert_close(x_repeated[:, :, 0], x)
 t.testing.assert_close(x_repeated[:, :, 1], x)
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip (3/5) - Logical Reductions
 
 In plain Python, if you have a list of lists and want to know if any element in a row is `True`, you could use a list comprehension like `[any(row) for row in rows]`. The efficient way to do this in PyTorch is with `torch.any()` or equivalently the `.any()` method of a tensor, which accept the dimension to reduce over. Similarly, `torch.all()` or `.all()` method. Both of these methods accept a `dim` argument, which is the dimension to reduce over.
@@ -647,13 +648,13 @@ In plain Python, if you have a list of lists and want to know if any element in 
 
 Most functions like `torch.any(tensor, ...)` (which take a tensor as first argument) have an equivalent tensor method `tensor.any(...)`. We'll see many more examples of functions like this as we go through the course.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip (4/5) - Broadcasting
 
 Broadcasting is what happens when you perform an operation on two tensors, and one is a smaller size, but is copied along the dimensions of the larger one in order to apply to it. There are some complicated broadcasting rules which we'll get into later in the course (you can also review the broadcasting section in the prerequisite material which comes before this chapter), but for our purposes the only thing you need to know is this: if you perform an operation on 2 tensors `A, B` where `A.shape == B.shape[-A.ndim:]` (i.e. `A` matches the last dimensions of `B`), then `A` will be copied along its leading dimensions until it has the same shape as `B`. For example:
@@ -665,13 +666,13 @@ C = A + B
 print(C.shape) # torch.Size([4, 3, 2]), the size of the broadcasted tensor
 print(C.max(), C.min()) # tensor(2.) tensor(2.), because all elements are 2
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Tip (5/5) - Indexing
 
 Indexing is a pretty deep topic in PyTorch, and it takes a while to get fully comfortable with it. However, we'll specifically cover some features which will be useful for the following exercises.
@@ -711,13 +712,13 @@ print(F)
 ```
 
 This works because our indexing creates a tensor of shape `(3, 2)`, formed by stacking the three tensors `F[0, 0]`, `F[0, 1]` and `F[1, 1]` (those where the corresponding index value is True) along a new leading dimension.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Summary of tips
 
 > * Use `...` to avoid repeated `:` in indexing expressions
@@ -730,25 +731,25 @@ r'''
 >   * e.g. if `A.shape = (3, n1, n2, ...)` then `A[[True, False, True]]` has shape `(2, n1, n2, ...)` and contains the first & third rows of `A`
 > * We can index with multi-dimensional boolean tensors too
 >   * e.g. if `A.shape = (2, 2, n1, n2, ...)` then `A[[[True, True], [False, True]], :]` has shape `(3, n1, n2, ...)` and contains the elements `A[0, 0]`, `A[0, 1]` and `A[1, 1]`, stacked along a new leading dimension
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Batched Ray-Segment Intersection
 
 We'll now move on to implementing a batched version of our previous function which takes multiple rays, multiple line segments, and returns a boolean for each ray indicating whether ***any*** segment intersects with that ray.
 
 Note - in the batched version, we don't want the solver to throw an exception just because some of the equations don't have a solution - these should just return False.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `intersect_rays_1d`
 
 > ```yaml
@@ -768,11 +769,12 @@ One part you might find difficult is dealing with the zero determinant cases. Pr
 This way, we've identified all pairs of rays and segments where an intersection point exists **and** that intersection point is valid (i.e. it's actually on the positive side of the ray, and somewhere in the middle of the segment).
 
 Once we have this 2D array of booleans representing whether each ray intersects with each segment, we can reduce using the torch function `t.any` to find the rays which intersect *any* segment.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def intersect_rays_1d(
     rays: Float[Tensor, "nrays 2 3"], segments: Float[Tensor, "nsegments 2 3"]
@@ -836,20 +838,20 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I don't know how to set all my matrices to the identity</summary>
 
 You should have some variable `mat` which is a batch of matrices, i.e. it has shape `(n_rays, n_segments, 2, 2)`. You can then define `is_singular` as a boolean tensor of shape `(n_rays, n_segments)` which is true wherever the matrix is singular. Now, indexing `mat[is_singular]` returns a tensor of shape `(N, 2, 2)` where the `[i, :, :]`-th element is the `i`-th singular matrix. Thanks to broadcasting rules, you can set `mat[is_singular] = t.eye(2)`, and the identity matrix with shape `(2, 2)` will get broadcasted to the left hand shape `(N, 2, 2)`.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Using GPT to understand code
 
 *Note, the world of LLMs moves fast, so this section is likely to get out of date at some point!*
@@ -897,23 +899,23 @@ Here are some things you can play around with:
 
 * Ask GPT it to write tests for the function. You can give more specific instructions (e.g. asking it to use / not to use the `unittests` library, or to print more informative error messages).
 * Ask GPT how to refactor the function above. (When I did this, it suggested splitting the function up into subfunctions which performed the discrete tasks of "compute intersection points")
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## 2D Rays
 
 Now we're going to make use of the z dimension and have rays emitted from the origin in both y and z dimensions.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `make_rays_2d`
 
 > ```yaml
@@ -924,15 +926,14 @@ r'''
 > ```
 
 Implement `make_rays_2d` analogously to `make_rays_1d`. The result should look like a pyramid with the tip at the origin.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def make_rays_2d(
-    num_pixels_y: int, num_pixels_z: int, y_limit: float, z_limit: float
-) -> Float[Tensor, "nrays 2 3"]:
+
+def make_rays_2d(num_pixels_y: int, num_pixels_z: int, y_limit: float, z_limit: float) -> Float[Tensor, "nrays 2 3"]:
     """
     num_pixels_y: The number of pixels in the y dimension
     num_pixels_z: The number of pixels in the z dimension
@@ -970,15 +971,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0102.html" width="620" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm not sure how to implement this function.</summary>
 
@@ -988,21 +989,21 @@ You can either build up the output tensor using `torch.stack`, or you can initia
 
 Each y coordinate needs a ray with each corresponding z coordinate - in other words this is an outer product. The most elegant way to do this is with two calls to `einops.repeat`. You can also accomplish this with `unsqueeze`, `expand`, and `reshape` combined.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Triangles
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Triangle Coordinates
 
 The area inside a triangle can be defined by three (non-collinear) points $A$, $B$ and $C$, and can be written algebraically as a **convex combination** of those three points:
@@ -1031,7 +1032,7 @@ $$
 These $u, v$ are called "barycentric coordinates".
 
 If we remove the bounds on $u$ and $v$, we get an equation for the plane containing the triangle. Play with the widget to understand the behavior of $u, v$.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
@@ -1050,19 +1051,20 @@ def update(u=0.0, v=0.0):
     P = A + u * (B - A) + v * (C - A)
     fig.update_traces({"x": [P[0]], "y": [P[1]]}, 2)
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/animation-1b.mp4" width="420" height="450" style="background-color: white;"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Triangle-Ray Intersection
 
 Given a ray with origin $O$ and direction $D$, our intersection algorithm will consist of two steps:
@@ -1106,13 +1108,13 @@ $$
 $$
 
 We can therefore find the coordinates `s`, `u`, `v` of the intersection point by solving the linear system above.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `triangle_ray_intersects`
 
 > ```yaml
@@ -1130,7 +1132,7 @@ A few tips:
 * If you have a tensor of shape `tensor.shape = (3, ...)`, then you can unpack it along the first dimension into three separate tensors the same way that you'd unpack a normal python list: `s, u, v = tensor`.
     * Note - if the dimension you want to unpack isn't at the start, a nice alternative is `s, u, v = tensor.unbind(dim)`, which does the same thing but along the dimension given by `dim` rather than the first dimension.
 * If your function isn't working, try making a simple ray and triangle with nice round numbers where you can work out manually if it should intersect or not, then debug from there.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1169,7 +1171,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Single-Triangle Rendering
 
 Implement `raytrace_triangle` using only one call to `torch.linalg.solve`.
@@ -1177,13 +1179,13 @@ Implement `raytrace_triangle` using only one call to `torch.linalg.solve`.
 Reshape the output and visualize with `plt.imshow`. It's normal for the edges to look pixelated and jagged - using a small number of pixels is a good way to debug quickly.
 
 If you think it's working, increase the number of pixels and verify that it looks less pixelated at higher resolution.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Views and Copies
 
 It's critical to know when you are making a copy of a `Tensor`, versus making a view of it that shares the data with the original tensor. It's preferable to use a view whenever possible to avoid copying memory unnecessarily. On the other hand, modifying a view modifies the original tensor which can be unintended and surprising. Consult [the documentation](https://pytorch.org/docs/stable/tensor_view.html) if you're unsure if a function returns a view. A short reference of common functions:
@@ -1202,13 +1204,13 @@ It's critical to know when you are making a copy of a `Tensor`, versus making a 
 - `einops.repeat`: returns a view if possible, otherwise a copy
 - `einops.rearrange`: returns a view if possible, otherwise a copy
 - Basic indexing returns a view, while advanced indexing returns a copy.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Storage Objects
 
 Calling `storage()` on a `Tensor` returns a Python object wrapping the underlying C++ array. This array is 1D regardless of the dimensionality of the `Tensor`. This allows you to look inside the `Tensor` abstraction and see how the actual data is laid out in RAM.
@@ -1216,13 +1218,13 @@ Calling `storage()` on a `Tensor` returns a Python object wrapping the underlyin
 Note that a new Python wrapper object is generated each time you call `storage()`, and both `x.storage() == x.storage()` and `x.storage() is x.storage()` evaluates to False.
 
 If you want to check if two `Tensor`s share an underlying C++ array, you can compare their `storage().data_ptr()` fields. This can be useful for debugging.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### `Tensor._base`
 
 If `x` is a view, you can access the original `Tensor` with `x._base`. This is an undocumented internal feature that's useful to know. Consider the following code:
@@ -1234,13 +1236,13 @@ del x
 ```
 
 Here, `y` was created through basic indexing, so `y` is a view and `y._base` refers to `x`. This means `del x` won't actually deallocate the 4GB of memory, and that memory will remain in use which can be quite surprising. `y = x[0].clone()` would be an alternative here that does allow reclaiming the memory.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `raytrace_triangle`
 
 > ```yaml
@@ -1252,11 +1254,12 @@ r'''
 > ```
 
 Below, you should implement `raytrace_triangle`, a funtion which checks whether each ray in `ray` intersects a single given triangle.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def raytrace_triangle(
     rays: Float[Tensor, "nrays rayPoints=2 dims=3"],
@@ -1336,34 +1339,34 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0103.html" width="620" height="620"></div><br>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0104.html" width="620" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Debugging
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Debugging code is an extremely important thing to learn. Just like using GPT to assist your coding, it's something that can significantly speedrun your development, and stop you getting hung up on all the frustrating things!
 
 To give you practice debugging using VSCode's built-in debugger\*, we've provided an example function below. This is an implementation of `raytrace_triangle` which has a few mistakes in it. Your task is to use the debugger to find the mistake and fix it. (Note - you're encouraged to actually use the debugger, rather than comparing it to the solution above!)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Incorrect function</summary>
 
@@ -1400,13 +1403,13 @@ img = intersects.reshape(num_pixels_y, num_pixels_z).int()
 imshow(img, origin="lower", width=600, title="Triangle (as intersected by rays)")
 ```
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can debug a cell by clicking on the **Debug cell** option at the bottom of your cell. Your cell should contain the code that is actually run to cause an error (rather than needing to contain the function which is the source of the error). Before you run your debugger, you can set breakpoints by clicking on the left-hand side of the line number (a red dot will appear). You can then step through your code, using the toolbar of buttons which will appear when you run the debugger (see [here](https://pawelgrzybek.com/continue-step-over-step-into-and-step-out-actions-in-visual-studio-code-debugger-explained/) for an explanation of what each of the buttons does). When you reach a breakpoint, you can use the following tools:
 
 * Inspect local and global variables, in the **VARIABLES** window that appears on the left sidebar.
@@ -1419,13 +1422,13 @@ Note, when you run the debugger, it will stop *before* the breakpoint line is ev
 *This all works basically the same if you're in a notebook in VSCode, except for a few changes e.g. the debug button is on the dropdown at the top-left of the cell (if it doesn't appear for you then you'll need to go into user settings and add the line `"notebook.consolidatedRunButton": true`).*
 
 There's much more detail we could go into about debugging, but this will suffice for most purposes. It's generally a much more efficient way of debugging than using print statements or asserts (although these can also be helpful in some situations).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Answer - what are the bugs, and how can they be fixed?</summary>
 
@@ -1457,25 +1460,25 @@ This error is a bit harder to diagnose, because the line causing an error is aft
 
 These were all relatively easy bugs to diagnose (not all bugs will present as actual errors in your code, some might just be an unexpected set of results). But hopefully this has given you a sense for how to use the debugger. It's a very powerful tool, and can save you a lot of time!
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 \**If you're using Colab, you'll have to use different strategies for debugging. See [this page](https://zohaib.me/debugging-in-google-collab-notebook/) for one suggested approach.*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Mesh Loading
 
 Use the given code to load the triangles for your Pikachu. By convention, files written with `torch.save` end in the `.pt` extension, but these are actually just zip files.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1487,7 +1490,7 @@ triangles = t.load(section_dir / "pikachu.pt", weights_only=True)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Mesh Rendering
 
 For our purposes, a mesh is just a group of triangles, so to render it we'll intersect all rays and all triangles at once. We previously just returned a boolean for whether a given ray intersects the triangle, but now it's possible that more than one triangle intersects a given ray.
@@ -1495,13 +1498,13 @@ For our purposes, a mesh is just a group of triangles, so to render it we'll int
 For each ray (pixel) we will return a float representing the minimum distance to a triangle if applicable, otherwise the special value `float('inf')` representing infinity. We won't return which triangle was intersected for now.
 
 Note - by distance to a triangle, we specifically mean **distance along the x-dimension**, not Euclidean distance.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement `raytrace_mesh`
 
 > ```yaml
@@ -1516,11 +1519,12 @@ r'''
 Implement `raytrace_mesh` and as before, reshape and visualize the output. Your Pikachu is centered on (0, 0, 0), so you'll want to slide the ray origin back to at least `x=-2` to see it properly.
 
 Reminder - `t.linalg.solve` (and most batched operations) can accept multiple dimensions as being batch dims. Previously, you've just used `NR` (the number of rays) as the batch dimension, but you can also use `(NR, NT)` (the number of rays and triangles) as your batch dimensions, so you can solve for all rays and triangles at once.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def raytrace_mesh(
     rays: Float[Tensor, "nrays rayPoints=2 dims=3"],
@@ -1559,7 +1563,7 @@ def raytrace_mesh(
     # Solve eqns (note, s is the distance along ray)
     sol: Float[Tensor, "NR NT 3"] = t.linalg.solve(mat, vec)
     s, u, v = sol.unbind(-1)
- 
+
     # Scale s by Dx to get the distance along ray
     s *= D[..., 0]
 
@@ -1598,39 +1602,39 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <iframe src="https://info-arena.github.io/ARENA_img/misc/media-01/0105.html" width="1020" height="620"></iframe>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Congratulations, you've now got to the end of the exercises! Read on for some more bonus material.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 4️⃣ Video & Lighting
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here, we've included some more raytracing exercises, which extend the previous animation by providing video and lighting.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - rotation matrix
 
 > ```yaml
@@ -1641,11 +1645,12 @@ r'''
 > ```
 
 Below is some code to iterate through a range of angles, rotating the pikachu model around the y-axis and raytracing the mesh at each angle. These frames are then concatenated together and animated into some dramatic footage! Your job is to fill in the `rotation_matrix` function, which should give you a matrix that rotates counterclockwise around the y-axis by a given angle `theta` (which is a scalar tensor). If you're stuck, see [this Wikipedia page](https://en.wikipedia.org/wiki/Rotation_matrix#Basic_3D_rotations) on basic 3D rotations.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def rotation_matrix(theta: Float[Tensor, ""]) -> Float[Tensor, "rows cols"]:
     """
@@ -1674,13 +1679,14 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed the tests, you can run the code below to create an animation! It might take a while to run, but should be no longer than 2 minutes.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def raytrace_mesh_video(
     rays: Float[Tensor, "nrays points dim"],
@@ -1715,9 +1721,7 @@ def display_video(distances: Float[Tensor, "frames y z"]):
         zmin=0.0,
         zmax=distances[distances.isfinite()].quantile(0.99).item(),
         color_continuous_scale="viridis_r",  # "Brwnyl"
-    ).update_layout(
-        coloraxis_showscale=False, width=550, height=600, title="Raytrace mesh video"
-    ).show()
+    ).update_layout(coloraxis_showscale=False, width=550, height=600, title="Raytrace mesh video").show()
 
 
 if MAIN:
@@ -1741,15 +1745,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0106.html" width="570" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - use GPUs
 
 > ```yaml
@@ -1764,11 +1768,12 @@ We'll discuss GPUs a lot more in later sections and exercises. For now, One last
 When you create a tensor, by default it's located on the CPU. You can use the `to` method to move your tensor between devices, e.g. `x = x.to("cuda")` to move to the GPU, and `x = x.to("cpu")` to move back to the CPU (or `x = x.cuda()` and `x = x.cpu()` as a shorthand). **CUDA** stands for Compute Unified Device Architecture, a parallel computing platform and programming model developed by NVIDIA which is supported by PyTorch. Note that this method returns a copy of the tensor rather than the tensor itself (unless the `to` command doesn't change its device). You can check whether CUDA is available by calling `t.cuda.is_available()` - if it's not, you can try installing a CUDA-supporting version of PyTorch from the [homepage](https://pytorch.org/).
 
 Below, you should write the `raytrace_mesh_gpu` function to be identical to `raytrace_mesh`, except that the computation should be done on the GPU. This means `triangles` and `rays` should be moved to the GPU before the computation is done, and the returned object should be moved back to the CPU before finishing.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def raytrace_mesh_gpu(
     rays: Float[Tensor, "nrays rayPoints=2 dims=3"],
@@ -1812,7 +1817,7 @@ def raytrace_mesh_gpu(
     # Solve eqns (note, s is the distance along ray)
     sol: Float[Tensor, "NR NT 3"] = t.linalg.solve(mat, vec)
     s, u, v = sol.unbind(-1)
-    
+
     # Scale s by Dx to get the distance along ray
     s *= D[..., 0]
 
@@ -1838,15 +1843,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0107.html" width="570" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise (bonus) - add lighting
 
 > ```yaml
@@ -1867,11 +1872,12 @@ You should implement the `raytrace_mesh_lambert` function below, which puts this
 - `intensity + ambient_intensity` if there is an interesection, where `ambient_intensity` is a value we give you (minimum brightness for a triangle, to distinguish it from the black background) and `intensity` is the intensity of light hitting the triangle, i.e. the dot product of the triangle's normal vector and the light vector, set to zero if this dot product is negative.
 
 To emphasize - unlike in your previous functions where you used the distance of each ray to the nearest triangle to determine the color of a given ray/pixel, here every triangle has a unique intensity value and the color of a given ray/pixel is determined only by what its nearest triangle is. The only reason we still need to compute distances is to compute what (if any) the first triangle is that the ray intersects with.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def raytrace_mesh_lambert(
     rays: Float[Tensor, "nrays points=2 dims=3"],
@@ -1933,7 +1939,7 @@ def raytrace_mesh_lambert(
     # Solve eqns (note, s is the distance along ray)
     sol: Float[Tensor, "NR NT 3"] = t.linalg.solve(mat, vec)
     s, u, v = sol.unbind(-1)  # each shape [NR, NT]
-    
+
     # Scale s by Dx to get the distance along ray
     s *= D[..., 0]
 
@@ -1945,9 +1951,7 @@ def raytrace_mesh_lambert(
     closest_distances, closest_triangles_for_each_ray = s.min(dim=-1)  # both shape [NR]
 
     # Get the intensity by taking dot product of triangle normals & light vector
-    normals = t.cross(
-        triangles[:, 2] - triangles[:, 0], triangles[:, 1] - triangles[:, 0], dim=1
-    )  # shape [NT dims]
+    normals = t.cross(triangles[:, 2] - triangles[:, 0], triangles[:, 1] - triangles[:, 0], dim=1)  # shape [NT dims]
     normals /= normals.norm(dim=1, keepdim=True)
     intensity_per_triangle = einops.einsum(normals, light.to(device), "nt dims, dims -> nt")
     intensity_per_triangle_signed = t.where(intensity_per_triangle > 0, intensity_per_triangle, 0.0)
@@ -1973,16 +1977,16 @@ def display_video_with_lighting(intensity: Float[Tensor, "frames y z"]):
         animation_frame=0,
         origin="lower",
         color_continuous_scale="magma",
-    ).update_layout(
-        coloraxis_showscale=False, width=550, height=600, title="Raytrace mesh video (lighting)"
-    ).show()
+    ).update_layout(coloraxis_showscale=False, width=550, height=600, title="Raytrace mesh video (lighting)").show()
 
 
 if MAIN:
     ambient_intensity = 0.5
     light = t.tensor([0.0, -1.0, 1.0])
     raytrace_function = partial(
-        raytrace_mesh_lambert, ambient_intensity=ambient_intensity, light=light,
+        raytrace_mesh_lambert,
+        ambient_intensity=ambient_intensity,
+        light=light,
     )
 
     intensity = raytrace_mesh_video(rays, triangles, rotation_matrix, raytrace_function, num_frames)
@@ -1997,15 +2001,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-01/0108.html" width="570" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm not sure how to compute the normal vectors.</summary>
 
@@ -2025,37 +2029,37 @@ which will have the same shape as each of `triangles[:, i]`.
 The `pikachu.stl` file stores triangles in a consistent orientation based on the right hand rule. Assuming you chose a consistent method for computing normal vectors like the one in the dropdown above, your computed intensity values per triangle will either all be the correct sign or all be the opposite sign to the true signed values. This means you can either use `t.where(intensity > 0, intensity, 0.0)` or `t.where(intensity < 0, -intensity, 0.0)` as your final zeroed intensity values and both should look fine (although one will look like the light source is coming from the opposite direction to the other). It doesn't matter which orientation you choose.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 As a final bonus exercise before we conclude, you can try rendering with a **wireframe**, i.e. only including the edges of the triangles rather than the full triangle. All you have to do here is change your `triangle_ray_intersects` function, so that it only detects intersection at a certain subset of the parameter values `u` and `v` (can you see how to do this?).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Bonus - testing with `pytest`
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 > *Note - this section was also just written with VSCode in mind, so it might be less suitable for Colab, and you might consider skipping it.*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 To wrap up today, we're going to have a further discussion of **testing**. So far, our test functions have been pretty simple - we imported a test from the `part1_ray_tracing/tests.py` file, and ran it to compare our answers to the answers in `part1_ray_tracing/solutions.py`. This works perfectly fine, but there are other Python libraries which can make testing easier and more powerful. In particular, two such libraries are `unittest` and `pytest`. Both these libraries provide extensive features for modularizing and running test functions, and have nice integrations with VSCode. `unittest` is very powerful, but also has a steep learning curve and isn't worth the trouble of learning during a 6 week course. However, `pytest` is very useful and easy to learn, so we'll spend some time here discussing it.
 
 The pytest framework makes it easy to write small, readable tests, and can scale to support complex functional testing for applications and libraries. Today we'll just discuss a few features which will be particularly useful for the kinds of tests we'll be writing, but you're welcome to explore more tests later on.
@@ -2119,13 +2123,13 @@ Try opening your terminal (at the bottom of the screen) and running `pytest --co
 
 One possible issue is changing directories within your python files (e.g. with `os.chdir`), because this can often confuse PyTest's search for tests.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Aside - <code># type: ignore</code></summary>
 
@@ -2160,5 +2164,4 @@ ray_segment_batch = TestCase(
 and this `ray_segment_batch` object would still be treated like a tensor when it's used in a parameterized test.
 
 </details>
-'''
-
+"""

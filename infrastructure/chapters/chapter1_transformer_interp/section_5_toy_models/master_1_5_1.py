@@ -2,7 +2,7 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "Bracket classifier", "icon": "1-circle-fill", "subtitle": "(15%)"},
@@ -11,45 +11,45 @@ r'''
     {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [1.5.1] Balanced Bracket Classifier
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [colab]
 # ! TAGS: []
 
-r'''
+r"""
 > *Note - if you get a numpy-related error at any point (e.g. when running the import cell for the first time, or running the first numpy function), you should restart the kernel and run the setup code again. The error should go away.*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-15-1.png" width="350">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 When models are trained on synthetic, algorithmic tasks, they often learn to do some clean, interpretable computation inside. Choosing a suitable task and trying to reverse engineer a model can be a rich area of interesting circuits to interpret! In some sense, this is interpretability on easy mode - the model is normally trained on a single task (unlike language models, which need to learn everything about language!), we know the exact ground truth about the data and optimal solution, and the models are tiny. So why care?
 
 Working on algorithmic problems gives us the opportunity to:
@@ -62,13 +62,13 @@ Working on algorithmic problems gives us the opportunity to:
 The algorithmic problem we'll work on in these exercises is **bracket classification**, i.e. taking a string of parentheses like `"(())()"` and trying to output a prediction of "balanced" or "unbalanced". We will find an algorithmic solution for solving this problem, and reverse-engineer one of the circuits in our model that is responsible for implementing one part of this algorithm.
 
 This page contains a large number of exercise. Each exercise will have a difficulty and importance rating out of 5, as well as an estimated maximum time you should spend on these exercises and sometimes a short annotation. You should interpret the ratings & time estimates relatively (e.g. if you find yourself spending about 50% longer on the exercises than the time estimates, adjust accordingly). Please do skip exercises / look at solutions if you don't feel like they're important enough to be worth doing, and you'd rather get to the good stuff!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Motivation
 
 In A [Mathematical Framework for Transformer Circuits](https://transformer-circuits.pub/2021/framework/index.html), we got a lot of traction interpreting toy language models - that is, transformers trained in exactly the same way as larger models, but with only 1 or 2 layers. It seems likely that there’s a lot of low-hanging fruit left to pluck when studying toy language models!
@@ -78,13 +78,13 @@ So, why care about studying toy language models? The obvious reason is that **it
 The first is by finding fundamental circuits that recur in larger models, and [motifs](https://distill.pub/2020/circuits/zoom-in/#claim-2-motifs) that allow us to easily identify these circuits in larger models. A key underlying question here is that of [universality](https://distill.pub/2020/circuits/zoom-in/#claim-3): does each model learn its own weird way of completing its task, or are there some fundamental principles and algorithms that all models converge on?
 
 The second is by forming a better understanding of how to reverse engineer models - what are the right intuitions and conceptual frameworks, what tooling and techniques do and do not work, and what weird limitations we might be faced with. For instance, the work in A Mathematical Framework presents ideas like [the residual stream as the central object](https://dynalist.io/d/n2ZWtnoYHrU1s4vnFSAQ519J#z=DHp9vZ0h9lA9OCrzG2Y3rrzH), and the significance of the [QK-Circuits](https://dynalist.io/d/n2ZWtnoYHrU1s4vnFSAQ519J#z=n_Lc0Z5N9HMhAYcycDda-UEB) and [OV-Circuits](https://dynalist.io/d/n2ZWtnoYHrU1s4vnFSAQ519J#z=n_Lc0Z5N9HMhAYcycDda-UEB), which seem to generalise to many different models. We'll also see an example later in these exercises which illustrates how MLPs can be thought of as a collection of neurons which activate on different features, just like many seem to in language models. But there’s also ways it can be misleading, and some techniques that work well in toy models seem to generalise less well.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The purpose / structure of these exercises
 
 At a surface level, these exercises are designed to guide you through a partial interpretation of the bidirectional model trained on bracket classification. But it's also designed to make you a better interpretability researcher! As a result, most exercises will be doing a combination of:
@@ -93,13 +93,13 @@ At a surface level, these exercises are designed to guide you through a partial 
 2. Teaching you how to use tools and interpret results in a broader mech interp context.
 
 As you're going through these exercises, it's easy to get lost in the fiddly details of the techniques you're implementing or the things you're computing. Make sure you keep taking a high-level view, asking yourself what questions you're currently trying to ask and how you'll interpret the output you're getting, as well as how the tools you're currently using are helping guide you towards a better understanding of the model.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ Bracket classifier
@@ -152,15 +152,15 @@ Lastly, there are a few optional bonus exercises which build on the previous con
 >
 > * Use your understanding of how the model works to generate adversarial examples.
 > * Take deeper dives into specific anomalous features of the model.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup code
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -207,7 +207,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -238,9 +238,7 @@ from tqdm import tqdm
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
 from transformer_lens.hook_points import HookPoint
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 t.set_grad_enabled(False)
 
 # Make sure exercises are in the path
@@ -264,27 +262,27 @@ MAIN = __name__ == "__main__"
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ Bracket classifier
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 This section describes how transformers can be used for classification, and the details of how this works in TransformerLens (using permanent hooks). It also takes you through the exercise of hand-writing a solution to the balanced brackets problem. 
 
 *This section mainly just lays the groundwork; it is very light on content.*
 
 ---
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 One of the many behaviors that a large language model learns is the ability to tell if a sequence of nested parentheses is balanced. For example, `(())()`, `()()`, and `(()())` are balanced sequences, while `)()`, `())()`, and `((()((())))` are not.
 
 In training, text containing balanced parentheses is much more common than text with imbalanced parentheses - particularly, source code scraped from GitHub is mostly valid syntactically. A pretraining objective like "predict the next token" thus incentivizes the model to learn that a close parenthesis is more likely when the sequence is unbalanced, and very unlikely if the sequence is currently balanced.
@@ -295,13 +293,13 @@ Some questions we'd like to be able to answer are:
 - How does this behavior generalize out of distribution? For example, can it handle nesting depths or sequence lengths not seen in training?
 
 If we treat the model as a black box function and only consider the input/output pairs that it produces, then we're very limited in what we can guarantee about the behavior, even if we use a lot of compute to check many inputs. This motivates interpretibility: by digging into the internals, can we obtain insight into these questions? If the model is not robust, can we directly find adversarial examples that cause it to confidently predict the wrong thing? Let's find out!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Today's Toy Model
 
 Today we'll study a small transformer that is trained to only classify whether a sequence of parentheses is balanced or not. It's small so we can run experiments quickly, but big enough to perform well on the task. The weights and architecture are provided for you.
@@ -355,13 +353,13 @@ If you're interested in reading more on this, you can check out [this link](http
 </details>
 
 We've implemented this type of masking for you, using TransformerLens's **permanent hooks** feature. We will discuss the details of this below (permanent hooks are a recent addition to TransformerLens which we havent' covered yet, and they're useful to understand).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Other details
 
 Here is a summary of all the relevant architectural details:
@@ -381,13 +379,13 @@ Here is a summary of all the relevant architectural details:
 * Activation function is `ReLU`.
 
 To refer to attention heads, we'll again use the shorthand `layer.head` where both layer and head are zero-indexed. So `2.1` is the second attention head (index 1) in the third layer (index 2).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Some useful diagrams
 
 Here is a high-level diagram of your model's architecture:
@@ -397,17 +395,17 @@ Here is a high-level diagram of your model's architecture:
 Here is a [link to a diagram of the archicture of a single model layer](https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/diagram-tl.png) (which includes names of activations, as well as a list of useful methods for indexing into the model).
 
 I'd recommend having both these images open in a different tab.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Defining the model
 
 Here, we define the model according to the description we gave above.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -440,13 +438,13 @@ model.load_state_dict(state_dict)
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Tokenizer
 
 There are only five tokens in our vocabulary: `[start]`, `[pad]`, `[end]`, `(`, and `)` in that order. See earlier sections for a reminder of what these tokens represent.
 
 You have been given a tokenizer `SimpleTokenizer("()")` which will give you some basic functions. Try running the following to see what they do:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -470,20 +468,20 @@ print(tokenizer.decode(t.tensor([[0, 3, 4, 2, 1, 1]])))
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">tensor([[0, 3, 4, 2]])
 tensor([[0, 3, 4, 2, 1, 1],
         [0, 3, 4, 3, 4, 2]])
 {3: '(', 4: ')', 0: '[start]', 1: '[pad]', 2: '[end]'}
 {'(': 3, ')': 4, '[start]': 0, '[pad]': 1, '[end]': 2}
 ['()']</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Implementing our masking
 
 Now that we have the tokenizer, we can use it to write hooks that mask the padding tokens. If you understand how the padding works, then don't worry if you don't follow all the implementational details of this code.
@@ -494,15 +492,14 @@ Now that we have the tokenizer, we can use it to write hooks that mask the paddi
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/masking-padding-tokens.png" width="840">
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def add_perma_hooks_to_mask_pad_tokens(
-    model: HookedTransformer, pad_token: int
-) -> HookedTransformer:
+
+def add_perma_hooks_to_mask_pad_tokens(model: HookedTransformer, pad_token: int) -> HookedTransformer:
     # Hook which operates on the tokens, and stores a mask where tokens equal [pad]
     def cache_padding_tokens_mask(tokens: Float[Tensor, "batch seq"], hook: HookPoint) -> None:
         hook.ctx["padding_tokens_mask"] = einops.rearrange(tokens == pad_token, "b sK -> b 1 1 sK")
@@ -534,7 +531,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Dataset
 
 Each training example consists of `[start]`, up to 40 parens, `[end]`, and then as many `[pad]` as necessary.
@@ -542,7 +539,7 @@ Each training example consists of `[start]`, up to 40 parens, `[end]`, and then 
 In the dataset we're using, half the sequences are balanced, and half are unbalanced. Having an equal distribution is on purpose to make it easier for the model.
 
 Remember to download the `brackets_data.json` file from [this Google Drive link](https://drive.google.com/drive/folders/18gAF9HuiW9NG0MP2Gq8M7VdhXoKKxymT) if you haven't already.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -561,27 +558,27 @@ data_mini = BracketsDataset(data_tuples[:100]).to(device)
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">loaded 100000 examples, using 5000</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You are encouraged to look at the code for `BracketsDataset` (scroll up to the setup code at the top - but make sure to not look to closely at the solutions!) to see what methods and properties the `data` object has.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 #### Data visualisation
 
 As is good practice, let's examine the dataset and plot the distribution of sequence lengths (e.g. as a histogram). What do you notice?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -608,15 +605,15 @@ hist(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https:/smisc/media-151/15101.html" width="720" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Features of dataset</summary>
 
@@ -637,15 +634,15 @@ As an extra exercise, can you construct such a head by hand?
 </details>
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now that we have all the pieces in place, we can try running our model on the data and generating some predictions.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -666,10 +663,7 @@ prob_balanced = logits.softmax(-1)[:, 1]
 print(
     "Model confidence:\n"
     + "\n".join(
-        [
-            f"{ex:18} : {prob:<8.4%} : label={int(label)}"
-            for ex, prob, label in zip(examples, prob_balanced, labels)
-        ]
+        [f"{ex:18} : {prob:<8.4%} : label={int(label)}" for ex, prob, label in zip(examples, prob_balanced, labels)]
     )
 )
 
@@ -677,7 +671,7 @@ print(
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Model confidence:
 ()()               : 99.9986% : label=1
 (())               : 99.9989% : label=1
@@ -686,19 +680,20 @@ r'''
 ((()()()()))       : 99.9987% : label=1
 (()()()(()(())()   : 0.0006%  : label=0
 ()(()(((())())())) : 99.9982% : label=1</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We can also run our model on the whole dataset, and see how many brackets are correctly classified.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def run_model_on_data(
     model: HookedTransformer, data: BracketsDataset, batch_size: int = 200
@@ -723,23 +718,23 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: []
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Model got 5000 out of 5000 training examples correct!</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Algorithmic Solutions
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - handwritten solution (for loop)
 
 > ```yaml
@@ -751,11 +746,12 @@ r'''
 > ```
 
 A nice property of using such a simple problem is we can write a correct solution by hand. Take a minute to implement this using a for loop and if statements.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def is_balanced_forloop(parens: str) -> bool:
     """
@@ -790,7 +786,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise -  handwritten solution (vectorized)
 
 > ```yaml
@@ -803,11 +799,12 @@ r'''
 A transformer has an **inductive bias** towards vectorized operations, because at each sequence position the same weights "execute", just on different data. So if we want to "think like a transformer", we want to get away from procedural for/if statements and think about what sorts of solutions can be represented in a small number of transformer weights.
 
 Being able to represent a solutions in matrix weights is necessary, but not sufficient to show that a transformer could learn that solution through running SGD on some input data. It could be the case that some simple solution exists, but a different solution is an attractor when you start from random initialization and use current optimizer algorithms.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def is_balanced_vectorized(tokens: Float[Tensor, "seq_len"]) -> bool:
     """
@@ -845,7 +842,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint</summary>
 
@@ -854,13 +851,13 @@ One solution is to map begin, pad, and end tokens to zero, map open paren to 1 a
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## The Model's Solution
 
 It turns out that the model solves the problem like this:
@@ -877,33 +874,33 @@ The sequence is imbalanced if one or both of the following is true:
 For English readers, it's natural to process the sequence from left to right and think about prefix slices `seq[:i]` instead of suffixes, but the model is bidirectional and has no idea what English is. This model happened to learn the equally valid solution of going right-to-left.
 
 We'll spend today inspecting different parts of the network to try to get a first-pass understanding of how various layers implement this algorithm. However, we'll also see that neural networks are complicated, even those trained for simple tasks, and we'll only be able to explore a minority of the pieces of the puzzle.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 2️⃣ Moving backwards
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here, you'll perform logit attribution, and learn how to work backwards through particular paths of a model to figure out which components matter most for the final classification probabilities. This is the first time you'll have to deal with **LayerNorm** in your models.
 
 *This section should be familiar if you've done logit attribution for induction heads (although these exercises are slightly more challenging from a coding perspective). The LayerNorm-based exercises are a bit fiddly!*
 
 ---
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Suppose we run the model on some sequence and it outputs the classification probabilities `[0.99, 0.01]`, i.e. highly confident classification as "unbalanced".
 
 We'd like to know _why_ the model had this output, and we'll do so by moving backwards through the network, and figuring out the correspondence between facts about earlier activations and facts about the final output. We want to build a chain of connections through different places in the computational graph of the model, repeatedly reducing our questions about later values to questions about earlier values.
@@ -913,13 +910,13 @@ Let's start with an easy one. Notice that the final classification probabilities
 We now want some way to tell which parts of the model are doing something meaningful. We will do this by identifying a single direction in the embedding space of the start token that we claim to be the "unbalanced direction": the direction that most indicates that the input string is unbalanced. It is important to note that it might be that other directions are important as well (in particular because of layer norm), but for a first approximation this works well.
 
 We'll do this by starting from the model outputs and working backwards, finding the unbalanced direction at each stage.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Moving back to the residual stream
 
 The final part of the model is the classification head, which has three stages - the final layernorm, the unembedding, and softmax, at the end of which we get our probabilities.
@@ -934,13 +931,13 @@ Some notes on the shapes of the objects in the diagram:
 * `final_ln_output` has shape `(seq_len, d_model)`.
 * `W_U` has shape `(d_model, 2)`, and so `logits` has shape `(seq_len, 2)`.
 * We get `P(unbalanced)` by taking the 0th element of the softmaxed logits, for sequence position 0.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Stage 1: Translating through softmax
 
 Let's get `P(unbalanced)` as a function of the logits. Luckily, this is easy. Since we're doing the softmax over two elements, it simplifies to the sigmoid of the difference of the two logits:
@@ -950,13 +947,13 @@ $$
 $$
 
 Since sigmoid is monotonic, a large value of $\hat{y}_0$ follows from logits with a large $\text{logit}_0 - \text{logit}_1$. From now on, we'll only ask "What leads to a large difference in logits?"
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Stage 2: Translating through linear
 
 The next step we encounter is the decoder: `logits = final_LN_output @ W_U`, where
@@ -972,13 +969,13 @@ We can now put the difference in logits as a function of $W$ and $x_{\text{linea
 (recall that the `(i, j)`th element of matrix `AB` is `A[i, :] @ B[:, j]`)
 
 So a high difference in the logits follows from a high dot product of the output of the LayerNorm with the corresponding unembedding vector. We'll call this the `post_final_ln_dir`, i.e. the **unbalanced direction** for values in the residual stream *after* the final layernorm.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get the `post_final_ln_dir`
 
 > ```yaml
@@ -989,11 +986,12 @@ r'''
 > ```
 
 In the function below, you should compute this vector (this should just be a one-line function).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_post_final_ln_dir(model: HookedTransformer) -> Float[Tensor, "d_model"]:
     """
@@ -1016,7 +1014,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Stage 3: Translating through LayerNorm
 
 We want to find the unbalanced direction before the final layer norm, since this is where we can write the residual stream as a sum of terms. LayerNorm messes with this sort of direction analysis, since it is nonlinear. For today, however, we will approximate it with a linear fit. This is good enough to allow for interesting analysis (see for yourself that the $R^2$ values are very high for the fit)!
@@ -1046,13 +1044,13 @@ We can approximate logit diff as a linear function of `pre_final_ln_dir` (becaus
 The diagram below shows how we can step back through the model to find our **unbalanced direction** `pre_final_ln_dir`. Notation: $x_2$ refers to the residual stream value after layer 2's attention heads and MLPs (i.e. just before the last layernorm), and $L_{final}$ is the linear approximation of the final layernorm.
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/brackets-untitled.png" width="1100">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get the `pre_final_ln_dir`
 
 > ```yaml
@@ -1074,16 +1072,15 @@ We've given you a few helper functions:
 When it comes to fitting the regression, we recommend using the [sklearn LinearRegression class](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html) to find a linear fit to the inputs and outputs of your model's layernorms. You should include a fit coefficient in your regression (this is the default for `LinearRegression`).
 
 Note, we have the `seq_pos` argument because sometimes we'll want to fit the regression over all sequence positions and sometimes we'll only care about some and not others (e.g. for the final layernorm in the model, we only care about the 0th position because that's where we take the prediction from; all other positions are discarded).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
+
 # HIDE
-def get_activations(
-    model: HookedTransformer, toks: Int[Tensor, "batch seq"], names: list[str]
-) -> ActivationCache:
+def get_activations(model: HookedTransformer, toks: Int[Tensor, "batch seq"], names: list[str]) -> ActivationCache:
     """Uses hooks to return activations from the model, in the form of an ActivationCache."""
     names_list = [names] if isinstance(names, str) else names
     _, cache = model.run_with_cache(
@@ -1174,7 +1171,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Help - I'm not sure how to fit the linear regression.</summary>
 
@@ -1190,25 +1187,24 @@ If `seq_pos` is an integer, you should take the vectors corresponding to just th
 
 If `seq_pos = None`, you should rearrange your tensors into `(batch seq_pos) d_model`, because you want to run the regression on all sequence positions at once.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 #### 3. Calculating `pre_final_ln_dir`
 
 Armed with our linear fit, we can now identify the direction in the residual stream before the final layer norm that most points in the direction of unbalanced evidence.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def get_pre_final_ln_dir(
-    model: HookedTransformer, data: BracketsDataset
-) -> Float[Tensor, "d_model"]:
+
+def get_pre_final_ln_dir(model: HookedTransformer, data: BracketsDataset) -> Float[Tensor, "d_model"]:
     """
     Returns the direction in residual stream (pre ln_final, at sequence position 0) which
     most points in the direction of making an unbalanced classification.
@@ -1235,7 +1231,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Writing the residual stream as a sum of terms
 
 As we've seen in previous exercises, it's much more natural to think about the residual stream as a sum of terms, each one representing a different path through the model. Here, we have ten components which write to the residual stream: the direct path (i.e. the embeddings), and two attention heads and one MLP on each of the three layers. We can write the residual stream as a sum of these terms.
@@ -1247,13 +1243,13 @@ Once we do this, we can narrow in on the components who are making direct contri
 In order to answer this question, we need the following tools:
 - A way to break down the input to the LN by component.
 - A tool to identify a direction in the embedding space that causes the network to output 'unbalanced' (we already have this)
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - breaking down the residual stream by component
 
 > ```yaml
@@ -1279,11 +1275,12 @@ TransformerLens stores `W_O` as a 3D tensor of shape `[num_heads, d_head, d_mode
 
 In practice this doesn't matter here, since the bias term is the same for balanced and unbalanced brackets. When doing attribution, for each of our components, we only care about the component in the unbalanced direction of the vector they write to the residual stream **for balanced vs unbalanced sequences** - the bias is the same on all inputs.
 </details>
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_out_by_components(
     model: HookedTransformer, data: BracketsDataset
@@ -1312,9 +1309,7 @@ def get_out_by_components(
         out = t.concat(
             [
                 out,
-                einops.rearrange(
-                    activations[head_hook_name], "batch seq heads emb -> heads batch seq emb"
-                ),
+                einops.rearrange(activations[head_hook_name], "batch seq heads emb -> heads batch seq emb"),
                 activations[mlp_hook_name].unsqueeze(0),
             ]
         )
@@ -1332,9 +1327,9 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now, you can test your function by confirming that input to the final layer norm is the sum of the output of each component and the output projection biases.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1354,7 +1349,7 @@ print("Tests passed!")
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint</summary>
 
@@ -1376,13 +1371,13 @@ For example, suppose that one of our components produced bimodal output like thi
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/exampleplot.png" width="650">
 
 This would be **strong evidence that this component is important for the model's output being unbalanced**, since it's pushing the unbalanced bracket inputs further in the unbalanced direction (i.e. the direction which ends up contributing to the inputs being classified as unbalanced) relative to the balanced inputs.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - compute output in unbalanced direction for each component
 
 > ```yaml
@@ -1399,7 +1394,7 @@ In the code block below, you should compute a `(10, batch)`-size tensor called `
 You should normalize it by **subtracting the mean** of the dot product of this component's output with the unbalanced direction on balanced samples - this will make sure the histogram corresponding to the balanced samples is centered at 0 (like in the figure above), which will make it easier to interpret. Remember, it's only the **difference between the dot product on unbalanced and balanced samples** that we care about (since adding a constant to both logits doesn't change the model's probabilistic output).
 
 We've given you a `hists_per_comp` function which will plot these histograms for you - all you need to do is calculate the `out_by_component_in_unbalanced_dir` object and supply it to that function.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1420,9 +1415,7 @@ out_by_component_in_unbalanced_dir = einops.einsum(
     "comp batch d_model, d_model -> comp batch",
 )
 # Subtract the mean
-out_by_component_in_unbalanced_dir -= (
-    out_by_component_in_unbalanced_dir[:, data.isbal].mean(dim=1).unsqueeze(1)
-)
+out_by_component_in_unbalanced_dir -= out_by_component_in_unbalanced_dir[:, data.isbal].mean(dim=1).unsqueeze(1)
 # END SOLUTION
 
 # HIDE
@@ -1441,15 +1434,15 @@ plotly_utils.hists_per_comp(out_by_component_in_unbalanced_dir, data, xaxis_rang
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15102.html" width="1220" height="1020"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint</summary>
 
@@ -1462,13 +1455,13 @@ Then create magnitudes by calculating an appropriate dot product.
 
 Don't forget to subtract the mean for each component across all the balanced samples (you can use the boolean `data.isbal` as your index).
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Which heads do you think are the most important, and can you guess why that might be?
 
 <details>
@@ -1478,25 +1471,25 @@ The heads in layer 2 (i.e. `2.0` and `2.1`) seem to be the most important, becau
 
 We might guess that some kind of composition is going on here. The outputs of layer 0 heads can't be involved in composition because they in effect work like a one-layer transformer. But the later layers can participate in composition, because their inputs come from not just the embeddings, but also the outputs of the previous layer. This means they can perform more complex computations.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Head influence by type of failures
 
 Those histograms showed us which heads were important, but it doesn't tell us what these heads are doing, however. In order to get some indication of that, let's focus in on the two heads in layer 2 and see how much they write in our chosen direction on different types of inputs. In particular, we can classify inputs by if they pass the 'overall elevation' and 'nowhere negative' tests.
 
 We'll also ignore sentences that start with a close paren, as the behaviour is somewhat different on them (they can be classified as unbalanced immediately, so they don't require more complicated logic).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - classify bracket strings by failure type
 
 > ```yaml
@@ -1522,11 +1515,12 @@ Define, so that the plotting works, the following objects:
 For the first two of these, you will find it helpful to refer back to your `is_balanced_vectorized` code (although remember you're reading **right to left** here - this _will_ change your results!).
 
 You can get the last two of these by directly indexing from your `out_by_component_in_unbalanced_dir` tensor.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def is_balanced_vectorized_return_both(
     toks: Int[Tensor, "batch seq"],
@@ -1551,18 +1545,16 @@ if MAIN:
     h20_in_unbalanced_dir = out_by_component_in_unbalanced_dir[7]
     h21_in_unbalanced_dir = out_by_component_in_unbalanced_dir[8]
 
-    tests.test_total_elevation_and_negative_failures(
-        data, total_elevation_failure, negative_failure
-    )
+    tests.test_total_elevation_and_negative_failures(data, total_elevation_failure, negative_failure)
 # END HIDE
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed the tests, you can run the code below to generate your plot.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1575,9 +1567,7 @@ failure_types_dict = {
     "balanced": ~negative_failure & ~total_elevation_failure,
 }
 
-plotly_utils.plot_failure_types_scatter(
-    h20_in_unbalanced_dir, h21_in_unbalanced_dir, failure_types_dict, data
-)
+plotly_utils.plot_failure_types_scatter(h20_in_unbalanced_dir, h21_in_unbalanced_dir, failure_types_dict, data)
 
 # FILTERS: ~
 # plotly_utils.plot_failure_types_scatter(
@@ -1589,15 +1579,15 @@ plotly_utils.plot_failure_types_scatter(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15103.html" width="820" height="620"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Look at the graph and think about what the roles of the different heads are!
 
 <details>
@@ -1611,7 +1601,7 @@ One way to think of it is that the heads specialized on being very reliable on t
 </details>
 
 In most of the rest of these exercises, we'll focus on the overall elevation circuit as implemented by head 2.0. As an additional way to get intuition about what head 2.0 is doing, let's graph its output against the overall proportion of the sequence that is an open-paren.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1638,17 +1628,17 @@ plotly_utils.plot_contribution_vs_open_proportion(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15104.html" width="820" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You can also compare this to head 2.1:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1675,43 +1665,43 @@ plotly_utils.plot_contribution_vs_open_proportion(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15105.html" width="820" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 3️⃣ Understanding the total elevation circuit
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In the largest section of the exercises, you'll examine the attention patterns in different heads, and interpret them as performing some human-understandable algorithm (e.g. copying, or aggregation). You'll use your observations to make  deductions about how a particular type of balanced brackets failure mode (mismatched number of left and right brackets) is detected by your model. This is the first time you'll have to deal with **MLPs** in your models.
 
 *This section is quite challenging both from a coding and conceptual perspective, because you need to link the results of your observations and interventions to concrete hypotheses about how the model works.*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Attention pattern of the responsible head
 
 Which tokens is 2.0 paying attention to when the query is an open paren at token 0? Recall that we focus on sequences that start with an open paren because sequences that don't can be ruled out immediately, so more sophisticated behavior is unnecessary.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get attention probabilities
 
 > ```yaml
@@ -1723,15 +1713,14 @@ r'''
 > ```
 
 Write a function that extracts the attention patterns for a given head when run on a batch of inputs.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def get_attn_probs(
-    model: HookedTransformer, data: BracketsDataset, layer: int, head: int
-) -> Tensor:
+
+def get_attn_probs(model: HookedTransformer, data: BracketsDataset, layer: int, head: int) -> Tensor:
     """
     Returns: (N_SAMPLES, max_seq_len, max_seq_len) tensor that sums to 1 over the last dimension.
     """
@@ -1752,9 +1741,9 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed the tests, you can plot your results:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1786,15 +1775,15 @@ bar(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15106.html" width="720" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 You should see an average attention of around 0.5 on position 1, and an average of about 0 for all other tokens. So `2.0` is just moving information from residual stream 1 to residual stream 0. In other words, `2.0` passes residual stream 1 through its `W_OV` circuit (after `LayerNorm`ing, of course), weighted by some amount which we'll pretend is constant. Importantly, this means that **the necessary information for classification must already have been stored in sequence position 1 before this head**. The plot thickens!
 
 ### Identifying meaningful direction before this head
@@ -1804,13 +1793,13 @@ If we make the simplification that the vector moved to sequence position 0 by he
 Here is an annotated diagram to help better explain exactly what we're doing.
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/bracket_transformer-elevation-circuit-1.png" width="900">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - calculate the pre-head 2.0 unbalanced direction
 
 > ```yaml
@@ -1824,11 +1813,12 @@ r'''
 Below, you'll be asked to calculate this `pre_20_dir`, which is the unbalanced direction for inputs into head 2.0 at sequence position 1 (based on the fact that vectors at this sequence position are copied to position 0 by head `2.0`, and then used in prediction).
 
 First, you'll implement the function `get_WOV`, to get the OV matrix for a particular layer and head. Recall that this is the product of the `W_O` and `W_V` matrices. Then, you'll use this function to write `get_pre_20_dir`.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_WOV(model: HookedTransformer, layer: int, head: int) -> Float[Tensor, "d_model d_model"]:
     """
@@ -1871,7 +1861,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - compute component magnitudes
 
 > ```yaml
@@ -1883,7 +1873,7 @@ r'''
 > ```
 
 Now that you've got the `pre_20_dir`, you can calculate magnitudes for each of the components that came before. You can refer back to the diagram above if you're confused. **Remember to subtract the mean for each component for balanced inputs.**
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1896,13 +1886,9 @@ out_by_component_in_pre_20_unbalanced_dir = einops.einsum(
     get_pre_20_dir(model, data),
     "comp batch emb, emb -> comp batch",
 )
-out_by_component_in_pre_20_unbalanced_dir -= out_by_component_in_pre_20_unbalanced_dir[
-    :, data.isbal
-].mean(-1, True)
+out_by_component_in_pre_20_unbalanced_dir -= out_by_component_in_pre_20_unbalanced_dir[:, data.isbal].mean(-1, True)
 
-tests.test_out_by_component_in_pre_20_unbalanced_dir(
-    out_by_component_in_pre_20_unbalanced_dir, model, data
-)
+tests.test_out_by_component_in_pre_20_unbalanced_dir(out_by_component_in_pre_20_unbalanced_dir, model, data)
 
 plotly_utils.hists_per_comp(out_by_component_in_pre_20_unbalanced_dir, data, xaxis_range=(-5, 12))
 
@@ -1919,15 +1905,15 @@ plotly_utils.hists_per_comp(out_by_component_in_pre_20_unbalanced_dir, data, xax
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15107.html" width="1220" height="770"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 What do you observe?
 
 <details>
@@ -1948,23 +1934,21 @@ For example, the sum $\operatorname{ReLU}(x-0.5) + \operatorname{ReLU}(0.5-x)$ e
 Head `1.1` also has some importance, although we will not be able to dig into this today. It turns out that one of the main things it does is incorporate information about when there is a negative elevation failure into this overall elevation branch. This allows the heads to agree the prompt is unbalanced when it is obviously so, even if the overall count of opens and closes would allow it to be balanced.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In order to get a better look at what `mlp0` and `mlp1` are doing more thoughly, we can look at their output as a function of the overall open-proportion.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-plotly_utils.mlp_attribution_scatter(
-    out_by_component_in_pre_20_unbalanced_dir, data, failure_types_dict
-)
+plotly_utils.mlp_attribution_scatter(out_by_component_in_pre_20_unbalanced_dir, data, failure_types_dict)
 
 # FILTERS: ~
 # plotly_utils.mlp_attribution_scatter(
@@ -1979,16 +1963,16 @@ plotly_utils.mlp_attribution_scatter(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15108-A.html" width="820" height="520"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15108-B.html" width="820" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### MLPs as key-value pairs
 
 When we implemented transformers from scratch, we observed that MLPs can be thought of as key-value pairs. To recap this briefly:
@@ -2010,13 +1994,13 @@ $$
 Diagram illustrating this (without biases):
 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/mlp-neurons-2.png" width="850">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get output by neuron
 
 > ```yaml
@@ -2030,11 +2014,12 @@ r'''
 The function `get_out_by_neuron` should return the given MLP's output per neuron. In other words, the output has shape `[batch, seq, neurons, d_model]`, where `out[b, s, i]` is the vector $f(\vec x^T W^{in}_{[:,i]} + b^{in}_i)W^{out}_{[i,:]}$ (and summing over `i` would give you the actual output of the MLP). We ignore $b^{out}$ here, because it isn't attributable to any specific neuron.
 
 When you have this output, you can use `get_out_by_neuron_in_20_dir` to calculate the output of each neuron _in the unbalanced direction_ for the input to head 2.0 at sequence position 1. Note that we're only considering sequence position 1, because we've observed that head 2.0 is mainly just copying info from position 1 to position 0. This is why we've given you the `seq` argument in the `get_out_by_neuron` function, so you don't need to store more information than is necessary.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_out_by_neuron(
     model: HookedTransformer, data: BracketsDataset, layer: int, seq: int | None = None
@@ -2057,9 +2042,7 @@ def get_out_by_neuron(
     W_out = model.W_out[layer]  # [neuron d_model]
 
     # Get activations of the layer just after the activation function, i.e. this is f(x.T @ W_in)
-    f_x_W_in = get_activation(
-        model, data.toks, utils.get_act_name("post", layer)
-    )  # [batch seq neuron]
+    f_x_W_in = get_activation(model, data.toks, utils.get_act_name("post", layer))  # [batch seq neuron]
 
     # f_x_W_in are activations, so they have batch and seq dimensions - this is where we index by
     # sequence position if not None
@@ -2114,7 +2097,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint</summary>
 
@@ -2122,13 +2105,13 @@ For the `get_out_by_neuron` function, define $f(\vec x^T W^{in}_{[:,i]} + b^{in}
 
 Also, remember to keep in mind the distinction between activations and parameters. $f(\vec x^T W^{in}_{[:,i]} + b^{in}_i)$ is an activation; it has a `batch` and `seq_len` dimension. $W^{out}_{[i,:]}$ is a parameter; it has no `batch` or `seq_len` dimension.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - implement the same function, using less memory
 
 > ```yaml
@@ -2140,21 +2123,22 @@ r'''
 > ```
 
 *This exercise isn't as important as the previous one, and you can skip it if you don't find this interesting (although you're still recommended to look at the solutions, so you understand what's going on here.)*
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 If the only thing we want from the MLPs are their contribution in the unbalanced direction, then we can actually do this without having to store the `out_by_neuron_in_20_dir` object. Try and find this method, and implement it below.
 
 These kind of ideas aren't vital when working with toy models, but they become more important when working with larger models, and we need to be mindful of memory constraints.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_out_by_neuron_in_20_dir_less_memory(
     model: HookedTransformer, data: BracketsDataset, layer: int
@@ -2169,9 +2153,7 @@ def get_out_by_neuron_in_20_dir_less_memory(
     # SOLUTION
     W_out = model.W_out[layer]  # [neurons d_model]
 
-    f_x_W_in = get_activation(model, data.toks, utils.get_act_name("post", layer))[
-        :, 1, :
-    ]  # [batch neurons]
+    f_x_W_in = get_activation(model, data.toks, utils.get_act_name("post", layer))[:, 1, :]  # [batch neurons]
 
     pre_20_dir = get_pre_20_dir(model, data)  # [d_model]
 
@@ -2186,16 +2168,14 @@ def get_out_by_neuron_in_20_dir_less_memory(
 
 # HIDE
 if MAIN:
-    tests.test_get_out_by_neuron_in_20_dir_less_memory(
-        get_out_by_neuron_in_20_dir_less_memory, model, data_mini
-    )
+    tests.test_get_out_by_neuron_in_20_dir_less_memory(get_out_by_neuron_in_20_dir_less_memory, model, data_mini)
 # END HIDE
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint</summary>
 
@@ -2203,13 +2183,13 @@ The key is to change the order of operations.
 
 First, project each of the output directions onto the pre-2.0 unbalanced direction in order to get their components (i.e. a vector of length `d_mlp`, where the `i`-th element is the component of the vector $W^{out}_{[i,:]}$ in the unbalanced direction). Then, scale these contributions by the activations $f(\vec x^T W^{in}_{[:,i]} + b^{in}_i)$.**bold text**
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Interpreting the neurons
 
 Now, try to identify several individual neurons that are especially important to `2.0`.
@@ -2221,7 +2201,7 @@ Use the `plot_neurons` function to get a sense of what an individual neuron does
 One note: now that we are deep in the internals of the network, our assumption that a single direction captures most of the meaningful things going on in this overall-elevation circuit is highly questionable. This is especially true for using our `2.0` direction to analyize the output of `mlp0`, as one of the main ways this mlp has influence is through more indirect paths (such as `mlp0 -> mlp1 -> 2.0`) which are not the ones we chose our direction to capture. Thus, it is good to be aware that the intuitions you get about what different layers or neurons are doing are likely to be incomplete.
 
 *Note - we've supplied the default argument `renderer="browser"`, which causes the plots to open in a browser rather than in VSCode. This often works better, with less lag (especially in notebooks), but you can remove this if you prefer.*
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2251,16 +2231,16 @@ for layer in range(2):
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15109-A.html" width="1120" height="820"></div>
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15109-B.html" width="1120" height="820"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations:</summary>
 
@@ -2282,13 +2262,13 @@ Below: plots of neurons **`0.21`** and **`1.53`**. You can observe the patterns 
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/n21.png" width="550">
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/n53.png" width="550">
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Understanding how the open-proportion is calculated - Head 0.0
 
 Up to this point we've been working backwards from the logits and through the internals of the network. We'll now change tactics somewhat, and start working from the input embeddings forwards. In particular, we want to understand how the network calcuates the open-proportion of the sequence in the first place!
@@ -2298,13 +2278,13 @@ The key will end up being head 0.0. Let's start by examining its attention patte
 ### 0.0 Attention Pattern
 
 We want to play around with the attention patterns in our heads. For instance, we'd like to ask questions like "what do the attention patterns look like when the queries are always left-parens?". To do this, we'll write a function that takes in a parens string, and returns the `q` and `k` vectors (i.e. the values which we take the inner product of to get the attention scores).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - extracting queries and keys using hooks
 
 > ```yaml
@@ -2314,11 +2294,12 @@ r'''
 > You shouldn't spend more than ~15 minutes on this exercise.
 > Again, this exercise just involves using your `get_activations` function.
 > ```
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def get_q_and_k_for_given_input(
     model: HookedTransformer,
@@ -2351,7 +2332,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Activation Patching
 
 Now, we'll introduce the valuable tool of **activation patching**. This was first introduced in [David Bau and Kevin Meng's excellent ROME paper](https://rome.baulab.info/), there called causal tracing.
@@ -2363,7 +2344,7 @@ One of the common use-cases for activation patching is to compare the model's pe
 However, here our path patching serves a much simpler purpose - we'll be patching at the **query vectors** of head `0.0` with values from a sequence of all left-parens, and at the **key vectors** with the average values from all left and all right parens. This allows us to get a sense for the average attention patterns paid by left-brackets to the rest of the sequence.
 
 We'll write functions to do this for both heads in layer 0, because it will be informative to compare the two.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2376,9 +2357,7 @@ if MAIN:
 
     model.reset_hooks()
     q0_all_left, k0_all_left = get_q_and_k_for_given_input(model, tokenizer, all_left_parens, layer)
-    q0_all_right, k0_all_right = get_q_and_k_for_given_input(
-        model, tokenizer, all_right_parens, layer
-    )
+    q0_all_right, k0_all_right = get_q_and_k_for_given_input(model, tokenizer, all_right_parens, layer)
     k0_avg = (k0_all_left + k0_all_right) / 2
 
     # Define hook function to patch in q or k vectors
@@ -2438,15 +2417,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15110.html" width="1000" height="1000"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Question - what are the noteworthy features of head <code>0.0</code> in this plot?</summary>
 
@@ -2460,11 +2439,12 @@ We are most interested in the attention pattern at query position 1, because thi
 (Note - we've chosen to focus on the scenario when the first paren is an open paren, because the model actually deals with bracket strings that open with a right paren slightly differently - these are obviously unbalanced, so a complicated mechanism is unnecessary.)
 
 Let's plot a bar chart of the attention probability paid by the the open-paren query at position 1 to all the other positions. Here, rather than patching in both the key and query from artificial sequences, we're running the model on our entire dataset and patching in an artificial value for just the query (all open parens). Both methods are reasonable here, since we're just looking for a general sense of how our query vector at position 1 behaves when it's an open paren.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def hook_fn_display_attn_patterns_for_single_query(
     pattern: Float[Tensor, "batch heads seqQ seqK"],
@@ -2512,27 +2492,27 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-151/15111.html" width="820" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Question - what is the interpretation of this attention pattern?</summary>
 
 This shows that the attention pattern is almost exactly uniform over all tokens. This means the vector written to sequence position 1 will be approximately some scalar multiple of the sum of the vectors at each source position, transformed via the matrix $W_{OV}^{0.0}$.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Proposing a hypothesis
 
 Before we connect all the pieces together, let's list the facts that we know about our model so far (going chronologically from our observations):
@@ -2562,13 +2542,13 @@ The hypothesis might go something like this:
 </details>
 
 At this point, we've pretty much empirically verified all the observations above. One thing we haven't really proven yet is that **(1)** is working as we've described above. We want to verify that head `0.0` is calculating some kind of difference between the number of left and right brackets, and writing this information to the residual stream. In the next section, we'll find a way to test this hypothesis.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### The 0.0 OV circuit
 
 **We want to understand what the `0.0` head is writing to the residual stream. In particular, we are looking for evidence that it is writing information about the net elevation.**
@@ -2603,23 +2583,23 @@ $$
 $$
 
 where ${\color{orange}{LeftParen}}$ and ${\color{orange}{RightParen}}$ are the token embeddings for left and right parens respectively.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Finally, we have an ability to formulate a test for our hypothesis in terms of the expression above:
 
 > If head `0.0` is performing some kind of aggregation, then **we should see that ${\color{orange}\vec v_L}$ and ${\color{orange}\vec v_R}$ are vectors pointing in opposite directions.** In other words, head `0.0` writes some scalar multiple of vector $v$ to the residual stream, and we can extract the information $n_L - n_R$ by projecting in the direction of this vector. The MLP can then take this information and process it in a nonlinear way, writing information about whether the sequence is balanced to the residual stream.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - validate the hypothesis
 
 > ```yaml
@@ -2633,16 +2613,15 @@ r'''
 Here, you should show that the two vectors have cosine similarity close to -1, demonstrating that this head is "tallying" the open and close parens that come after it.
 
 You can fill in the function `embedding` (to return the token embedding vector corresponding to a particular character, i.e. the vectors we've called ${\color{orange}LeftParen}$ and ${\color{orange}RightParen}$ above), which will help when computing these vectors.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
+
 # HIDE
-def embedding(
-    model: HookedTransformer, tokenizer: SimpleTokenizer, char: str
-) -> Float[Tensor, "d_model"]:
+def embedding(model: HookedTransformer, tokenizer: SimpleTokenizer, char: str) -> Float[Tensor, "d_model"]:
     assert char in ("(", ")")
     idx = tokenizer.t_to_i[char]
     return model.W_E[idx]
@@ -2671,28 +2650,28 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Cosine similarity:  -0.9974</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Extra technicality about the two vectors (optional)</summary>
 
 Note - we don't actually require $\color{orange}{\vec v_L}$ and $\color{orange}{\vec v_R}$ to have the same magnitude for this idea to work. This is because, if we have ${\color{orange} \vec v_L} \approx - \alpha {\color{orange} \vec v_R}$ for some $\alpha > 0$, then when projecting along the $\color{orange}{\vec v_L}$ direction we will get $\|{\color{orange} \vec v_L}\| (n_L - \alpha n_R) / n$. This always equals $\|{\color{orange} \vec v_L}\| (1 - \alpha) / 2$ when the number of left and right brackets match, regardless of the sequence length. It doesn't matter that this value isn't zero; the MLPs' neurons can still learn to detect when the vector's component in this direction is more or less than this value by adding a bias term. The important thing is that (1) the two vectors are parallel and pointing in opposite directions, and (2) the projection in this direction *for balanced sequences* is always the same.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - cosine similarity of input directions (optional)
 
 > ```yaml
@@ -2705,11 +2684,12 @@ r'''
 Another way we can get evidence for this hypothesis - recall in our discussion of MLP neurons that $W^{in}_{[:,i]}$ (the $i$th column of matrix $W^{in}$, where $W^{in}$ is the first linear layer of the MLP) is a vector representing the "in-direction" of the neuron. If these neurons are indeed measuring open/closed proportions in the way we think, then we should expect to see the vectors $v_R$, $v_L$ have high dot product with these vectors.
 
 Investigate this by filling in the two functions below. `cos_sim_with_MLP_weights` returns the vector of cosine similarities between a vector and the columns of $W^{in}$ for a given layer, and `avg_squared_cos_sim` returns the average **squared cosine similarity** between a vector $v$ and a randomly chosen vector with the same size as $v$ (we can choose this vector in any sensible way, e.g. sampling it from the iid normal distribution then normalizing it). You should find that the average squared cosine similarity per neuron between $v_R$ and the in-directions for neurons in `MLP0` and `MLP1` is much higher than you would expect by chance.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def cos_sim_with_MLP_weights(
     model: HookedTransformer, v: Float[Tensor, "d_model"], layer: int
@@ -2769,27 +2749,27 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Avg squared cosine similarity of v_R with ...
 
 ...MLP input directions in layer 0: 0.1239
 ...MLP input directions in layer 1: 0.1301
 ...random vectors of len = d_model: 0.0179</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 As an _extra_-bonus exercise, you can also compare the squared cosine similarities per neuron to your neuron contribution plots you made earlier (the ones with sliders). Do the neurons which have particularly high cosine similarity with $v_R$ correspond to the neurons which write to the unbalanced direction of head `2.0` in a big way whenever the proportion of open parens is not 0.5? (This would provide further evidence that the main source of information about total open proportion of brackets which is used in the net elevation circuit is provided by the multiples of $v_R$ and $v_L$ written to the residual stream by head `0.0`). You can go back to your old plots and check.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Summary
 
 Great! Let's stop and take stock of what we've learned about this circuit.
@@ -2799,37 +2779,37 @@ Great! Let's stop and take stock of what we've learned about this circuit.
 An illustration of this circuit is given below. It's pretty complicated with a lot of moving parts, so don't worry if you don't follow all of it!
 
 Key: the thick black lines and orange dotted lines show the paths through our transformer constituting the elevation circuit. The orange dotted lines indicate the skip connections. Each of the important heads and MLP layers are coloured bold. The three important parts of our circuit (head `0.0`, the MLP layers, and head `2.0`) are all give annotations explaining what they're doing, and the evidence we found for this.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/bracket-transformer-attribution-2.png" width="1150">
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # ☆ Bonus
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Investigating the bracket transformer
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Here, we have a few bonus exercises which build on the previous content (e.g. having you examine different parts of the model, or use your understanding of how the model works to generate adversarial examples).
 
 *This final section is less guided, although the suggested exercises are similar in flavour to the previous section.*
@@ -2838,21 +2818,21 @@ Here, we have a few bonus exercises which build on the previous content (e.g. ha
 >
 > * Use your understanding of how the model works to generate adversarial examples.
 > * Take deeper dives into specific anomalous features of the model.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 The main bonus exercise we recommend you try is **adversarial attacks**. You'll need to read the first section of the **detecting anywhere-negative failures** bonus exercise to get an idea for how the other half of the classification circuit works, but once you understand this you can jump ahead to the adversarial attacks section.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Detecting anywhere-negative failures
 
 When we looked at our grid of attention patterns, we saw that not only did the first query token pay approximately uniform attention to all tokens following it, but so did most of the other tokens (to lesser degrees). This means that we can write the vector written to position $i$ (for general $i\geq 1$) as:
@@ -2881,17 +2861,17 @@ You could also look at the inputs to head 2.1, just like we did for head 2.0. Wh
 
 You should find that the MLPs are important inputs into head 2.1. This makes sense, because earlier we saw that the MLPs were converting tally information $(n_L - \alpha n_R)$ into the boolean information $(n_L = n_R)$ at sequence position 1. Since MLPs act the same on all sequence positions, it's reasonable to guess that they're storing the boolean information $(n_L^{(i)} > n_R^{(i)})$ at each sequence position $i$, which is what we need to detect anywhere-negative failures.
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Adversarial attacks
 
 Our model gets around 1 in a ten thousand examples wrong on the dataset we've been using. Armed with our understanding of the model, can we find a misclassified input by hand? I recommend stopping reading now and trying your hand at applying what you've learned so far to find a misclassified sequence. If this doesn't work, look at a few hints.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2917,17 +2897,13 @@ adversarial_examples.append(
 m = max(len(ex) for ex in adversarial_examples)
 toks = tokenizer.tokenize(adversarial_examples)
 probs = model(toks)[:, 0].softmax(-1)[:, 1]
-print(
-    "\n".join(
-        [f"{ex:{m}} -> {p:.4%} balanced confidence" for (ex, p) in zip(adversarial_examples, probs)]
-    )
-)
+print("\n".join([f"{ex:{m}} -> {p:.4%} balanced confidence" for (ex, p) in zip(adversarial_examples, probs)]))
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Hint 1</summary>
 
@@ -2975,13 +2951,13 @@ example = tallest_balanced_bracket(15) + ")(" + tallest_balanced_bracket(4)
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/graph.png">
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Dealing with early closing parens
 
 We mentioned that our model deals with early closing parens differently. One of our components in particular is responsible for classifying any sequence that starts with a closed paren as unbalnced - can you find the component that does this?
@@ -2995,13 +2971,13 @@ Which of your attention heads was previously observed to move information from p
 </details>
 
 Can you plot the outputs of this component when there is a closed paren at first position? Can you prove that this component is responsible for this behavior, and show exactly how it happens?
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Suggested capstone projects
 
 ### Try more algorithmic problems
@@ -3032,13 +3008,13 @@ a -> 1 2 4
 Note, ARENA runs a [monthly algorithmic problems sequence](https://arena-ch1-transformers.streamlit.app/Monthly_Algorithmic_Problems), and you can get ideas from looking at past problems from this sequence. You can also use these repos to get some sample code for building & training a trnasformer on a toy model, and constructing a dataset for your particular problem.
 
 <br>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Suggested paper replications
 
 ### [Causal Scrubbing](https://www.lesswrong.com/s/h95ayYYwMebGEYN5y)
@@ -3081,5 +3057,4 @@ This might be a good replication for you if:
 * You'd prefer to do something with a bit more of a focus on real language models, but still don't want to go all the way up to models as large as GPT2-Small
 
 Note, this replication is closer to [1.3] Indirect Object Identification than to these exercises. If you've got time before finishing this chapter then we recommend you try these exercises first, since they'll be very helpful for giving you a set of tools which are more suitable for working with large models.
-'''
-
+"""

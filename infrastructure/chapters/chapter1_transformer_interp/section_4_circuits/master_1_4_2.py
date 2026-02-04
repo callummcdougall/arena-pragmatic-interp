@@ -2,44 +2,44 @@
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ```python
 [
     {"title": "SAE Circuits", "icon": "2-circle-fill", "subtitle": "(100%)"},
 ]
 ```
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # [1.4.2] SAE Circuits
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-13-2.png" width="350">
 <br>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # Introduction
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 In these exercises, we dive deeply into the interpretability research that can be done with sparse autoencoders. We'll start by introducing two important tools: `SAELens` (essentially the TransformerLens of SAEs, which also integrates very well with TransformerLens) and **Neuronpedia**, an open platform for interpretability research. We'll then move through a few other exciting domains in SAE interpretability, grouped into several categories (e.g. understanding / classifying latents, or finding circuits in SAEs).
 
 We expect some degree of prerequisite knowledge in these exercises. Specifically, it will be very helpful if you understand:
@@ -50,13 +50,13 @@ We expect some degree of prerequisite knowledge in these exercises. Specifically
 We've included an abridged version of the exercise set **1.3.1 Superposition & SAEs**, which contains all the material we view as highly useful for the rest of these exercises. If you've already gone through this exercise set then you can proceed straight to section 1️⃣, if not then we recommend at least skimming through section 0️⃣ so that you feel comfortable with the core geometric intuitions for superposition and how SAEs work.
 
 One note before starting - we'll be mostly adopting the terminology that **features** are characteristics of the underlying data distribution that our base models are trained on, and **SAE latents** (or just "latents") are the directions in the SAE. This is to avoid the overloading of the term "feature", and avoiding the implicit assumption that "SAE features" correspond to real features in the data. We'll relax this terminology when we're looking at SAE latents which very clearly correspond to specific interpretable features in the data.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Reading Material
 
 Most of this is optional, and can be read at your leisure depending on what interests you most & what level of background you have. If we could recommend just one, it would be "Towards Monosemanticity" - particularly the first half of "Problem Setup", and the sections where they take a deep dive on individual latents.
@@ -67,13 +67,13 @@ Most of this is optional, and can be read at your leisure depending on what inte
 - [Improving Dictionary Learning with Gated Sparse Autoencoders](https://arxiv.org/pdf/2404.16014) is a paper from DeepMind which introduces the Gated SAE architecture, demonstrating how it outperforms the standard architecture and also motivating its use by speculating about underlying feature distributions.
 - [Gemma Scope](https://deepmind.google/discover/blog/gemma-scope-helping-the-safety-community-shed-light-on-the-inner-workings-of-language-models/) announces DeepMind's release of a comprehensive suite of open-sourced SAE models (trained with JumpReLU architecture). We'll be working a lot more with Gemma Scope models in subsequent exercises!
 - [LessWrong, SAEs tag](https://www.lesswrong.com/tag/sparse-autoencoders-saes) contains a collection of posts on LessWrong that discuss SAEs, and is a great source of inspiration for further independent research!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Content & Learning Objectives
 
 ### 1️⃣ SAE Circuits
@@ -85,13 +85,13 @@ SAEs are cool and interesting and we can steer on their latents to produce cool 
 > - Learn how to find connections between SAE latents in different layers of the transformer
 > - Discover how to apply knowledge of SAE circuits to remove the bias from a linear classifier, as described in the Sparse Feature Circuits paper (not implemented yet)
 > - Study transcoders, and understand how they can improve circuit analysis compared to regular SAEs
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## A note on memory usage
 
 In these exercises, we'll be loading some pretty large models into memory (e.g. Gemma 2-2B and its SAEs, as well as a host of other models in later sections of the material). It's useful to have functions which can help profile memory usage for you, so that if you encounter OOM errors you can try and clear out unnecessary models. For example, we've found that with the right memory handling (i.e. deleting models and objects when you're not using them any more) it should be possible to run all the exercises in this material on a Colab Pro notebook, and all the exercises minus the handful involving Gemma on a free Colab notebook.
@@ -158,15 +158,15 @@ Free = 24.66</pre>
 Mission success! We've managed to free up a lot of memory. Note that the code which moves all objects collected by the garbage collector to the CPU is often necessary to free up the memory. We can't just delete the objects directly because PyTorch can still sometimes keep references to them (i.e. their tensors) in memory. In fact, if you add code to the for loop above to print out `obj.shape` when `obj` is a tensor, you'll see that a lot of those tensors are actually Gemma model weights, even once you've deleted `gemma_2_2b`.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Setup (don't read, just run)
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~]
@@ -213,7 +213,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -270,9 +270,7 @@ from transformer_lens import ActivationCache, HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.utils import get_act_name, test_prompt, to_numpy
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
@@ -325,9 +323,7 @@ if IN_COLAB:
 
         filename = str(filename).split("/content")[-1]
 
-        output.serve_kernel_port_as_iframe(
-            PORT, path=filename, height=height, cache_in_notebook=True
-        )
+        output.serve_kernel_port_as_iframe(PORT, path=filename, height=height, cache_in_notebook=True)
 
         PORT += 1
 
@@ -335,27 +331,27 @@ if IN_COLAB:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 # 1️⃣ SAE Circuits
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Introduction
 
 Our work so far has focused on understanding individual latents. In later sections we'll take deeper dives into specific methods for interpreting latents, but in this section we address a highly important topic - what about **circuits of SAAE latents**? Circuit analysis has already been somewhat successful in language model interpretability (e.g. see Anthropic's work on induction circuits, or the Indirect Object Identification paper), but many attempts to push circuit analysis further has hit speedbumps: most connections in the model are not sparse, and it's very hard to disentangle all the messy cross-talk between different components and residual stream subspaces. Circuit offer a better path forward, since we should expect that not only are individual latents generally sparse, they are also **sparsely connected** - any given latent should probably only have a downstream effect on a small number of other latents.
 
 Indeed, if this does end up being true, it's a strong piece of evidence that latents found by SAEs *are* the **fundamental units of computation** used by the model, as opposed to just being an interesting clustering algorithm. Of course we do already have some evidence for this (e.g. the effectiveness of latent steering, and the fact that latents have already revealed important information about models which isn't clear when just looking at the basic components), but finding clear latent circuits would be a much stronger piece of evidence.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Latent Gradients
 
 We'll start with an exercise that illustrates the kind of sparsity you can expect in latent connections, as well as many of the ways latent circuit analysis can be challenging. We'll be implementing the `latent_to_latent_gradients` function, which returns the gradients between all active pairs of latents belonging to SAEs in two different layers (we'll be using two SAEs from our `gpt2-small-res-jb` release). These exercises will be split up into a few different steps, since computing these gradients is deceptively complex.
@@ -380,7 +376,7 @@ where `jacrev` is shorthand for "Jacobian reverse-mode differentiation" - it's a
 If we wanted to get a sense of how latents communicate with each other across our distribution of data, then we might average these results over a large set of prompts. However for now, we're going to stick with a relatively small set of prompts to avoid running into memory issues, and so we can visualise the results more easily.
 
 First, let's load in our model & SAEs, if you haven't already:
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -401,17 +397,17 @@ gpt2_saes = {
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Now, we can start the exercises!
 
 Note - the subsequent 3 exercises are all somewhat involved, and things like the use of Jacobian can be quite fiddly. For that reason, there's a good case to be made for just reading through the solutions and understanding what the code is doing, rather than trying to do it yourself. One option would be to look at the solutions for these 3 exercises and understand how latent-to-latent gradients work, but then try and implement the `token_to_latent_gradients` function (after the next 3 exercises) yourself.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise (1/3) - implement the `SparseTensor` class
 
 > ```yaml
@@ -424,11 +420,12 @@ r'''
 Firstly, we're going to create a `SparseTensor` class to help us work with sparse tensors (i.e. tensors where most of the elements are zero). This is because we'll need to do forward passes on the dense tensors (i.e. the tensors containing all values, including the zeros) but we'll often want to compute gradients wrt the sparse tensors (just the non-zero values) because otherwise we'd run into memory issues - there are a lot of latents!
 
 You should fill in the `from_dense` and `from_sparse` class methods for the `SparseTensor` class. The testing code is visible to you, and should help you understand how this class is expected to behave.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 class SparseTensor:
     """
@@ -493,9 +490,7 @@ if MAIN:
     t.testing.assert_close(sparse_tensor.dense, x)
 
     # Test `from_sparse`
-    sparse_tensor = SparseTensor.from_sparse(
-        (nonzero_values, nonzero_indices.unsqueeze(-1), tuple(x.shape))
-    )
+    sparse_tensor = SparseTensor.from_sparse((nonzero_values, nonzero_indices.unsqueeze(-1), tuple(x.shape)))
     t.testing.assert_close(sparse_tensor.dense, x)
 
     # Verify other properties
@@ -507,7 +502,7 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise (2/3) - implement `latent_acts_to_later_latent_acts`
 
 > ```yaml
@@ -532,11 +527,12 @@ We'll get to applying the Jacobian in the 3rd exercise though - for now, you sho
 
 - All SAEs have `encode` and `decode` methods, which map from input -> latent activations -> reconstructed input.
 - All TransformerLens models have a `forward` method with optional arguments `start_at_layer` and `stop_at_layer`, if these are supplied then it will compute activations from the latter layer as a function of the former.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def latent_acts_to_later_latent_acts(
     latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
@@ -560,9 +556,7 @@ def latent_acts_to_later_latent_acts(
     # END EXERCISE
     # SOLUTION
     # Convert to dense, map through SAE decoder
-    latent_acts = SparseTensor.from_sparse(
-        (latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)
-    ).dense
+    latent_acts = SparseTensor.from_sparse((latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)).dense
     resid_stream_from = sae_from.decode(latent_acts)
 
     # Map through model layers
@@ -579,11 +573,12 @@ def latent_acts_to_later_latent_acts(
 
     return latent_acts_next_recon.sparse[0], (latent_acts_next_recon.dense,)
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise (3/3) - implement `latent_to_latent_gradients`
 
 > ```yaml
@@ -635,7 +630,7 @@ If all this still doesn't work (i.e. you still get errors after clearing memory)
 We've given you code below this function, which will run and create a heatmap of the gradients for you. Note, the plot axes use notation of `F{layer}.{latent_idx}` for the latents.
 
 Challenge - can you find a pair of latents which seem to form a circuit on bigrams consisting of tokenized words where the first token is `" E"` ?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [soln,py]
@@ -664,6 +659,7 @@ gpt2_saes = {layer: sae.to(device) for layer, sae in gpt2_saes.items()}
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def latent_to_latent_gradients(
     tokens: Float[Tensor, "batch seq"],
@@ -725,6 +721,7 @@ def latent_to_latent_gradients(
         latent_acts_next_recon,
     )
 
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
@@ -758,14 +755,8 @@ px.imshow(
     to_numpy(latent_latent_gradients.T),
     color_continuous_midpoint=0.0,
     color_continuous_scale="RdBu",
-    x=[
-        f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})"
-        for (_, seq, latent) in latent_acts_next_recon.indices
-    ],
-    y=[
-        f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})"
-        for (_, seq, latent) in latent_acts_prev.indices
-    ],
+    x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
+    y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
     labels={"x": f"To layer {layer_to}", "y": f"From layer {layer_from}"},
     title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
     width=1600,
@@ -776,19 +767,19 @@ px.imshow(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"># nonzero latents (true): 181
 # nonzero latents (reconstructed): 179
 # latents alive in one but not both: 8</pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13220.html" width="1620" height="1020"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations</summary>
 
@@ -807,13 +798,13 @@ display_dashboard(sae_id="blocks.3.hook_resid_pre", latent_idx=15266)
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get latent-to-token gradients
 
 > ```yaml
@@ -828,11 +819,12 @@ Now that we've worked through implementing latent-to-latent gradients, let's try
 You might be wondering what gradients between tokens and latents even mean, because tokens aren't scalar values. The answer is that we'll be multiplying the model's embeddings by some scale factor `s` (i.e. a vector of different scale factor values for each token in our sequence), and taking the gradient of the SAE's latents wrt these values `s`, evaluated at `s = [1, 1, ..., 1]`. This isn't super principled since in practice this kind of embedding vector scaling doesn't happen in our model, but it's a convenient way to get a sense of **which tokens are most important for which latents**.
 
 Challenge - take the pair of latents from the previous exercise which seemed to form a circuit on bigrams consisting of tokenized words where the first token is `" E"`. Can you find that circuit again, from this plot?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def tokens_to_latent_acts(
     token_scales: Float[Tensor, "batch seq"],
@@ -853,9 +845,7 @@ def tokens_to_latent_acts(
     # END EXERCISE
     # SOLUTION
     resid_after_embed = model(tokens, stop_at_layer=0)
-    resid_after_embed = einops.einsum(
-        resid_after_embed, token_scales, "... seq d_model, ... seq -> ... seq d_model"
-    )
+    resid_after_embed = einops.einsum(resid_after_embed, token_scales, "... seq d_model, ... seq -> ... seq d_model")
     resid_before_sae = model(resid_after_embed, start_at_layer=0, stop_at_layer=sae.cfg.hook_layer)
 
     sae_latents = sae.encode(resid_before_sae)
@@ -887,9 +877,7 @@ def token_to_latent_gradients(
         token_scales, tokens, sae, model
     )
 
-    token_latent_grads = einops.rearrange(
-        token_latent_grads, "d_sae_nonzero batch seq -> batch seq d_sae_nonzero"
-    )
+    token_latent_grads = einops.rearrange(token_latent_grads, "d_sae_nonzero batch seq -> batch seq d_sae_nonzero")
 
     latent_acts = SparseTensor.from_dense(latent_acts_dense)
     # END SOLUTION
@@ -900,18 +888,13 @@ def token_to_latent_gradients(
 # HIDE
 if MAIN:
     sae_layer = 3
-    token_latent_grads, latent_acts = token_to_latent_gradients(
-        tokens, sae=gpt2_saes[sae_layer], model=gpt2
-    )
+    token_latent_grads, latent_acts = token_to_latent_gradients(tokens, sae=gpt2_saes[sae_layer], model=gpt2)
 
     px.imshow(
         to_numpy(token_latent_grads[0]),
         color_continuous_midpoint=0.0,
         color_continuous_scale="RdBu",
-        x=[
-            f"F{sae_layer}.{latent:05}, {str_toks[seq]!r} ({seq})"
-            for (_, seq, latent) in latent_acts.indices
-        ],
+        x=[f"F{sae_layer}.{latent:05}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts.indices],
         y=[f"{str_toks[i]!r} ({i})" for i in range(len(str_toks))],
         labels={"x": f"To layer {sae_layer}", "y": "From tokens"},
         title=f'Gradients between input tokens and SAE latents in layer {sae_layer}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
@@ -924,15 +907,15 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13221.html" width="1920" height="470"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations</summary>
 
@@ -941,13 +924,13 @@ In the previous exercise, we saw gradients between `(F0.16911, " E") -> (F3.1526
 In this plot, we can see a gradient between the `" E"` token and feature `F3.15266`, which is what we'd expect based on this.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - get latent-to-logit gradients
 
 > ```yaml
@@ -962,11 +945,12 @@ Finally, we'll have you compute the latent-to-logit gradients. This exercise wil
 Why are we bothering to compute latent-to-logit gradients in the first place? Well, one obvious answer is that it completes our end-to-end circuits picture (we've now got tokens -> latents -> other latents -> logits). But to give another answer, we can consider latents as having a dual nature: when looking back towards the input, they are **representations**, but when looking forward towards the logits, they are **actions**. We might expect sparsity in both directions, in other words not only should latents sparsely represent the activations produced by the input, they should also sparsely affect the gradients influencing the output. As you'll see when doing these exercises, this is partially the case, although not to the same degree as we saw extremely sparse token-to-latent or latent-to-latent gradients. One reason for that is that sparsity as representations is already included in the SAE's loss function (the L1 penalty), but there's no explicit penalty term to encourage sparsity in the latent gradients. Anthropic propose what this might look like in their [April 2024 update](https://transformer-circuits.pub/2024/april-update/index.html#attr-dl).
 
 However, despite the results for latent-to-logit gradients being less sparse than the last 2 exercises, they can still teach us a lot about which latents are important for a particular input prompt. Fill in the functions below, and then play around with some latent-to-logit gradients yourself!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def latent_acts_to_logits(
     latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
@@ -985,9 +969,7 @@ def latent_acts_to_logits(
     # END EXERCISE
     # SOLUTION
     # Convert to dense, map through SAE decoder
-    latent_acts = SparseTensor.from_sparse(
-        (latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)
-    ).dense
+    latent_acts = SparseTensor.from_sparse((latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)).dense
 
     resid = sae.decode(latent_acts)
 
@@ -1056,6 +1038,7 @@ def latent_to_logit_gradients(
         latent_acts,
     )
 
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
@@ -1088,10 +1071,7 @@ px.imshow(
     to_numpy(latent_logit_grads),
     color_continuous_midpoint=0.0,
     color_continuous_scale="RdBu",
-    x=[
-        f"{str_toks[seq]!r} ({seq}), latent {latent:05}"
-        for (_, seq, latent) in latent_acts.indices[sorted_indices]
-    ],
+    x=[f"{str_toks[seq]!r} ({seq}), latent {latent:05}" for (_, seq, latent) in latent_acts.indices[sorted_indices]],
     y=[f"{tok!r} ({gpt2.to_single_str_token(tok)})" for tok in token_ids],
     labels={"x": f"Features in layer {layer}", "y": "Logits"},
     title=f'Gradients between SAE latents in layer {layer} and final logits (only showing top {k} logits)<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
@@ -1104,7 +1084,7 @@ px.imshow(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">
 Tokenized prompt: ['<|endoftext|>', 'The', ' E', 'iff', 'el', ' tower', ' is', ' in', ' the', ' city', ' of']
 Tokenized answer: [' Paris']
@@ -1147,13 +1127,13 @@ Top 9th token. Logit: 13.20 Prob:  1.18% Token: | Paris|
 <br>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13222.html" width="1920" height="820"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations</summary>
 
@@ -1167,13 +1147,13 @@ display_dashboard(sae_id="blocks.9.hook_resid_pre", latent_idx=5879)
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise (optional) - find induction circuits in attention SAEs
 
 > ```yaml
@@ -1220,11 +1200,12 @@ Remember - the induction circuit works by having sequences `AB...AB`, where the 
 </details>
 
 The code below this function plots feature-to-feature gradients, and it also adds black squares to the instances where a layer-4 feature fires on the first `B` and layer-5 feature fires on the second `A`, in the `AB...AB` pattern (this is what we expect from an induction circuit). In other words, if your function is working then you should see a pattern of nonzero values in the regions indicated by these squares.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def latent_acts_to_later_latent_acts_attn(
     latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
@@ -1247,9 +1228,7 @@ def latent_acts_to_later_latent_acts_attn(
     # END EXERCISE
     # SOLUTION
     # Convert to dense, map through SAE decoder
-    latent_acts = SparseTensor.from_sparse(
-        (latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)
-    ).dense
+    latent_acts = SparseTensor.from_sparse((latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)).dense
     z_recon = sae_from.decode(latent_acts)
 
     hook_name_z_prev = get_act_name("z", sae_from.cfg.hook_layer)
@@ -1336,6 +1315,7 @@ def latent_to_latent_gradients_attn(
         latent_acts_next_recon,
     )
 
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
@@ -1373,14 +1353,8 @@ fig = px.imshow(
     to_numpy(latent_latent_gradients.T),
     color_continuous_midpoint=0.0,
     color_continuous_scale="RdBu",
-    x=[
-        f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})"
-        for (_, seq, latent) in latent_acts_next_recon.indices
-    ],
-    y=[
-        f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})"
-        for (_, seq, latent) in latent_acts_prev.indices
-    ],
+    x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
+    y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
     labels={"y": f"From layer {layer_from}", "x": f"To layer {layer_to}"},
     title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
     width=1200,
@@ -1402,23 +1376,23 @@ fig.show()
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"># nonzero features (true): 476
 # nonzero features (reconstructed): 492
 # features alive in one but not both: 150</pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13223b.html" width="1220" height="1020"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Note - your SAEs should perform worse on reconstructing this data than they did on the previous exercises in this subsection (if measured in terms of the intersection of activating features). My guess is that this is because the induction sequences are more OOD for the distribution which the SAEs were trained on (since they're literally random tokens). Also, it's possible that measuring over a larger batch of data and taking all features that activate on at least some fraction of the total tokens would give us a less noisy picture.
 
 Here's some code which filters down the layer-5 features to ones which are active on every token in the second half of the sequence, and also only looks at the layer-4 features which are active on the first half. Try inspecting individual feature pairs which seem to have large gradients with each other - do they seem like previous token features & induction features respectively?
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1426,15 +1400,13 @@ Here's some code which filters down the layer-5 features to ones which are activ
 
 # Filter for layer-5 latents which are active on every token in the second half (which induction
 # latents should be!)
-acts_on_second_half = latent_acts_next_recon.indices[
-    latent_acts_next_recon.indices[:, 1] >= seq_len + 1
-]
+acts_on_second_half = latent_acts_next_recon.indices[latent_acts_next_recon.indices[:, 1] >= seq_len + 1]
 c = Counter(acts_on_second_half[:, 2].tolist())
 top_feats = sorted([feat for feat, count in c.items() if count >= seq_len])
 print(f"Layer 5 SAE latents which fired on all tokens in the second half: {top_feats}")
-mask_next = (
-    latent_acts_next_recon.indices[:, 2] == t.tensor(top_feats, device=device)[:, None]
-).any(dim=0) & (latent_acts_next_recon.indices[:, 1] >= seq_len + 1)
+mask_next = (latent_acts_next_recon.indices[:, 2] == t.tensor(top_feats, device=device)[:, None]).any(dim=0) & (
+    latent_acts_next_recon.indices[:, 1] >= seq_len + 1
+)
 
 # Filter the layer-4 axis to only show activations at sequence positions that we expect to be used
 # in induction
@@ -1445,14 +1417,8 @@ px.imshow(
     to_numpy(latent_latent_gradients[mask_next][:, mask_prev]),
     color_continuous_midpoint=0.0,
     color_continuous_scale="RdBu",
-    y=[
-        f"{str_toks[seq]!r} ({seq}), #{latent:05}"
-        for (_, seq, latent) in latent_acts_next_recon.indices[mask_next]
-    ],
-    x=[
-        f"{str_toks[seq]!r} ({seq}), #{latent:05}"
-        for (_, seq, latent) in latent_acts_prev.indices[mask_prev]
-    ],
+    y=[f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_next_recon.indices[mask_next]],
+    x=[f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_prev.indices[mask_prev]],
     labels={"x": f"From layer {layer_from}", "y": f"To layer {layer_to}"},
     title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
     width=1800,
@@ -1463,19 +1429,19 @@ px.imshow(
 # ! FILTERS: [soln,st]
 # ! TAGS: [st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">
 Layer 5 SAE latents which fired on all tokens in the second half: [35425, 36126]
 </pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13223c.html" width="1820" height="520"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 <details>
 <summary>Some observations</summary>
 
@@ -1491,23 +1457,23 @@ for (layer, latent_idx) in [(5, 35425), (5, 36126), (4, 22975), (4, 21020), (4, 
 ```
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Sparse feature circuits
 
 > Note - this section is not complete. Exercises will be added over the next ~month, based on replicating the results from the [Sparse Feature Circuits paper](https://arxiv.org/abs/2403.19647). Exercises will replication of some of the results in the paper, in particular the results on reducing spurious correlations in a linear probe & reducing gender bias (if this turns out to be feasible in exercise form).
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ## Transcoders
 
 The MLP-layer SAEs we've looked at attempt to represent activations as a sparse linear combination of latent vectors; importantly, they only operate on activations **at a single point in the model**. They don't actually learn to perform the MLP layer's computation, rather they learn to reconstruct the results of that computation. It's very hard to do any weights-based analysis on MLP layers in superposition using standard SAEs, since many latents are highly dense in the neuron basis, meaning the neurons are hard to decompose.
@@ -1523,17 +1489,17 @@ Why might transcoders be an improvement over standard SAEs? Mainly, they offer a
 > As an analogy, let’s say that we have some complex compiled computer program that we want to understand (_a la_ [Chris Olah’s analogy](https://transformer-circuits.pub/2022/mech-interp-essay/index.html)). SAEs are analogous to a debugger that lets us set breakpoints at various locations in the program and read out variables. On the other hand, transcoders are analogous to a tool for replacing specific subroutines in this program with human-interpretable approximations.
 
 Intuitively it might seem like transcoders are solving a different (more complicated) kind of optimization problem - trying to mimic the MLP's computation rather than just reproduce output - and so they would suffer a performance tradeoff relative to standard SAEs. However, evidence suggests that this might not be the case, and transcoders might offer a pareto improvement over standard SAEs.
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 We'll start by loading in our transcoders. Note that SAELens doesn't yet support running transcoders with `HookedSAETransformer` models (at time of writing**), so instead we'll be loading in our transcoders as `SAE`s but using them in the way we use regular model hooks (rather than using methods like `run_with_cache_with_saes`). The model we'll be working with has been trained to reconstruct the 8th MLP layer of GPT-2. An important note - we're talking about taking the normalized input to the MLP layer and outputting `mlp_out` (i.e. the values we'll be adding back to the residual stream). So when we talk about pre-MLP and post-MLP values, we mean this, not pre/post activation function!
 
 **If this has changed by the time you're reading this, please send an errata in the [Slack group](https://join.slack.com/t/arena-uk/shared_invite/zt-39iwnhbj4-pMWUvZkkt2wpvaxkvJ0q2rRQ)!
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1544,9 +1510,7 @@ gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
 hf_repo_id = "callummcdougall/arena-demos-transcoder"
 sae_id = "gpt2-small-layer-{layer}-mlp-transcoder-folded-b_dec_out"
 gpt2_transcoders = {
-    layer: SAE.from_pretrained(
-        release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device)
-    )[0]
+    layer: SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device))[0]
     for layer in tqdm(range(9))
 }
 
@@ -1557,9 +1521,9 @@ print("Transcoder hooks (same as regular SAE hooks):", gpt2_transcoder.hook_dict
 # Load the sparsity values, and plot them
 log_sparsity_path = hf_hub_download(hf_repo_id, f"{sae_id.format(layer=layer)}/log_sparsity.pt")
 log_sparsity = t.load(log_sparsity_path, map_location="cpu", weights_only=True)
-px.histogram(
-    to_numpy(log_sparsity), width=800, template="ggplot2", title="Transcoder latent sparsity"
-).update_layout(showlegend=False).show()
+px.histogram(to_numpy(log_sparsity), width=800, template="ggplot2", title="Transcoder latent sparsity").update_layout(
+    showlegend=False
+).show()
 live_latents = np.arange(len(log_sparsity))[to_numpy(log_sparsity > -4)]
 
 # Get the activations store
@@ -1578,21 +1542,22 @@ assert tokens.shape == (gpt2_act_store.store_batch_size_prompts, gpt2_act_store.
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-1322/13227.html" width="820" height="480"></div>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Next, we've given you a helper function which essentially works the same way as the `run_with_cache_with_saes` method that you might be used to. We recommend you read through this function, and understand how the transcoder is being used.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def run_with_cache_with_transcoder(
     model: HookedSAETransformer,
@@ -1604,13 +1569,10 @@ def run_with_cache_with_transcoder(
     Runs an MLP transcoder(s) on a batch of tokens. This is quite hacky, and eventually will be
     supported in a much better way by SAELens!
     """
-    assert all(
-        transcoder.cfg.hook_name.endswith("ln2.hook_normalized") for transcoder in transcoders
-    )
+    assert all(transcoder.cfg.hook_name.endswith("ln2.hook_normalized") for transcoder in transcoders)
     input_hook_names = [transcoder.cfg.hook_name for transcoder in transcoders]
     output_hook_names = [
-        transcoder.cfg.hook_name.replace("ln2.hook_normalized", "hook_mlp_out")
-        for transcoder in transcoders
+        transcoder.cfg.hook_name.replace("ln2.hook_normalized", "hook_mlp_out") for transcoder in transcoders
     ]
 
     # Hook function at transcoder input: computes its output (and all intermediate values e.g.
@@ -1621,9 +1583,7 @@ def run_with_cache_with_transcoder(
 
     # Hook function at transcoder output: replaces activations with transcoder output
     def hook_transcoder_output(activations: Tensor, hook: HookPoint, transcoder_idx: int):
-        cache: ActivationCache = model.hook_dict[transcoders[transcoder_idx].cfg.hook_name].ctx[
-            "cache"
-        ]
+        cache: ActivationCache = model.hook_dict[transcoders[transcoder_idx].cfg.hook_name].ctx["cache"]
         return cache["hook_sae_output"]
 
     # Get a list of all fwd hooks (only including the output hooks if use_error_term=False)
@@ -1631,9 +1591,7 @@ def run_with_cache_with_transcoder(
     for i in range(len(transcoders)):
         fwd_hooks.append((input_hook_names[i], partial(hook_transcoder_input, transcoder_idx=i)))
         if not use_error_term:
-            fwd_hooks.append(
-                (output_hook_names[i], partial(hook_transcoder_output, transcoder_idx=i))
-            )
+            fwd_hooks.append((output_hook_names[i], partial(hook_transcoder_output, transcoder_idx=i)))
 
     # Fwd pass on model, triggering all hook functions
     with model.hooks(fwd_hooks=fwd_hooks):
@@ -1644,26 +1602,24 @@ def run_with_cache_with_transcoder(
     all_transcoders_cache_dict = {}
     for i, transcoder in enumerate(transcoders):
         transcoder_cache = model.hook_dict[input_hook_names[i]].ctx.pop("cache")
-        transcoder_cache_dict = {
-            f"{transcoder.cfg.hook_name}.{k}": v for k, v in transcoder_cache.items()
-        }
+        transcoder_cache_dict = {f"{transcoder.cfg.hook_name}.{k}": v for k, v in transcoder_cache.items()}
         all_transcoders_cache_dict.update(transcoder_cache_dict)
 
-    return ActivationCache(
-        cache_dict=model_cache.cache_dict | all_transcoders_cache_dict, model=model
-    )
+    return ActivationCache(cache_dict=model_cache.cache_dict | all_transcoders_cache_dict, model=model)
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Lastly, we've given you the functions which you should already have encountered in the earlier exercise sets, when we were replicating SAE dashboards (if you've not done these exercises yet, we strongly recommend them!). The only difference is that we use the `run_with_cache_with_transcoder` function in place of `model.run_with_cache_with_saes`.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
 # ! TAGS: []
+
 
 def get_k_largest_indices(
     x: Float[Tensor, "batch seq"], k: int, buffer: int = 0, no_overlap: bool = True
@@ -1677,9 +1633,7 @@ def get_k_largest_indices(
     if no_overlap:
         unique_indices = t.empty((0, 2), device=x.device).long()
         while len(unique_indices) < k:
-            unique_indices = t.cat(
-                (unique_indices, t.tensor([[rows[0], cols[0]]], device=x.device))
-            )
+            unique_indices = t.cat((unique_indices, t.tensor([[rows[0], cols[0]]], device=x.device)))
             is_overlapping_mask = (rows == rows[0]) & ((cols - cols[0]).abs() <= buffer)
             rows = rows[~is_overlapping_mask]
             cols = cols[~is_overlapping_mask]
@@ -1706,12 +1660,7 @@ def display_top_seqs(data: list[tuple[float, list[str], int]]):
     table = Table("Act", "Sequence", title="Max Activating Examples", show_lines=True)
     for act, str_toks, seq_pos in data:
         formatted_seq = (
-            "".join(
-                [
-                    f"[b u green]{str_tok}[/]" if i == seq_pos else str_tok
-                    for i, str_tok in enumerate(str_toks)
-                ]
-            )
+            "".join([f"[b u green]{str_tok}[/]" if i == seq_pos else str_tok for i, str_tok in enumerate(str_toks)])
             .replace("�", "")
             .replace("\n", "↵")
         )
@@ -1747,13 +1696,14 @@ def fetch_max_activating_examples(
         display_top_seqs(data)
     return data
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Let's pick latent 1, and compare our results to the neuronpedia dashboard (note that we do have neuronpedia dashboards for this model, even though it's not in SAELens yet).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1772,7 +1722,7 @@ fetch_max_activating_examples(
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <iframe src="https://neuronpedia.org/gpt2-small/8-tres-dc/1?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300" height=600 width=800></iframe>
 
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"><span style="font-style: italic">                                              Max Activating Examples                                              </span>
@@ -1801,13 +1751,13 @@ r'''
 │ 10.501 │ ' the win with two sweetly taken second-half<span style="color: #008000; text-decoration-color: #008000; font-weight: bold; text-decoration: underline"> goals</span>.↵↵"There were games last year where'                │
 └────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Pullback & de-embeddings
 
 In the exercises on latent-latent gradients at the start of this section, we saw that it could be quite difficult to compute how any 2 latents in different layers interact with each other. In fact, we could only compute gradients between latents which were both alive in the same forward pass. One way we might have liked to deal with this is by just taking the dot product of the "writing vector" of one latent with the "reading vector" of another. For example, suppose our SAEs were trained on post-ReLU MLP activations, then we could compute: `W_dec[:, f1] @ W_out[layer1] @ W_in[layer2] @ W_enc[f2, :]` (where `f1` and `f2` are our earlier and later latent indices, `layer1` and `layer2` are our SAE layers, and `W_in`, `W_out` are the MLP input & output weight matrices for all layers). To make sense of this formula: the term `W_dec[:, f1] @ W_out[layer1]` is the "writing vector" being added to the residual stream by the first (earlier) latent, and we would take the dot product of this with `W_in[layer2] @ W_enc[f2, :]` to compute the activation of the second (later) latent. However, one slight frustration is that we're ignoring the later MLP layer's ReLU function (remember that the SAEs are reconstructing the post-ReLU activations, not pre-ReLU). This might seem like a minor point, but it actually gets to a core part of the limitation of standard SAEs when trained on layers which perform computation - **the SAEs are reconstructing a snapshot in the model, but they're not helping us get insight into the layer's actual computation process**.
@@ -1820,13 +1770,13 @@ How do transcoders help us here? Well, since transcoders sit around the entire M
 Note that we can in principle compute both of these quantities for regular MLP SAEs. But they wouldn't be as accurate to the model's actual computation, and so you couldn't draw as many strong conclusions from them.
 
 To complete our circuit picture of (embeddings -> transcoders -> unembeddings), it's worth noting that we can compute the logit lens for a transcoder latent in exactly the same way as regular SAEs: just take the dot product of the transcoder decoder vector with the unembedding matrix. Since this has basically the exact same justification & interpretation as for regular SAEs, we don't need to invent a new term for it, so we'll just keep calling it the logit lens!
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - compute de-embedding
 
 > ```yaml
@@ -1837,11 +1787,12 @@ r'''
 > ```
 
 In the cell below, you should compute the de-embedding for this latent (i.e. which tokens cause this latent to fire most strongly). You can use the logit lens function as a guide (which we've provided, from where it was used in the earlier exercises).
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def show_top_logits(
     model: HookedSAETransformer,
@@ -1876,9 +1827,7 @@ if MAIN:
 # END HIDE
 
 
-def show_top_deembeddings(
-    model: HookedSAETransformer, sae: SAE, latent_idx: int, k: int = 10
-) -> None:
+def show_top_deembeddings(model: HookedSAETransformer, sae: SAE, latent_idx: int, k: int = 10) -> None:
     """Displays the top & bottom de-embeddings for a particular latent."""
     # EXERCISE
     # raise NotImplementedError()
@@ -1915,7 +1864,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Top logits for transcoder latent 1:
 ┌─────────────────┬─────────┬──────────────┬─────────┐
 │   Bottom tokens │ Value   │   Top tokens │ Value   │
@@ -1948,13 +1897,13 @@ Top de-embeddings for transcoder latent 1:
 │      ' reprint' │ -0.587  │   ' scoring' │ +1.520  │
 └─────────────────┴─────────┴──────────────┴─────────┘
 </pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 This is ... pretty underwhelming! It seems very obvious that the top activating token should be `" goal"` from looking at the dashboard - why are we getting weird words like `"liga"` and `"jee"`? Obviously some words make sense like `" scored"` or `" scoring"`, but overall this isn't what we would expect.
 
 Can you guess what's happening here? (Try and think about it before reading on, since reading the description of the next exercise will give away the answer!
@@ -1974,13 +1923,13 @@ GPT2-Small has **tied embeddings**, i.e. its embedding matrix is the transpose o
 The result of this is that the indexed rows of the embedding matrix aren't really a good representation of the thing that the model has actually learned to treat as the embedding of a given token.
 
 </details>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - correct the de-embedding function
 
 > ```yaml
@@ -2000,11 +1949,12 @@ There are many different ways to compute the extended embedding (e.g. sometimes 
 - Add the result back to the original embedding matrix.
 
 Tip - rather than writing out the individual operations for layernorm & MLPs, you can just use the forward methods of `model.blocks[layer].ln2` or `.mlp` respectively.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
 
 def create_extended_embedding(model: HookedTransformer) -> Float[Tensor, "d_vocab d_model"]:
     """
@@ -2020,9 +1970,7 @@ def create_extended_embedding(model: HookedTransformer) -> Float[Tensor, "d_voca
     # SOLUTION
     W_E = model.W_E.clone()[:, None, :]  # shape [batch=d_vocab, seq_len=1, d_model]
 
-    mlp_output = model.blocks[0].mlp(
-        model.blocks[0].ln2(W_E)
-    )  # shape [batch=d_vocab, seq_len=1, d_model]
+    mlp_output = model.blocks[0].mlp(model.blocks[0].ln2(W_E))  # shape [batch=d_vocab, seq_len=1, d_model]
 
     W_E_ext = (W_E + mlp_output).squeeze()
     return (W_E_ext - W_E_ext.mean(dim=-1, keepdim=True)) / W_E_ext.std(dim=-1, keepdim=True)
@@ -2038,19 +1986,18 @@ if MAIN:
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 Once you've passed those tests, try rewriting `show_top_deembeddings` to use the extended embedding. Do the results look better? (Hint - they should!)
 
 Note - don't worry if the magnitude of the results seems surprisingly large. Remember that a normalization step is applied pre-MLP, so the actual activations will be smaller than is suggested by the values in the table you'll generate.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-def show_top_deembeddings_extended(
-    model: HookedSAETransformer, sae: SAE, latent_idx: int, k: int = 10
-) -> None:
+
+def show_top_deembeddings_extended(model: HookedSAETransformer, sae: SAE, latent_idx: int, k: int = 10) -> None:
     """Displays the top & bottom de-embeddings for a particular latent."""
     # EXERCISE
     # raise NotImplementedError()
@@ -2086,7 +2033,7 @@ if MAIN:
 # ! FILTERS: [soln,st]
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
-r'''
+r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Top de-embeddings (extended) for transcoder latent 1:
 ┌─────────────────┬─────────┬──────────────┬─────────┐
 │   Bottom tokens │ Value   │   Top tokens │ Value   │
@@ -2102,13 +2049,13 @@ r'''
 │      ' Cassidy' │ -7.032  │    ' Soccer' │ +10.162 │
 │        'Contin' │ -7.006  │      ' puck' │ +10.122 │
 └─────────────────┴─────────┴──────────────┴─────────┘</pre>
-'''
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-r'''
+r"""
 ### Exercise - perform a blind case study
 
 > ```yaml
@@ -2136,7 +2083,7 @@ To be clear on the rules:
 We're making this a very open-ended exercise - we've written some functions for you above, but others you might have to write yourself, depending on what seems most useful for your analysis (e.g. we've not given you a function to compute pullback yet). If you want an easier exercise then you can use a latent which the post successfully reverse-engineered (e.g. latent 355, the 300th live latent in the transcoder), but for a challenge you can also try latent 479 (the 400th live latent in the transcoder,which the authors weren't able to reverse-engineer in their initial post).
 
 If you want a slightly easier version of the game, you can try a rule relaxation where you're allowed to pass your own sequences into the model to test hypotheses (you just can't do something like find the top activating sequences over a large dataset and decode them). This allows you to test your hypotheses in ways that still impose some restrictions on your action space.
-'''
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -2480,4 +2427,3 @@ px.line(df, y=prompts.keys(), height=500, width=800).show()
 
 </details>
 '''
-
