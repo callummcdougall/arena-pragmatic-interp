@@ -83,7 +83,9 @@ class Cell:
                     self.source = self.source[1:-1]
                     break
             else:
-                raise ValueError("Error in `master.py`, found a markdown cell not wrapped with r'''...'''.")
+                raise ValueError(
+                    "Error in `master.py`, found a markdown cell not wrapped with r'''...''' (or maybe you haven't left a blank line before / after this cell)."
+                )
 
             # Check exercise markdown cells have the correct syntax (this also involves fixing "Difficulty: ...")
             if "# Exercise" in self.content_str:

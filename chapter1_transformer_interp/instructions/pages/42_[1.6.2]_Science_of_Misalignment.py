@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Alignment Faking', 'icon': '1-circle-fill', 'subtitle': '(60%)'}]
+metadata = [{'title': 'Shutdown Resistance', 'icon': '1-circle-fill', 'subtitle': '(60%)'}, {'title': 'Alignment Faking', 'icon': '2-circle-fill', 'subtitle': '(40%)'}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
 section_title = '[1.6.2] Science of Misalignment'
