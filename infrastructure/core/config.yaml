@@ -374,7 +374,7 @@ chapters:
         page_file: "42_[1.6.2]_Science_of_Misalignment.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-62b.png"
         parent: "1_6_overview"
-        status: "Has the first section complete, second section (on the Palisade shutdown example) not complete"
+        status: "All exercises complete and verified"
         streamlit_description: "(mcdougallc) - fill in"
         streamlit_description_short: "Explore scientific approaches to understanding model misalignment."
       - id: "43_reasoning_models"
