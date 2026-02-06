@@ -1066,7 +1066,7 @@ Key for the plot below: `n_pre` means the residual stream at the start of layer 
 accumulated_residual, labels = cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
 # accumulated_residual has shape (component, batch, d_model)
 
-logit_lens_logit_diffs: Float[Tensor, "component"] = residual_stack_to_logit_diff(accumulated_residual, cache)
+logit_lens_logit_diffs: Float[Tensor, " component"] = residual_stack_to_logit_diff(accumulated_residual, cache)
 
 line(
     logit_lens_logit_diffs,
