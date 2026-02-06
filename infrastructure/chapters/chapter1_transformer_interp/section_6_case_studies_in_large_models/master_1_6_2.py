@@ -1384,7 +1384,7 @@ Bypass rate: 6/6 = 100%
 # ! TAGS: []
 
 r'''
-<details><summary>What you should see</summary>
+<details><summary>Discussion of results</summary>
 
 Some typical behaviours with this setup are:
 
