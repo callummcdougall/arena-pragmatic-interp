@@ -46,6 +46,7 @@ talk-animation*
 *ignore.py
 *export.py
 changes.md
+*master*.md
 
 # Specific Project Directories
 *part4_rlhf2
