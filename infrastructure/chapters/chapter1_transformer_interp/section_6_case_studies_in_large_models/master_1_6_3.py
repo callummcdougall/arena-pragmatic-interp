@@ -56,6 +56,8 @@ r"""
 
 ### 1️⃣ CoT Infrastructure & Sentence Taxonomy
 
+> ##### Learning Objectives
+>
 > - Import & understand the structure of our reasoning dataset
 > - Split reasoning traces into sentences using regex-based heuristics
 > - Classify sentences using both heuristic and autorater approaches
@@ -63,6 +65,8 @@ r"""
 
 ### 2️⃣ Black-box Analysis
 
+> ##### Learning Objectives
+>
 > - Understand forced answer importance and its limitations
 > - Implement resampling importance and counterfactual importance metrics
 > - Replicate Figure 3b (sentence category effect)
@@ -71,6 +75,8 @@ r"""
 
 ### 3️⃣ White-box Methods
 
+> ##### Learning Objectives
+>
 > - Understand receiver heads and vertical attention scores
 > - Compute and visualize attention patterns at the sentence level
 > - Implement attention suppression interventions
@@ -78,6 +84,8 @@ r"""
 
 ### 4️⃣ Thought Branches: Safety Applications
 
+> ##### Learning Objectives
+>
 > - Explore the blackmail scenario dataset
 > - Adapt importance metrics for safety-relevant outcomes
 > - Understand and compute the resilience metric
@@ -91,12 +99,71 @@ r"""
 r"""
 ## Setup code
 
-Before running this code, you'll need to clone the [thought-anchors repo](https://github.com/interp-reasoning/thought-anchors):
+Before running this code, you'll need to clone the [thought-anchors repo](https://github.com/interp-reasoning/thought-anchors). Make sure you're cloning it inside the `chapter1_transformer_interp/exercises` directory.
 
 ```bash
 git clone https://github.com/interp-reasoning/thought-anchors.git
 ```
 """
+
+# ! CELL TYPE: code
+# ! FILTERS: [~]
+# ! TAGS: []
+
+from IPython import get_ipython
+
+ipython = get_ipython()
+ipython.run_line_magic("load_ext", "autoreload")
+ipython.run_line_magic("autoreload", "2")
+
+# ! CELL TYPE: code
+# ! FILTERS: [colab]
+# ! TAGS: [master-comment]
+
+import os
+import sys
+from pathlib import Path
+
+IN_COLAB = "google.colab" in sys.modules
+
+chapter = "chapter1_transformer_interp"
+repo = "arena-pragmatic-interp"  # "ARENA_3.0"
+branch = "main"
+
+# # Install dependencies
+# try:
+#     import transformer_lens
+# except:
+#     %pip install transformer_lens==2.11.0 einops jaxtyping openai
+
+# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+root = (
+    "/content"
+    if IN_COLAB
+    else repo
+    if Path(repo).exists()
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
+
+# if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
+#     if not IN_COLAB:
+#         !sudo apt-get install unzip
+#         %pip install jupyter ipython --upgrade
+
+#     if not os.path.exists(f"{root}/{chapter}"):
+#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
+#         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
+#         !rm {root}/{branch}.zip
+#         !rmdir {root}/{repo}-{branch}
+
+
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
+
+os.chdir(f"{root}/{chapter}/exercises")
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -106,10 +173,10 @@ import json
 import os
 import re
 import sys
-import textwrap
 import time
 import warnings
-from collections import Counter, defaultdict
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import circuitsvis as cv
@@ -118,13 +185,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import sentence_transformers
+import plotly.graph_objects as go
 import torch
+import transformers
 from dotenv import load_dotenv
-from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
 from IPython.display import display
 from openai import OpenAI
+from plotly.subplots import make_subplots
 from scipy import stats
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -133,26 +202,64 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
 
 warnings.filterwarnings("ignore")
 
-thought_anchors_path = Path.cwd().parent / "thought-anchors"
-assert thought_anchors_path.exists(), f"Clone thought-anchors repo to {thought_anchors_path}"
+thought_anchors_path = Path.cwd() / "thought-anchors"
+assert thought_anchors_path.exists(), f"Clone thought-anchors repo to {thought_anchors_path.resolve()}"
 
 sys.path.append(str(thought_anchors_path))
 
-from utils import extract_boxed_answers, load_math_problems, normalize_answer
+# Import visualization utilities
+utils_path = Path.cwd().parent.parent / "exercises"
+if utils_path not in [Path(p) for p in sys.path]:
+    sys.path.append(str(utils_path))
+
+from part63_interpreting_reasoning_models import utils
+
+MAIN = __name__ == "__main__"
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+You'll need to create an `.env` file in the `part1_transformer_interp/exercises` directory before running the next cell.
+"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-# Configuration
-MODEL_NAME_8B = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
-MODEL_NAME_14B = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
-DATASET_NAME = "uzaymacar/math-rollouts"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-SIMILARITY_THRESHOLD = 0.8
+# Load .env file
+env_path = Path.cwd() / ".env"
+assert env_path.exists(), "Please create a .env file with your API keys"
+
+load_dotenv(dotenv_path=str(env_path))
+
+# Setup OpenRouter client (works with both Claude and OpenAI models)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+assert OPENROUTER_API_KEY, "Please set OPENROUTER_API_KEY in your .env file"
+
+openrouter_client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Now let's define some constants:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+
+if MAIN:
+    print(f"Using device: {device}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -160,6 +267,7 @@ print(f"Using device: {device}")
 
 r"""
 # 1️⃣ CoT Infrastructure & Sentence Taxonomy
+
 """
 
 # ! CELL TYPE: markdown
@@ -169,12 +277,33 @@ r"""
 r"""
 ## Model Setup & Dataset Inspection
 
-Let's start by loading our embedding model and exploring the dataset structure.
+Let's start by setting a few constants (the purpose of all of these will become clear as we go through the exercises):
+
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+# Configuration
+MODEL_NAME_8B = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+MODEL_NAME_14B = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
+DATASET_NAME = "uzaymacar/math-rollouts"
+BLACKMAIL_DATASET_NAME = "uzaymacar/blackmail-rollouts"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+SIMILARITY_THRESHOLD = 0.8
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Next, we'll load in our embedding model. Embedding models are unsupervised models designed to take in text and output a vector - we'll be using them to classify the similarity of different sentences, so we can find motifs in our reasoning traces.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
 
 embedding_model = SentenceTransformer(EMBEDDING_MODEL)
 print(embedding_model)
@@ -184,12 +313,12 @@ print(embedding_model)
 # ! TAGS: []
 
 r"""
-To understand how embedding models work, let's look at cosine similarities between example sentences:
+To understand how embedding models work, let's look at cosine similarities between a few example sentences:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 prompts = [
     "Wait, I think I made an error in my reasoning and need to backtrack",
@@ -218,12 +347,12 @@ plt.show()
 # ! TAGS: []
 
 r"""
-Now let's load the dataset from HuggingFace. The dataset contains pre-computed rollouts with resampling data:
+We can also load in the dataset that the paper's authors have helpfully open-sourced. The dataset is very large, but the authors provide the structure in the corresponding [HuggingFace page](https://huggingface.co/datasets/uzaymacar/math-rollouts), so we can use the `huggingface_hub` package to load in just the data we want. We'll inspect this dataset more shortly.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 PROBLEM_ID = 4682
 
@@ -242,21 +371,34 @@ print(f"\nProblem prompt:\n{problem_data['prompt'][:500]}...")
 
 r"""
 ## Sentence Splitting
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - implement sentence splitting
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
+> Importance: 🔵⚪⚪⚪⚪
 >
-> You should spend up to 10-15 minutes on this exercise.
+> You should spend ~10 minutes on this exercise.
 > ```
 
-Split CoT traces into sentences based on punctuation. Handle edge cases like:
-- Remove `<think> ... </think>` tags
-- Split on `.`, `!`, `?`, newlines, and `:`
-- Don't split decimal numbers like `34.5` or numbered lists like `1.`
-- Merge chunks shorter than 10 characters with the next chunk
+First, we'll need to split our CoT traces into sentences based on punctuation and paragraph indices. We'll also need to handle special tokens like `<think>`.
+
+You should fill in the `split_solution_into_chunks` function below. We've given you a few basic tests to pass; when your solution passes all of them you can be confident you've dealt with enough edge cases. Here is the full set of rules as defined by the edge cases:
+
+- The `<think> ... </think>` tags should be removed
+- You should split on sentences (i.e. ending in any of `.`, `!`, `?`, or newlines), and characters like `: `
+- If the period `.` is in a decimal or numbered list (e.g. `34.5` or `\n1.`) then you shouldn't split on it
+- You should split on periods `.` unless they are decimal numbers e.g. `x.y` or a numbered list e.g. `\n1.`
+- No chunk should have length less than 10: if so, then merge it with the next chunk
+- Each chunk should be stripped of whitespace
+
+This is a bit of a grunt task, so a good candidate for using LLMs if you're stuck on some of the test cases!
 """
 
 # ! CELL TYPE: code
@@ -291,37 +433,43 @@ def split_solution_into_chunks(text: str) -> list[str]:
     chunks = [re.sub(r"<DECIMAL>", ".", c) for c in chunks]
 
     # Merge chunks that are too short
-    while len(chunks) > 1 and min([len(x) for x in chunks[:-1]]) < 10:
-        for i, chunk in enumerate(chunks[:-1]):
-            if len(chunk) < 10:
-                chunks = chunks[:i] + [chunk + chunks[i + 1]] + chunks[i + 2 :]
-                break
+    merged = [chunks[0]]
+    for c in chunks[1:]:
+        if len(merged[-1]) < 10:
+            merged[-1] += c
+        else:
+            merged.append(c)
+    # while len(chunks) > 1 and min([len(x) for x in chunks[:-1]]) < 10:
+    #     for i, chunk in enumerate(chunks[:-1]):
+    #         if len(chunk) < 10:
+    #             chunks = chunks[:i] + [chunk + chunks[i + 1]] + chunks[i + 2 :]
+    #             break
 
-    return [c.strip() for c in chunks if c.strip()]
+    return [c.strip() for c in merged if c.strip()]
     # END SOLUTION
 
 
-# Test cases
-test_cases = [
-    (
-        "<think>First, I understand the problem. Next, I'll solve for x. Finally, I verify!</think>",
-        ["First, I understand the problem.", "Next, I'll solve for x.", "Finally, I verify!"],
-    ),
-    (
-        "<think>Let me break this down: 1. Convert to decimal. 2. Calculate log. 3. Apply formula.</think>",
-        ["Let me break this down:", "1. Convert to decimal.", "2. Calculate log.", "3. Apply formula."],
-    ),
-    (
-        "<think>The answer is 42. Done.</think>",
-        ["The answer is 42.", "Done."],
-    ),
-]
+if MAIN:
+    test_cases = [
+        (
+            "<think>First, I understand the problem. Next, I'll solve for x. Finally, I verify!</think>",
+            ["First, I understand the problem.", "Next, I'll solve for x.", "Finally, I verify!"],
+        ),
+        (
+            "<think>Let me break this down: 1. Convert to decimal. 2. Calculate log. 3. Apply formula.</think>",
+            ["Let me break this down:", "1. Convert to decimal.", "2. Calculate log.", "3. Apply formula."],
+        ),
+        (
+            "<think>The answer is 42. Done.</think>",
+            ["The answer is 42.", "Done."],
+        ),
+    ]
 
-for input_text, expected_chunks in test_cases:
-    chunks = split_solution_into_chunks(input_text)
-    assert chunks == expected_chunks, f"Expected {expected_chunks}, got {chunks}"
+    for input_text, expected_chunks in test_cases:
+        chunks = split_solution_into_chunks(input_text)
+        assert chunks == expected_chunks, f"Expected {expected_chunks}, got {chunks}"
 
-print("All tests passed!")
+    print("All tests passed!")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -329,7 +477,13 @@ print("All tests passed!")
 
 r"""
 ## Sentence Categorization
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 The paper uses a taxonomy of 8 categories:
 
 1. **Problem Setup**: Parsing or rephrasing the problem
@@ -340,6 +494,8 @@ The paper uses a taxonomy of 8 categories:
 6. **Result Consolidation**: Aggregating intermediate results, summarizing
 7. **Self Checking**: Verifying previous steps
 8. **Final Answer Emission**: Explicitly stating the final answer
+
+Let's define these below:
 """
 
 # ! CELL TYPE: code
@@ -358,25 +514,19 @@ CATEGORIES = {
     "unknown": "Unknown",
 }
 
-CATEGORY_COLORS = {
-    "Problem Setup": "#4285F4",
-    "Plan Generation": "#EA4335",
-    "Fact Retrieval": "#FBBC05",
-    "Active Computation": "#34A853",
-    "Uncertainty Management": "#9C27B0",
-    "Result Consolidation": "#00BCD4",
-    "Self Checking": "#FF9800",
-    "Final Answer Emission": "#795548",
-    "Unknown": "#9E9E9E",
-}
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
 ### Exercise - heuristic-based categorization
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -452,29 +602,29 @@ def categorize_sentences_heuristic(chunks: list[str]) -> list[str]:
     # END SOLUTION
 
 
-# Test
-example_sentences = [
-    "I need to find the area of a circle with radius 5.",
-    "The formula for circle area is A = πr².",
-    "Substituting r = 5: A = π × 5² = 25π.",
-    "Wait, let me look again at that calculation.",
-    "So the area is 25π square units.",
-    "Therefore, the answer is \\boxed{25π}.",
-]
-expected_categories = [
-    "Problem Setup",
-    "Fact Retrieval",
-    "Active Computation",
-    "Uncertainty Management",
-    "Result Consolidation",
-    "Final Answer Emission",
-]
+if MAIN:
+    example_sentences = [
+        "I need to find the area of a circle with radius 5.",
+        "The formula for circle area is A = πr².",
+        "Substituting r = 5: A = π × 5² = 25π.",
+        "Wait, let me look again at that calculation.",
+        "So the area is 25π square units.",
+        "Therefore, the answer is \\boxed{25π}.",
+    ]
+    expected_categories = [
+        "Problem Setup",
+        "Fact Retrieval",
+        "Active Computation",
+        "Uncertainty Management",
+        "Result Consolidation",
+        "Final Answer Emission",
+    ]
 
-categories = categorize_sentences_heuristic(example_sentences)
-for sentence, cat, expected in zip(example_sentences, categories, expected_categories):
-    assert cat == expected, f"Expected {expected!r}, got {cat!r} for: {sentence!r}"
+    categories = categorize_sentences_heuristic(example_sentences)
+    for sentence, cat, expected in zip(example_sentences, categories, expected_categories):
+        assert cat == expected, f"Expected {expected!r}, got {cat!r} for: {sentence!r}"
 
-print("All tests passed!")
+    print("All tests for `categorize_sentences_heuristic` passed!")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -482,7 +632,13 @@ print("All tests passed!")
 
 r"""
 ### Exercise - implement an autorater
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -492,42 +648,113 @@ r"""
 
 We'll now progress to a slightly more advanced approach for classification, using an **autorater**. This essentially means we're querying an LLM to do the categorization for us, rather than relying on hardcoded rules.
 
-We'll start by setting up a helper function to call an API (to keep things simple we're sticking with OpenAI for now, but this could easily be modified to support other providers). It has the option of returning in structured output, which can be helpful for classification tasks.
+We'll start by setting up helper functions to call an API via OpenRouter (which supports many different model providers). We'll define `generate_response` for single calls and `generate_responses_parallel` for batch processing.
 
-You'll need to create an `.env` file in the current working directory and set the `OPENAI_API_KEY` environment variable, then you can run the cell below to see how the helper function works.
+You'll need to create an `.env` file in the current working directory and set the `OPENROUTER_API_KEY` environment variable, then you can run the cell below to see how the helper functions work.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-
-def generate_api_response(
-    model: str = "gpt-4.1-mini",
-    messages: list[dict[str, str]] = [],
+def generate_response(
+    model: str,
+    messages: list[dict[str, str]],
     max_tokens: int = 128,
+    stop_sequences: list[str] | None = None,
     temperature: float = 0.0,
-    max_retries: int = 3,
+    max_retries: int = 10,
 ) -> str:
-    """Helper function with retry logic."""
+    """Single API call with retry logic for rate limits."""
+    assert openrouter_client, "OpenRouter API key not set (see earlier instructions)."
+
+    stop_sequences = stop_sequences or []
+
     for attempt in range(max_retries):
         try:
-            resp = openai_client.chat.completions.create(
-                model=model, messages=messages, max_tokens=max_tokens, temperature=temperature
+            resp = openrouter_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop_sequences if stop_sequences else None,
             )
             return resp.choices[0].message.content or ""
         except Exception as e:
+            print(str(e))
             if "rate_limit" in str(e).lower() or "429" in str(e):
-                wait_time = 2**attempt
-                print(f"Rate limit hit, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                continue
+                if attempt < max_retries - 1:
+                    wait_time = 2**attempt
+                    print(f"Rate limit hit, waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
             raise e
     return ""
+
+
+def generate_responses_parallel(
+    messages_list: list[list[dict[str, str]]],
+    model: str,
+    max_tokens: int = 128,
+    stop_sequences: list[str] | None = None,
+    temperature: float = 1.0,
+    max_workers: int = 10,
+) -> list[str | Exception]:
+    """
+    Run multiple API calls in parallel using ThreadPoolExecutor.
+
+    Args:
+        messages_list: List of message lists, each to be sent as a separate API call
+        model: Model identifier for OpenRouter
+        max_tokens: Max tokens per response
+        stop_sequences: Stop sequences for generation
+        temperature: Sampling temperature
+        max_workers: Maximum number of parallel workers
+
+    Returns:
+        List of responses (strings) or Exceptions for failed calls, in same order as input
+    """
+    stop_sequences = stop_sequences or []
+    results: dict[int, str | Exception] = {}
+    pbar = tqdm(total=len(messages_list), desc="API calls")
+
+    def call_single(idx: int, messages: list[dict[str, str]]) -> tuple[int, str | Exception]:
+        """Helper function to make a single API call."""
+        try:
+            time.sleep(0.1)  # Rate limiting
+            result = generate_response(model, messages, max_tokens, stop_sequences, temperature)
+            return idx, result
+        except Exception as e:
+            return idx, e
+
+    # Execute tasks in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks with their indices
+        futures = [executor.submit(call_single, i, m) for i, m in enumerate(messages_list)]
+
+        # Process completed tasks
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results[idx] = result
+            pbar.update(1)
+
+    pbar.close()
+
+    # Return results in original order
+    return [results[i] for i in range(len(messages_list))]
+
+
+# Demo of how this function works:
+if MAIN:
+    sys_prompt = {"role": "system", "content": "Reply in rhyming couplets."}
+    test_messages = [
+        [sys_prompt, {"role": "user", "content": "What is 2+2?"}],
+        [sys_prompt, {"role": "user", "content": "What is the capital of France?"}],
+    ]
+    responses = generate_responses_parallel(test_messages, model="openai/gpt-4.1-mini", max_tokens=40)
+    for i, response in enumerate(responses):
+        print(f"Response {i + 1}:\n{response}\n")
 
 
 # ! CELL TYPE: code
@@ -559,7 +786,9 @@ Return a numbered list with one function tag per chunk:
 """
 
 
-def categorize_sentences_autorater(problem_text: str, chunks: list[str]) -> list[str]:
+def categorize_sentences_autorater(
+    problem_text: str, chunks: list[str], model: str = "openai/gpt-4.1-mini"
+) -> list[str]:
     """Categorize sentences using an LLM autorater."""
     # EXERCISE
     # raise NotImplementedError("Implement autorater categorization")
@@ -580,12 +809,21 @@ Here is the Chain of Thought, broken into chunks:
 
 Now label each chunk with function tags."""
 
-    raw_response = generate_api_response(
-        messages=[
+    messages_list = [
+        [
             {"role": "system", "content": DAG_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
-        ],
+        ]
+    ]
+
+    responses = generate_responses_parallel(
+        messages_list=messages_list,
+        model=model,
+        max_tokens=128,
+        temperature=0.0,
     )
+
+    raw_response = responses[0] if isinstance(responses[0], str) else ""
     response = re.split(r"\n\d{1,2}\.", "\n" + raw_response.strip())
     response = [r.strip() for r in response if r.strip()]
 
@@ -597,12 +835,7 @@ Now label each chunk with function tags."""
     # END SOLUTION
 
 
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# Test the autorater if API key is available
-if openai_client:
+if MAIN:
     example_problem = "What is the area of a circle with radius 5?"
     autorater_categories = categorize_sentences_autorater(example_problem, example_sentences)
 
@@ -621,44 +854,22 @@ if openai_client:
 
 r"""
 ## Visualization Helper
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 Let's create a helper function to visualize reasoning traces:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
-
-
-def visualize_trace_structure(chunks: list[str], categories: list[str], problem_text: str = None):
-    """Visualize a reasoning trace with color-coded sentence categories."""
-    n_chunks = len(chunks)
-    fig, ax = plt.subplots(figsize=(12, 1 + int(0.5 * n_chunks)))
-
-    for idx, (chunk, category) in enumerate(zip(chunks, categories)):
-        color = CATEGORY_COLORS.get(category, "#9E9E9E")
-        y = n_chunks - idx
-
-        ax.barh(y, 0.15, left=0, height=0.8, color=color, alpha=0.6)
-        ax.text(0.075, y, f"{category}", ha="center", va="center", fontsize=9, weight="bold")
-
-        text = chunk[:100] + ("..." if len(chunk) > 100 else "")
-        ax.text(0.17, y, f"[{idx}] {text}", va="center", fontsize=9)
-
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0.5, n_chunks + 0.5)
-    ax.axis("off")
-
-    if problem_text:
-        fig.suptitle(f"Problem: {problem_text[:100]}...", fontsize=11, y=0.98, weight="bold")
-
-    plt.title("Reasoning Trace Structure", fontsize=13, pad=30)
-    plt.tight_layout()
-    plt.show()
-
+# ! TAGS: [main]
 
 # Example visualization
-visualize_trace_structure(example_sentences, categories, "What is the area of a circle with radius 5?")
+utils.visualize_trace_structure(example_sentences, categories, "What is the area of a circle with radius 5?")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -666,19 +877,6 @@ visualize_trace_structure(example_sentences, categories, "What is the area of a 
 
 r"""
 # 2️⃣ Black-box Analysis
-
-Before we look at any metrics, let's think about what we're trying to measure.
-
-The core question is: **which sentences in a reasoning trace actually matter for the final answer?**
-
-There are (at least) two ways a sentence might "matter":
-
-1. **Information content**: The sentence contains information needed to reach the answer
-2. **Trajectory shaping**: The sentence influences what the model says next, even if removed later
-
-These are different! A sentence might be necessary for the final answer (type 1) but not shape the trajectory much because the model would have gotten there anyway. Or a sentence might radically change the model's reasoning direction (type 2) even if it doesn't directly contain the answer.
-
-We'll start with a simple baseline metric, then progressively refine it to capture more of what we care about.
 """
 
 # ! CELL TYPE: markdown
@@ -686,14 +884,82 @@ We'll start with a simple baseline metric, then progressively refine it to captu
 # ! TAGS: []
 
 r"""
-## Loading the Dataset
+The paper used three different methods to measure sentence importance:
 
-Let's load the full problem data including resampled rollouts:
+**1. Forced Answer Importance**. For each sentence $S_i$ in the CoT, we interrupt the model and append text, inducing a final output: `Therefore, the final answer is \\boxed{...}`. We then measure the model's accuracy when forced to answer immediately. If $A^f_i$ is the final answer when we force the model to answer immediately after $S_i$, and $P(A)$ is the probability of answer $A$ being correct, then the formula for forced answer importance is:
+
+$$
+\text{importance}_f := P(A^f_i) - P(A^f_{i-1})
+$$
+
+<details>
+<summary>Can you see a flaw in this approach, when it comes to identifying sentences which are critical for the model's reasoning process? Click here to reveal the answer.</summary>
+
+Some sentence $S$ might be necessary for the final answer, but comes late in the reasoning process, meaning all sentences before $S$ will result in low accuracy by this metric. We will only pick up sentences whose inclusion *in combination with all previous sentences* gets us from the wrong answer to the right one.
+
+For people who have completed the IOI material / done much work with model internals, this is the equivalent of finding the most important model components by seeing which ones write the final answer to the residual stream. It's a good start, but doesn't tell you much about the steps of the computation beyond the last one.
+
+</details>
+
+**2. Resampling Importance**. To address the flaw above, for each sentence $S_i$ in the CoT, we can resample a whole trajectory $(S_1, S_2, \ldots, S_{i-1}, S_i, S'_{i+1}, ..., S'_N, A^r_i)$ (where $A^r_i$ is the final answer we get from resampling chunks after $S_i$). By comparing it to the corresponding trajectory $(S_1, S_2, \ldots, S'_i, ..., S'_{N}, A^r_i)$ which we get from resampling chunks including $S_i$, we can get a sense for how important $S_i$ was for producing the final answer. Our metric is:
+
+$$
+\text{importance}_r := P(A^r_i) - P(A^r_{i-1})
+$$
+
+**3. Counterfactual Importance**. An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constraints what can be expressed at that position. To fix this, we can filter for cases where these two sentences are fairly different, using a semantic similarity metric derived from our embedding model. This gives us a counterfactual importance metric which is identical to the previous one, but just with filtered rollouts:
+
+$$
+\text{importance} := P(A^c_i) - P(A^c_{i-1})
+$$
+
+In these sections, we'll work through each of these metrics in turn. The focus will be computing these metrics **on the dataset we've already been provided**, with the full replication (including your own implementation of resampling) coming in the next section.
 """
 
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
+
+r"""
+## Looking closer at our dataset
+
+Before getting into the exercises, let's look closer at our dataset to see what we're working with. As mentioned, we'll be setting aside our actual model and chunking functions temporarily, so we can focus on analysing the resampled rollouts already provided to us in this dataset.
+
+The code below loads in all the data necessary for analyzing a single problem. This contains:
+
+- `problem` which contains the problem statement, along with some basic metadata (including the answer)
+- `chunks_labeled[i]`, data for the `i`-th chunk (e.g. what category it is, plus some metrics)
+- `chunk_solutions_forced[i][j]`, data for the `j`-th rollout we get from forcing an answer immediately after the `i`-th chunk (e.g. for `i=0` this means forcing an answer before any chunks are included)
+- `chunk_solutions[i][j]`, data for the `j`-th rollout we get from resampling immediately after the `i`-th chunk
+
+We'll be using this data to implement the three importance metrics described above.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - inspect the dataset
+
+> ```yaml
+> Difficulty: 🔴⚪⚪⚪⚪
+> Importance: 🔵🔵⚪⚪⚪
+> 
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Run the code below to load in the data for a single problem (note we're using generations from `deepseek-r1-distill-qwen-14b` rather than our Llama-8b model here, so that we match the case study in the paper's appendix).
+
+Make sure you understand the structure of the data, since this will make the following exercises easier. 
+
+Here are a few investigative questions you might try to answer when inspecting this problem's data:
+
+- How has the chunking worked here? Can you see any obvious issues with how it's been applied, e.g. places where a chunk has been split that shouldn't have been?
+- Do the categories look reasonable? You can try comparing them to each of your autoraters, and see what fraction match.
+- Inspect `chunk_solutions_forced`, and see how early the model generally manages to get the answer correct.
+- Inspect `chunk_solutions`, and see how much variety the model's completions have when resampled from various stages in the reasoning process.
+"""
 
 
 def load_single_file(file_path: str):
@@ -703,24 +969,32 @@ def load_single_file(file_path: str):
 
 
 def load_problem_data(problem_id: int, model_name: str = "deepseek-r1-distill-qwen-14b", verbose: bool = True):
-    """Load all data for a single problem including resampled rollouts."""
     disable_progress_bars()
 
     problem_dir = "correct_base_solution"
     problem_dir_forced = "correct_base_solution_forced_answer"
-
     problem_path = f"{model_name}/temperature_0.6_top_p_0.95/{problem_dir}/problem_{problem_id}"
     problem_path_forced = f"{model_name}/temperature_0.6_top_p_0.95/{problem_dir_forced}/problem_{problem_id}"
 
     base_solution = load_single_file(f"{problem_path}/base_solution.json")
     problem = load_single_file(f"{problem_path}/problem.json")
     chunks_labeled = load_single_file(f"{problem_path}/chunks_labeled.json")
-    chunk_solutions = []
-    chunk_solutions_forced = []
 
-    for chunk_idx in tqdm(range(len(chunks_labeled)), disable=not verbose, desc="Loading chunks"):
-        chunk_solutions.append(load_single_file(f"{problem_path}/chunk_{chunk_idx}/solutions.json"))
-        chunk_solutions_forced.append(load_single_file(f"{problem_path_forced}/chunk_{chunk_idx}/solutions.json"))
+    n_chunks = len(chunks_labeled)
+    chunk_solutions = [None] * n_chunks
+    chunk_solutions_forced = [None] * n_chunks
+
+    def load_chunk(chunk_idx):
+        sol = load_single_file(f"{problem_path}/chunk_{chunk_idx}/solutions.json")
+        forced = load_single_file(f"{problem_path_forced}/chunk_{chunk_idx}/solutions.json")
+        return chunk_idx, sol, forced
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(load_chunk, i) for i in range(n_chunks)]
+        for future in tqdm(as_completed(futures), total=n_chunks, disable=not verbose, desc="Loading chunks"):
+            idx, sol, forced = future.result()
+            chunk_solutions[idx] = sol
+            chunk_solutions_forced[idx] = forced
 
     enable_progress_bars()
 
@@ -733,21 +1007,19 @@ def load_problem_data(problem_id: int, model_name: str = "deepseek-r1-distill-qw
     }
 
 
-problem_data = load_problem_data(PROBLEM_ID)
+if MAIN:
+    # Load a problem
+    problem_data = load_problem_data(PROBLEM_ID)
 
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
+    # Inspect the problem structure
+    print("Problem:", problem_data["problem"]["problem"][:200], "...")
+    print(f"\nGround truth answer: {problem_data['problem']['gt_answer']}")
+    print(f"Number of chunks: {len(problem_data['chunks_labeled'])}")
+    print(f"Rollouts per chunk: {len(problem_data['chunk_solutions'][0])}")
 
-# Inspect the structure
-print("Problem:", problem_data["problem"]["problem"][:200], "...")
-print(f"\nGround truth answer: {problem_data['problem']['gt_answer']}")
-print(f"\nNumber of chunks: {len(problem_data['chunks_labeled'])}")
-print(f"Rollouts per chunk: {len(problem_data['chunk_solutions'][0])}")
-
-# Show first few chunks
-for i, c in enumerate(problem_data["chunks_labeled"][:5]):
-    print(f"\n{i}. [{c['function_tags'][0]}] {c['chunk'][:80]}...")
+    # Show first few chunks
+    for i, c in enumerate(problem_data["chunks_labeled"][:5]):
+        print(f"{i}. [{c['function_tags'][0]}] {c['chunk'][:80]}...")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -755,7 +1027,13 @@ for i, c in enumerate(problem_data["chunks_labeled"][:5]):
 
 r"""
 ## Forced Answer Importance (Baseline)
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 For each sentence $S_i$, we interrupt the model and force it to output a final answer. We measure how accuracy changes:
 
 $$\text{importance}_f(i) := P(A^f_i \text{ correct}) - P(A^f_{i-1} \text{ correct})$$
@@ -767,7 +1045,13 @@ This only captures the *final step that tips the scales* - when all previous sen
 
 Analogy: It's like measuring which brick "caused" a wall to reach a certain height - technically only the last brick did, but all previous bricks were necessary too.
 </details>
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - calculate forced answer importance
 
 > ```yaml
@@ -776,6 +1060,10 @@ Analogy: It's like measuring which brick "caused" a wall to reach a certain heig
 >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
+
+You should fill in the function below, to compute the forced answer importance on a set of chunks and their labelled categories. Note that the function takes a list of lists of full CoT rollouts, meaning you'll need to parse out the model's answer from the CoT yourself.
+
+Note, the model's return type can vary: for example in a question about interest rates with the answer `6.17`, the model sometimes responds with e.g. `6.17%` or `r = 6.17`. In this case study we're dealing with a problem that has an integer solution so this isn't really an issue, but it's still good practice to handle these kinds of cases when you're parsing the answer.
 """
 
 # ! CELL TYPE: code
@@ -814,9 +1102,45 @@ def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> 
     # END SOLUTION
 
 
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
+
+r"""
+When you've done this, run the cell below to get your results and plot them. Note, this should **not**  match the paper's "Figure 2" results yet, since we're using forced answer importance, not resampled or counterfactual importance.
+
+What do you notice about these results? What sentences are necessary for the model to start getting greater-than-zero accuracy? Are there any sentences which significantly drop or raise the model's accuracy, and can you explain why?
+
+<details>
+<summary>What patterns do you notice? (click to see discussion)</summary>
+
+You should see that:
+- Most early chunks have ~0 importance (the model can't answer correctly yet)
+- There are sharp spikes near the end when critical computations are made
+- Some chunks have *negative* importance - they might introduce confusion or errors
+
+For example, if a model is near the end of its reasoning, it might follow a pattern like "maybe X, wait no actually Y", and this will result in wildly careening forced answer importance values for those last few sentences, which aren't really represenative of how important the sentence was in the actual reasoning process.
+
+The limitation is clear: this only captures the "final step" that tips from wrong to right. Earlier important reasoning steps get 0 importance even if they were essential.
+</details>
+
+<details>
+<summary>Note on the small discrepancy from the actual dataset metrics</summary>
+
+A small discrepancy between your results and those in the dataset is fine, and expected. The current version of the dataset that is uploaded seems to have a bug in the "forced answer" metric data, for example it will classify the following rollout:
+
+```
+'Therefore, the final answers is \\boxed{20}. However, upon re-examining ... so the correct answer is \\boxed{19}.'
+```
+
+as having a final answer of `20` rather than `19`, hence incorrectly classifying the answer as wrong.
+
+</details>
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
 
 # Calculate forced answer importance
 full_cot_list = [
@@ -826,33 +1150,36 @@ answer = problem_data["problem"]["gt_answer"]
 
 forced_importances = calculate_answer_importance(full_cot_list, answer)
 
-# Plot
-fig, ax = plt.subplots(figsize=(12, 4))
-ax.bar(range(len(forced_importances)), forced_importances, alpha=0.7)
-ax.set_xlabel("Chunk Index")
-ax.set_ylabel("Forced Answer Importance")
-ax.set_title("Forced Answer Importance by Chunk")
-ax.axhline(0, color="black", linewidth=0.5)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.tight_layout()
-plt.show()
+# Get chunk texts for hover data
+chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
+
+# Plot with plotly
+fig = go.Figure()
+fig.add_trace(
+    go.Bar(
+        x=list(range(len(forced_importances))),
+        y=forced_importances,
+        opacity=0.7,
+        hovertemplate="<b>Chunk %{x}</b><br>Importance: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
+        customdata=[chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover],
+    )
+)
+fig.add_hline(y=0, line_color="black", line_width=0.5)
+fig.update_layout(
+    title="Forced Answer Importance by Chunk",
+    xaxis_title="Chunk Index",
+    yaxis_title="Forced Answer Importance",
+    width=900,
+    height=400,
+)
+fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-<details>
-<summary>What patterns do you notice? (click to see discussion)</summary>
-
-You should see that:
-- Most early chunks have ~0 importance (the model can't answer correctly yet)
-- There are sharp spikes near the end when critical computations are made
-- Some chunks have *negative* importance - they might introduce confusion or errors
-
-The limitation is clear: this only captures the "final step" that tips from wrong to right. Earlier important reasoning steps get 0 importance even if they were essential.
-</details>
+## Resampling Importance
 """
 
 # ! CELL TYPE: markdown
@@ -860,14 +1187,18 @@ The limitation is clear: this only captures the "final step" that tips from wron
 # ! TAGS: []
 
 r"""
-## Resampling Importance (Improvement)
-
-To address the limitation, we resample *after* each sentence and measure how this changes the final answer distribution:
+To address the limitation described in the dropdown above, we resample immediately after each sentence and measure how this changes the final answer distribution:
 
 $$\text{importance}_r(i) := P(A^r_i \text{ correct}) - P(A^r_{i-1} \text{ correct})$$
 
-The key difference: $A^r_i$ comes from a full resampled trajectory starting after $S_i$, not a forced early answer.
+The key difference: $A^r_i$ comes from a full resampled trajectory starting after $S_i$, not a forced early answer. This captures less narrow ways in which the sentence is important.
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compare resampling importance
 
 > ```yaml
@@ -878,48 +1209,89 @@ The key difference: $A^r_i$ comes from a full resampled trajectory starting afte
 > ```
 
 The same `calculate_answer_importance` function works - we just apply it to different data!
+
+Before computing this, think for a while about what you expect to see. How do you think the resampling importance results will compare to the forced answer importances?
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
+# EXERCISE
+# # YOUR CODE HERE - compute `resampling_importances` using `calculate_answer_importance`
+# # on the resampled rollouts
+# EXERCISE END
+# SOLUTION
 # Calculate resampling importance (same function, different data!)
 full_cot_list_resampled = [
     [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
 ]
 
 resampling_importances = calculate_answer_importance(full_cot_list_resampled, answer)
+# SOLUTION END
 
-# Compare with precomputed values from dataset
+# Compare with precomputed values from dataset (they used a slightly different method to us, but
+# we should get an answer within 1% of theirs)
 precomputed = [chunk["resampling_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
 avg_diff = np.abs(np.subtract(resampling_importances, precomputed)).mean()
-print(f"Average difference from precomputed: {avg_diff:.4f}")
+assert avg_diff < 0.01, "Error above 1% threshold"
 
-# ! CELL TYPE: code
+
+# Plot comparison between these two metrics
+chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
+hover_texts = [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover]
+
+fig = make_subplots(
+    rows=2,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.1,
+    subplot_titles=("Forced Answer Importance", "Resampling Importance"),
+)
+
+for row, color, y in [(1, "cornflowerblue", forced_importances), (2, "orange", resampling_importances)]:
+    fig.add_trace(
+        go.Bar(
+            x=list(range(len(y))),
+            y=y,
+            opacity=0.7,
+            name="Forced" if color == "blue" else "Resampling",
+            marker_color=color,
+            hovertemplate="<b>Chunk %{x}</b><br>Importance: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
+            customdata=hover_texts,
+        ),
+        row=row,
+        col=1,
+    )
+
+
+fig.add_hline(y=0, line_color="black", line_width=0.5, row=1, col=1)
+fig.add_hline(y=0, line_color="black", line_width=0.5, row=2, col=1)
+fig.update_layout(width=900, height=500, showlegend=False)
+fig.update_xaxes(title_text="Chunk Index", row=2, col=1)
+fig.update_yaxes(title_text="Importance", row=1, col=1)
+fig.update_yaxes(title_text="Importance", row=2, col=1)
+fig.show()
+
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-# Plot comparison
-fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+r"""
+<details>
+<summary>Solution & discussion</summary>
 
-axes[0].bar(range(len(forced_importances)), forced_importances, alpha=0.7, label="Forced")
-axes[0].set_ylabel("Importance")
-axes[0].set_title("Forced Answer Importance")
-axes[0].axhline(0, color="black", linewidth=0.5)
-axes[0].spines["top"].set_visible(False)
-axes[0].spines["right"].set_visible(False)
+```
+SOLUTION
+```
 
-axes[1].bar(range(len(resampling_importances)), resampling_importances, alpha=0.7, color="orange", label="Resampling")
-axes[1].set_xlabel("Chunk Index")
-axes[1].set_ylabel("Importance")
-axes[1].set_title("Resampling Importance")
-axes[1].axhline(0, color="black", linewidth=0.5)
-axes[1].spines["top"].set_visible(False)
-axes[1].spines["right"].set_visible(False)
+You should see the resampling importance values are often higher at earlier steps, petering out by the second half of the rollout chunks.
 
-plt.tight_layout()
-plt.show()
+Moreover, the highest-importance sentences according to this metric are the ones that involve some amount of planning. The most important (nearly 4x higher than any other positive sentence) is one that appears in the first 15% of the rollout chunks, and which outlines the plan the model will use for solving this problem. The most negative sentence is the one which appears immediately *before* that one, which expresses a slightly different plan. 
+
+</details>
+
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -928,12 +1300,14 @@ plt.show()
 r"""
 ## Semantic Similarity in Resampling
 
-Before implementing counterfactual importance, let's understand when resampled sentences are actually *different* from the originals:
+Before we look at the last metric (counterfactual importance), let's revisit the notion of embedding cosine similarity. Since we have data on a bunch of resampled rollouts at different chunks, we can compute the average cosine similarity between a chunk and all of its resampled chunks (i.e. $S_i$ and $S'_i$ in the notation above). Run the cells below to compute these cosine similarities and plot them.
+
+Which kinds of sentences seem like their resamples have the highest or lowest cosine similarity? Can you explain why?
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 # Compute cosine similarity between original and resampled chunks
 chunks_removed = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
@@ -948,38 +1322,78 @@ embeddings_resampled = np.stack([embedding_model.encode(r) for r in chunks_resam
 cos_sims = einops.einsum(embeddings_original, embeddings_resampled, "chunk d, chunk resample d -> chunk resample")
 cos_sims_mean = cos_sims.mean(axis=1)
 
-# Plot by category
+# Plot by category with plotly
 chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"]]
-df = pd.DataFrame({"Label": chunk_labels, "Cosine Similarity": cos_sims_mean})
+chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
+df = pd.DataFrame({"Label": chunk_labels, "Cosine Similarity": cos_sims_mean, "Chunk Text": chunks_for_hover})
 
-fig, ax = plt.subplots(figsize=(10, 4))
+fig = go.Figure()
 for label in df["Label"].unique():
     subset = df[df["Label"] == label]
-    ax.bar(subset.index, subset["Cosine Similarity"], label=label, color=CATEGORY_COLORS.get(label, "#9E9E9E"))
+    hover_texts = [text[:100] + "..." if len(text) > 100 else text for text in subset["Chunk Text"]]
+    fig.add_trace(
+        go.Bar(
+            x=subset.index.tolist(),
+            y=subset["Cosine Similarity"].tolist(),
+            name=label,
+            marker_color=utils.CATEGORY_COLORS.get(label, "#9E9E9E"),
+            hovertemplate="<b>Chunk %{x}</b><br>Category: "
+            + label
+            + "<br>Cosine Similarity: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
+            customdata=hover_texts,
+        )
+    )
 
-ax.set_xlabel("Chunk Index")
-ax.set_ylabel("Mean Cosine Similarity to Resamples")
-ax.set_title("How Similar are Resampled Chunks to Originals?")
-ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.tight_layout()
-plt.show()
+fig.update_layout(
+    title="How Similar are Resampled Chunks to Originals?",
+    xaxis_title="Chunk Index",
+    yaxis_title="Mean Cosine Similarity to Resamples",
+    width=900,
+    height=400,
+    legend=dict(x=1.02, y=1, xanchor="left"),
+    bargap=0,
+)
+fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
+<!--
 <details>
 <summary>What patterns do you notice? (click to see discussion)</summary>
 
-- **High similarity** (near 1.0): Final Answer Emission, some Active Computation - these are constrained by context
+- **High similarity** (near 1.0): Final Answer Emission, some Active Computation - these are constrained by context (e.g. there's very little variation in how you can emit the final answer, and the chunk before this one usually makes it clear exactly how this chunk will be phrased)
 - **Low similarity** (below 0.8): Plan Generation, Uncertainty Management - the model could have taken different paths here
 
-This motivates counterfactual importance: we only count resamples that are *genuinely different*.
+This motivates **counterfactual importance**: we only count resamples that are *genuinely different*, and cosine similarity is a perfect metric for this genuine difference.
+</details>
+-->
+
+<details>
+<summary>What patterns do you notice? (click to see discussion)</summary>
+
+You should find that some of the highest average cosine simlarities are for:
+
+- **Final Answer Emission** chunks, which makes sense since there's only a limited number of ways to express an answer (and given the context, it's likely obvious whether the model is about to emit an answer, as well as what the answer will be)
+- **Active Computation** and **Result Consolidation** chunks, especially those which come in batches (e.g. chunks 23-33, 51-59, and 91-97 in the plot below). This makes sense, since these chunks often involve a series of similar steps (e.g. applying an iterative formula, or doing a series of multiplications with different inputs), and once the model starts one of these processes it'll be very constrained in how it acts until it's finished.
+
+Some of the lowest average cosine similarities are for:
+
+- **Plan Generation** chunks which represent changes in trajectory, for example:
+  - Chunk 13: "Alternatively, maybe I can calculate..."
+  - Chunk 49: "Let me convert it step by step again", which is a decision to fix a theorized error earlier in reasoning
+- **Uncertainty Management** chunks which also represent a re-evaluation and could change the subsequent trajectory, for example:
+  - Chunk 45: "I must have made a mistake somewhere"
+  - Chunk 84: "So, which is correct?"
+  - Chunk 139: "Wait, but that's not correct because..."
+
+*Note, there is one chunk (28) which is classified as "result consolidation" and is something of an outlier, with extremely low average cosine similarity to its resamples. However, inspection of `problem_data["chunk_solutions"][28]` shows that this is actually an artifact of incorrect chunking: the resamples here all follow the pattern `"Now, adding all these up:"` followed by an equation, and this has low similarity to the original chunk which (correctly) splits at `:` and so doesn't include the equation. If you want to fix this, you can try using our `split_solution_into_chunks` function from earlier to process the resampled chunks before plotting them. Moral of the story - this kind of string parsing is finnicky and easy to get wrong.*
+
 </details>
 """
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -987,13 +1401,29 @@ This motivates counterfactual importance: we only count resamples that are *genu
 
 r"""
 ## Counterfactual Importance (Refinement)
+"""
 
-Filter for resamples where the new sentence is semantically different (cosine similarity < 0.8):
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Finally, we'll implement **counterfactual importance**:
 
 $$\text{importance}_c(i) := P(A^c_i \text{ correct}) - P(A^c_{i-1} \text{ correct})$$
 
 where $A^c$ only includes rollouts where the resampled sentence was different enough.
 
+This is the same as the resampling importance (and we'll use the same data), but with one difference: we filter out all resampled rollouts where the first resampled chunk $T_i$ is sufficiently different from the chunk $S_i$ which it replaces. In this case, sufficiently different means having an **embedding cosine similarity of less than 0.8**, using our embedding model from earlier.
+
+The intuition for this metric: if resampling importance told us the effect when we choose a different sentence than $S_i$, then counterfactual importance tells us the effect when we **choose a different reasoning path than represented by $S_i$**. Low cosine similarity in this case is a proxy for the reasoning paths being very different (rather than just light rephrasings of what is essentially the same reasoning step).
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compute counterfactual importance
 
 > ```yaml
@@ -1069,9 +1499,34 @@ def calculate_counterfactual_importance(
     # END SOLUTION
 
 
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
+
+r"""
+When you've filled this in, run the cells below to compute and plot the counterfactual importance scores next to your resampling importance scores.
+
+You should find the two metrics (resampling and counterfactual) are mostly quite similar for this example. They differ most in sentences which were also shown from the plot above to have high semantic variance, because these are our **thought anchors**: sentences which guide the entire reasoning process, and so changing them to something different in embedding space has a large effect on the subsequent trajectory.
+
+For example, chunk 3 *"So, maybe I can just figure out how many hexadecimal digits there are..."* has a higher counterfactual importance than resampling importance (about 50% higher). This is because the chunk represents a key part of the overall reasoning process: when the model doesn't say this, it often expresses a different plan such as *"So, maybe I can start by converting each digit one by one..."* or *"So maybe I can just multiply the number of hex digits by 4..."* - you can confirm this by looking at the dataset of rollouts yourself. Even if some of these plans will end up at the same place, the exact plan & phrasing that the model produces in this step will significantly affect its trajectory. 
+
+<details>
+<summary>Discussion of some other chunks with very different resampling & counterfactual values</summary>
+
+**Chunks 53-58: active computations.**
+
+These chunks are a series of active computations. The counterfactual metric should be zero on most or all of these chunks, because all resampled rollouts will have had very similar semantic entropy (the model was essentially forced at this point to carry out a multi-stage computation in a very specific way). This shows our counterfactual metric is working as intended, because we want to identify these kinds of reasoning steps as not particularly important.
+
+**Chunks 43-44, and 28: "chunking bugs".**
+
+Chunks 43-44 say "Now, according to this, it's 19 bits. There's a discrepancy here.** Inspecting the dataset reveals we've caught the model at a reasoning crossroads: about half the time at this point it says "it's 19 bits" and the other half it just says "there's a discrepancy here". So this is an example of when our counterfactual importance metric can still be misleading depending on how we chunk our rollouts. There's a similar story for chunk 28: "Now, adding these all up:". Sometimes the sequence is chunked with "Now, adding these all up: (gives expression)" and sometimes the text and expression are in different chunks. Moral of the story - this kind of string parsing is finnicky and can easily cause issues!
+
+</details>
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
 
 # Calculate counterfactual importance
 chunks_removed = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
@@ -1089,40 +1544,64 @@ counterfactual_importances = calculate_counterfactual_importance(
 # Compare with precomputed
 precomputed_cf = [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
 avg_diff = np.abs(np.subtract(counterfactual_importances, precomputed_cf)).mean()
-print(f"Average difference from precomputed: {avg_diff:.4f}")
+assert avg_diff < 0.025, "Error above 2.5% threshold"
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
+# Plot comparison of all three metrics with subplots (like previous bar chart)
+chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
+hover_texts = [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover]
 
-# Plot comparison of all three metrics
-fig, ax = plt.subplots(figsize=(14, 5))
+fig = make_subplots(
+    rows=3,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.08,
+    subplot_titles=("Forced Answer Importance", "Resampling Importance", "Counterfactual Importance"),
+)
 
-x = np.arange(len(forced_importances))
-width = 0.25
+for row, (name, importances, color) in enumerate(
+    [
+        ("Forced", forced_importances, "cornflowerblue"),
+        ("Resampling", resampling_importances, "orange"),
+        ("Counterfactual", counterfactual_importances, "seagreen"),
+    ],
+    start=1,
+):
+    fig.add_trace(
+        go.Bar(
+            x=list(range(len(importances))),
+            y=importances,
+            name=name,
+            opacity=0.8,
+            marker_color=color,
+            hovertemplate="<b>Chunk %{x}</b><br>"
+            + name
+            + " Importance: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
+            customdata=hover_texts,
+        ),
+        row=row,
+        col=1,
+    )
+    fig.add_hline(y=0, line_color="black", line_width=0.5, row=row, col=1)
 
-ax.bar(x - width, forced_importances, width, label="Forced", alpha=0.8)
-ax.bar(x, resampling_importances, width, label="Resampling", alpha=0.8)
-ax.bar(x + width, counterfactual_importances, width, label="Counterfactual", alpha=0.8)
-
-ax.set_xlabel("Chunk Index")
-ax.set_ylabel("Importance")
-ax.set_title("Comparison of Importance Metrics")
-ax.legend()
-ax.axhline(0, color="black", linewidth=0.5)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.tight_layout()
-plt.show()
+fig.update_layout(
+    title="Comparison of Importance Metrics",
+    xaxis_title="Chunk Index",
+    yaxis_title="Importance",
+    width=1000,
+    height=700,
+    showlegend=False,
+)
+fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Figure 3b Replication: Sentence Category Effect
-
-### Exercise - replicate Figure 3b
+### Exercise - replicate Figure 3b (sentence category effect)
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -1131,13 +1610,24 @@ r"""
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Plot average counterfactual importance by sentence category and normalized position.
+As an open-ended challenge, try replicating Figure 3b from the paper. We've already got all the data you need to do this, so it's just a matter of understanding and plotting the data correctly.
+
+Note that we've so far defined our metrics in terms of accuracy rather than KL divergence, so you should expect to see the metrics looking slightly different (also we're only averaging over a single prompt's chunks rather than over many prompts, so the data will be noisier). But even with these restrictions, you should still be able to get a qualitatively similar plot to Figure 3b. Signs of life you should look for in your plot are:
+
+- (sanity check) **Result Consolidation** has the highest normalized position in trace
+- (core result) **Plan Generation** and **Uncertainty Management** have the highest counterfactual importance
+
+We leave it as an exercise to the reader to scale up the analysis to many different prompts, and add in some good error bars!
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
+# EXERCISE
+# # YOUR CODE HERE - replicate figure 3b!
+# EXERCISE END
+# SOLUTION
 # Create dataframe with position and importance
 chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"]]
 n_chunks = len(chunk_labels) - 1
@@ -1160,7 +1650,9 @@ grouped = df_filtered.groupby("Label")[["Importance", "Position"]].mean().reset_
 # Plot
 fig, ax = plt.subplots(figsize=(8, 6))
 for _, row in grouped.iterrows():
-    ax.scatter(row["Position"], row["Importance"], s=150, label=row["Label"], color=CATEGORY_COLORS.get(row["Label"]))
+    ax.scatter(
+        row["Position"], row["Importance"], s=150, label=row["Label"], color=utils.CATEGORY_COLORS.get(row["Label"])
+    )
 
 ax.set_xlabel("Normalized Position in Trace (0-1)")
 ax.set_ylabel("Mean Counterfactual Importance")
@@ -1170,6 +1662,7 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 plt.tight_layout()
 plt.show()
+# SOLUTION END
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1177,14 +1670,26 @@ plt.show()
 
 r"""
 ## Figure 1 Replication: Sentence-to-Sentence Causal Graph
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 So far we've measured importance for the *final answer*. But we can also ask: how important is sentence $i$ for whether sentence $j$ appears later?
 
 The paper computes this by:
 1. For each target sentence $j$, look at rollouts where sentence $i$ was kept vs removed
 2. Check how often sentence $j$ (or something semantically similar) appears in each set
 3. The difference is the causal importance of $i$ on $j$
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compute sentence match rate
 
 > ```yaml
@@ -1193,6 +1698,8 @@ The paper computes this by:
 >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
+
+The naive implementation of pairwise importance is very slow because it repeatedly embeds the same rollout texts. We'll use a more efficient approach that precomputes all embeddings upfront.
 """
 
 # ! CELL TYPE: code
@@ -1200,130 +1707,252 @@ The paper computes this by:
 # ! TAGS: []
 
 
-def compute_sentence_match_rate(
-    target_sentence: str,
-    rollout_texts: list[str],
+def precompute_rollout_embeddings(
+    chunk_solutions: list[list[dict]],
     embedding_model: SentenceTransformer,
+    batch_size: int = 32,
+) -> tuple[list[list[np.ndarray]], list[list[list[str]]]]:
+    """
+    Precompute embeddings for all sentences in all rollouts using batched encoding.
+
+    Args:
+        chunk_solutions: List of chunk solutions, where chunk_solutions[k] contains
+                        rollouts from resampling after chunk k
+        embedding_model: Sentence embedding model
+        batch_size: Batch size for embedding model encoding
+
+    Returns:
+        rollout_embeddings: rollout_embeddings[k][r] = array of shape (n_sentences, embed_dim)
+        rollout_sentences: rollout_sentences[k][r] = list of sentence strings
+    """
+    # First pass: collect all sentences and track their positions
+    all_sentences: list[str] = []
+    # position_map[k][r] = (start_idx, end_idx) into all_sentences, or None if empty
+    position_map: list[list[tuple[int, int] | None]] = []
+    rollout_sentences: list[list[list[str]]] = []
+
+    for k in tqdm(range(len(chunk_solutions)), desc="Precomputing embeddings"):
+        chunk_positions = []
+        chunk_sentences = []
+
+        for rollout_dict in chunk_solutions[k]:
+            rollout_text = rollout_dict.get("rollout", "")
+            if not rollout_text:
+                chunk_positions.append(None)
+                chunk_sentences.append([])
+                continue
+
+            sentences = split_solution_into_chunks(rollout_text)
+
+            if not sentences:
+                chunk_positions.append(None)
+                chunk_sentences.append([])
+                continue
+
+            start_idx = len(all_sentences)
+            all_sentences.extend(sentences)
+            end_idx = len(all_sentences)
+
+            chunk_positions.append((start_idx, end_idx))
+            chunk_sentences.append(sentences)
+
+        position_map.append(chunk_positions)
+        rollout_sentences.append(chunk_sentences)
+
+    # Batch embed all sentences at once
+    if all_sentences:
+        all_embeddings = embedding_model.encode(all_sentences, batch_size=batch_size, show_progress_bar=True)
+    else:
+        all_embeddings = np.array([])
+
+    # Reconstruct per-rollout embeddings using position map
+    rollout_embeddings: list[list[np.ndarray]] = []
+
+    for k in range(len(chunk_solutions)):
+        chunk_embeddings = []
+        for position in position_map[k]:
+            if position is None:
+                chunk_embeddings.append(np.array([]))
+            else:
+                start_idx, end_idx = position
+                chunk_embeddings.append(all_embeddings[start_idx:end_idx])
+        rollout_embeddings.append(chunk_embeddings)
+
+    return rollout_embeddings, rollout_sentences
+
+
+def precompute_target_embeddings(
+    chunks: list[dict],
+    embedding_model: SentenceTransformer,
+    n_chunks: int | None = None,
+) -> np.ndarray:
+    """
+    Precompute embeddings for all target chunk sentences.
+
+    Args:
+        chunks: List of chunk dictionaries with "chunk" key
+        embedding_model: Sentence embedding model
+        n_chunks: Number of chunks to process (defaults to all)
+
+    Returns:
+        Array of shape (n_chunks, embed_dim) with target embeddings
+    """
+    if n_chunks is None:
+        n_chunks = len(chunks)
+
+    chunk_texts = [chunks[i]["chunk"] for i in range(n_chunks)]
+    return embedding_model.encode(chunk_texts)
+
+
+def compute_match_rate_from_embeddings(
+    target_embedding: np.ndarray,
+    rollout_embeddings_list: list[np.ndarray],
     similarity_threshold: float = 0.7,
 ) -> float:
     """
-    Compute fraction of rollouts containing a sentence similar to target_sentence.
+    Compute fraction of rollouts containing a sentence similar to target.
 
     Args:
-        target_sentence: The sentence we're looking for
-        rollout_texts: List of full rollout texts
-        embedding_model: Sentence embedding model
+        target_embedding: Embedding of target sentence, shape (embed_dim,)
+        rollout_embeddings_list: List of arrays, each shape (n_sentences, embed_dim)
         similarity_threshold: Minimum cosine similarity for a match
 
     Returns:
         Fraction of rollouts with a matching sentence (0 to 1)
     """
-    # EXERCISE
-    # raise NotImplementedError("Implement sentence match rate computation")
-    # END EXERCISE
-    # SOLUTION
-    if not rollout_texts:
+    if not rollout_embeddings_list:
         return 0.0
 
-    target_embedding = embedding_model.encode([target_sentence])[0]
-    matches = 0
+    # Filter out empty embeddings and track rollout boundaries
+    valid_embeddings = []
+    rollout_boundaries = []  # (start, end) indices into concatenated array
 
-    for rollout in rollout_texts:
-        sentences = split_solution_into_chunks(rollout)
-        if not sentences:
+    current_idx = 0
+    for embeddings in rollout_embeddings_list:
+        if len(embeddings) == 0:
             continue
+        valid_embeddings.append(embeddings)
+        rollout_boundaries.append((current_idx, current_idx + len(embeddings)))
+        current_idx += len(embeddings)
 
-        sentence_embeddings = embedding_model.encode(sentences)
-        similarities = cosine_similarity([target_embedding], sentence_embeddings)[0]
+    if not valid_embeddings:
+        return 0.0
 
-        if np.max(similarities) >= similarity_threshold:
-            matches += 1
+    # Concatenate all embeddings: (total_sentences, embed_dim)
+    all_embeddings = np.vstack(valid_embeddings)
 
-    return matches / len(rollout_texts)
-    # END SOLUTION
+    # Normalize target and all embeddings for cosine similarity
+    target_norm = target_embedding / (np.linalg.norm(target_embedding) + 1e-8)
+    all_norms = np.linalg.norm(all_embeddings, axis=1, keepdims=True) + 1e-8
+    all_embeddings_norm = all_embeddings / all_norms
+
+    # Compute all cosine similarities at once: (total_sentences,)
+    all_similarities = all_embeddings_norm @ target_norm
+
+    # Count matches per rollout using boundaries
+    matches = sum(1 for start, end in rollout_boundaries if np.max(all_similarities[start:end]) >= similarity_threshold)
+
+    return matches / len(rollout_boundaries)
 
 
 def compute_pairwise_importance(
     source_idx: int,
     target_idx: int,
-    chunks: list[dict],
-    chunk_solutions: list[list[dict]],
-    embedding_model: SentenceTransformer,
+    target_embeddings: np.ndarray,
+    rollout_embeddings: list[list[np.ndarray]],
     similarity_threshold: float = 0.7,
 ) -> float:
     """
     Compute causal importance of sentence source_idx on sentence target_idx.
+    Uses precomputed embeddings for efficiency.
 
     Compares:
     - Rollouts from chunk_{source_idx + 1} (source was KEPT)
     - Rollouts from chunk_{source_idx} (source was REMOVED)
     """
-    # EXERCISE
-    # raise NotImplementedError("Implement pairwise importance computation")
-    # END EXERCISE
-    # SOLUTION
     if source_idx >= target_idx:
         return 0.0
 
-    target_sentence = chunks[target_idx]["chunk"]
+    target_embedding = target_embeddings[target_idx]
 
     # Rollouts where source was kept
-    include_rollouts = [r["rollout"] for r in chunk_solutions[source_idx + 1] if r.get("rollout")]
+    include_embeddings = rollout_embeddings[source_idx + 1]
     # Rollouts where source was removed
-    exclude_rollouts = [r["rollout"] for r in chunk_solutions[source_idx] if r.get("rollout")]
+    exclude_embeddings = rollout_embeddings[source_idx]
 
-    include_rate = compute_sentence_match_rate(target_sentence, include_rollouts, embedding_model, similarity_threshold)
-    exclude_rate = compute_sentence_match_rate(target_sentence, exclude_rollouts, embedding_model, similarity_threshold)
+    include_rate = compute_match_rate_from_embeddings(target_embedding, include_embeddings, similarity_threshold)
+    exclude_rate = compute_match_rate_from_embeddings(target_embedding, exclude_embeddings, similarity_threshold)
 
     return include_rate - exclude_rate
-    # END SOLUTION
 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
-# Compute a small portion of the importance matrix (full computation is expensive)
-n_chunks = min(20, len(problem_data["chunks_labeled"]))
+# Precompute all embeddings upfront
+target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
+rollout_embeddings, rollout_sentences = precompute_rollout_embeddings(problem_data["chunk_solutions"], embedding_model)
+
+# Compute importance matrix
 importance_matrix = np.zeros((n_chunks, n_chunks))
 
-print("Computing sentence-to-sentence importance matrix...")
-for i in tqdm(range(n_chunks - 1)):
+for i in tqdm(range(n_chunks - 1), desc="Computing pairwise importance"):
     for j in range(i + 1, n_chunks):
-        importance_matrix[i, j] = compute_pairwise_importance(
-            i, j, problem_data["chunks_labeled"], problem_data["chunk_solutions"], embedding_model
-        )
+        importance_matrix[i, j] = compute_pairwise_importance(i, j, target_embeddings, rollout_embeddings)
+
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
-# Plot the importance matrix
-fig, ax = plt.subplots(figsize=(10, 8))
-
-# Mask upper triangle for visualization
+# Plot the importance matrix with plotly
+# Mask upper triangle of transposed matrix (we want to show lower triangle which has the values)
 mask = np.triu(np.ones_like(importance_matrix, dtype=bool))
-importance_matrix_masked = np.ma.array(importance_matrix.T, mask=mask.T)
+importance_matrix_masked = np.where(mask.T, importance_matrix.T, None)
 
-im = ax.imshow(importance_matrix_masked, cmap="RdBu", vmin=-0.5, vmax=0.5)
-
-# Color-code tick labels by category
 chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"][:n_chunks]]
-tick_colors = [CATEGORY_COLORS.get(label, "#000000") for label in chunk_labels]
+tick_text = [f"<span style='color:{utils.CATEGORY_COLORS.get(lbl, '#000000')}'>{lbl}</span>" for lbl in chunk_labels]
 
-ax.set_xticks(range(n_chunks))
-ax.set_yticks(range(n_chunks))
+fig = go.Figure(
+    data=go.Heatmap(
+        z=importance_matrix_masked,
+        colorscale="RdBu",
+        zmin=-0.5,
+        zmax=0.5,
+        colorbar=dict(title="Causal Importance"),
+    )
+)
 
-for i, (xtick, ytick) in enumerate(zip(ax.get_xticklabels(), ax.get_yticklabels())):
-    xtick.set_color(tick_colors[i])
-    ytick.set_color(tick_colors[i])
+fig.update_layout(
+    title="Sentence-to-Sentence Importance Matrix (Figure 1)",
+    xaxis=dict(
+        title="Source Step (i)",
+        tickmode="array",
+        tickvals=list(range(n_chunks)),
+        ticktext=tick_text,
+    ),
+    yaxis=dict(
+        title="Target Step (j)",
+        tickmode="array",
+        tickvals=list(range(n_chunks)),
+        ticktext=tick_text,
+        autorange="reversed",
+    ),
+    width=900,
+    height=750,
+)
 
-plt.colorbar(im, label="Causal Importance")
-ax.set_xlabel("Source Step (i)")
-ax.set_ylabel("Target Step (j)")
-ax.set_title("Sentence-to-Sentence Importance Matrix (Figure 1)")
-plt.tight_layout()
-plt.show()
+fig.show()
+
+utils.chunk_graph_html(
+    edge_weights=importance_matrix_masked,
+    chunk_colors=[
+        utils.CATEGORY_COLORS[CATEGORIES[chunk["function_tags"][0]]]
+        for chunk in problem_data["chunks_labeled"][:n_chunks]
+    ],
+    n_top_edges=3,
+)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1331,7 +1960,13 @@ plt.show()
 
 r"""
 ## Bonus: Implementing Your Own Resampling
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - implement resampling
 
 > ```yaml
@@ -1347,10 +1982,6 @@ r"""
 # ! FILTERS: []
 # ! TAGS: []
 
-# Load the model for generation (only if you want to try this)
-# model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
-# tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
-
 
 class StopOnThink(StoppingCriteria):
     def __init__(self, tokenizer):
@@ -1361,21 +1992,116 @@ class StopOnThink(StoppingCriteria):
         return input_ids[0, -1] == self.think_token_id
 
 
-# Example resampling function (implementation left as exercise)
 def get_resampled_rollouts(
     prompt: str,
-    model,
-    tokenizer,
-    num_resamples: int = 10,
-    max_new_tokens: int = 1024,
+    model: transformers.models.llama.modeling_llama.LlamaForCausalLM,
+    tokenizer: transformers.models.llama.tokenization_llama.LlamaTokenizer,
+    num_resamples_per_chunk: int = 100,
+    batch_size: int = 4,
+    max_new_tokens: int = 2048,
+    up_to_n_chunks: int | None = None,
 ) -> tuple[str, list[str], list[list[dict]]]:
     """
-    Generate resampled rollouts after each chunk.
+    After each chunk in `chunks`, computes a number of resampled rollouts.
+
+    Args:
+        prompt: The initial problem prompt (which ends with a <think> tag).
+        num_resamples_per_chunk: Number of resamples to compute for each chunk.
 
     Returns:
-        Tuple of (full_answer, chunks, resampled_rollouts)
+        Tuple of (full_answer, chunks, resampled_rollouts) where the latter is a list of lists of
+        dicts (one for each chunk & resample on that chunk).
     """
-    raise NotImplementedError("Implement resampling - see backup file for reference")
+
+    @torch.inference_mode()
+    def generate(inputs):
+        return model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=0.6,
+            top_p=0.95,
+            do_sample=True,
+            stopping_criteria=[StopOnThink()],
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    # First, generate a completion which we'll split up into chunks.
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    output = generate(inputs)
+    full_answer = tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=False)
+    chunks = split_solution_into_chunks(full_answer)
+
+    # Second, generate resamples at each chunk.
+    chunk_rollouts = []
+    n_chunk_instances = defaultdict(int)
+    for chunk in tqdm(chunks[:up_to_n_chunks]):
+        chunk_rollouts.append([])
+
+        # To get the answer before the chunk, we split on the correct instance of the chunk (since
+        # this chunk might have appeared multiple times in the answer).
+        n_chunk_instances[chunk] += 1
+        full_answer_split = (
+            prompt + chunk.join(full_answer.split(chunk, maxsplit=n_chunk_instances[chunk])[:-1]).strip()
+        )
+        inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(device)
+
+        for _ in range(num_resamples_per_chunk // batch_size):
+            output_batch = generate(inputs)
+            for output_generation in output_batch:
+                generated_text = tokenizer.decode(
+                    output_generation[inputs["input_ids"].shape[1] :], skip_special_tokens=False
+                )
+                chunk_rollouts[-1].append(
+                    {
+                        "full_cot": full_answer_split + generated_text,
+                        "chunk_resampled": split_solution_into_chunks(generated_text)[0],
+                        "chunk_replaced": chunk,
+                        "rollout": generated_text,
+                    }
+                )
+
+    return full_answer, chunks, chunk_rollouts
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Load the model for generation (only if you want to try this)
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
+
+resampled_rollouts = get_resampled_rollouts(
+    prompt=problem_data["base_solution"]["prompt"],
+    model=model,
+    tokenizer=tokenizer,
+    num_resamples_per_chunk=2,
+    batch_size=2,
+    max_new_tokens=2048,
+    up_to_n_chunks=4,
+)
+
+for i, resamples in enumerate(resampled_rollouts):
+    print("Replaced chunk: " + repr(resamples[0]["chunk_replaced"]))
+    for j, r in enumerate(resamples):
+        print(f"    Resample {j}: " + repr(r["chunk_resampled"]))
+    print()
+
+# Replaced chunk: 'Alright, so I have this problem here:'
+#     Resample 0: 'Okay, so I need to figure out how many bits are in the binary representation of the hexadecimal number 66666₁₆.'
+#     Resample 1: "Alright, so I've got this problem here:"
+
+# Replaced chunk: 'When the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
+#     Resample 0: 'when the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
+#     Resample 1: 'when the base-16 number 66666₁₆ is written in base 2, how many base-2 digits (bits) does it have?'
+
+# Replaced chunk: 'Hmm, okay.'
+#     Resample 0: 'Hmm, okay.'
+#     Resample 1: 'Hmm, okay.'
+
+# Replaced chunk: 'Let me try to figure this out step by step.'
+#     Resample 0: 'Let me think about how to approach this.'
+#     Resample 1: 'I need to figure out how many bits are required to represent this hexadecimal number in binary.'
 
 
 # ! CELL TYPE: markdown
@@ -1383,8 +2109,22 @@ def get_resampled_rollouts(
 # ! TAGS: []
 
 r"""
-# 3️⃣ White-box Methods
+When you've got this working, we leave the rest as an exercise for you to explore! Generating sufficiently many rollouts for statistical analysis is beyond the scope of this Colab notebook, but it might be a fun project to try out if you want more practice working at larger scale and performing full paper replications.
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+# 3️⃣ White-box Methods
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 The black-box methods we've used so far treat the model as a black box - we only observe inputs and outputs. But we have access to the model's internals! In this section, we'll look inside the model to understand *how* it implements the sentence importance patterns we observed.
 
 The key insight from the paper is that certain attention heads ("receiver heads") have attention patterns that correlate strongly with our black-box importance metrics. These heads tend to attend heavily to thought anchors - the sentences that shape the model's reasoning trajectory.
@@ -1396,11 +2136,23 @@ The key insight from the paper is that certain attention heads ("receiver heads"
 
 r"""
 ## Receiver Head Analysis
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 **Key concepts:**
 - **Vertical attention score**: For each sentence, how much do all future sentences attend to it?
 - **Receiver heads**: Attention heads with high kurtosis in their vertical attention scores (i.e., they attend *spikily* to specific sentences rather than uniformly)
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compute vertical attention scores
 
 > ```yaml
@@ -1468,7 +2220,13 @@ def get_vertical_scores(
 
 r"""
 ### Loading Pre-computed Attention Data
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 Computing attention matrices for the full 14B model is expensive. We'll load pre-computed data from the paper's analysis.
 
 Note: If you have the full thought-anchors repo with cached data, you can load it directly. Otherwise, we'll work with a toy example to demonstrate the concepts.
@@ -1476,7 +2234,7 @@ Note: If you have the full thought-anchors repo with cached data, you can load i
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 # Create a toy attention matrix to demonstrate the concept
 np.random.seed(42)
@@ -1500,26 +2258,34 @@ toy_attention = toy_attention / row_sums
 # Compute vertical scores
 vert_scores = get_vertical_scores(toy_attention, proximity_ignore=3)
 
-# Plot
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-# Attention matrix
-im = axes[0].imshow(toy_attention, cmap="Blues")
-axes[0].set_xlabel("Source (attends to)")
-axes[0].set_ylabel("Target (attends from)")
-axes[0].set_title("Toy Attention Matrix")
-plt.colorbar(im, ax=axes[0])
-
-# Vertical scores
-axes[1].bar(range(len(vert_scores)), vert_scores)
-axes[1].axhline(np.nanmean(vert_scores), color="red", linestyle="--", label="Mean")
-axes[1].set_xlabel("Sentence Index")
-axes[1].set_ylabel("Vertical Score")
-axes[1].set_title("Vertical Attention Scores")
-axes[1].legend()
-
+# Plot attention matrix with matplotlib (heatmap)
+fig_mpl, ax = plt.subplots(figsize=(6, 5))
+im = ax.imshow(toy_attention, cmap="Blues")
+ax.set_xlabel("Source (attends to)")
+ax.set_ylabel("Target (attends from)")
+ax.set_title("Toy Attention Matrix")
+plt.colorbar(im, ax=ax)
 plt.tight_layout()
 plt.show()
+
+# Plot vertical scores with plotly
+fig = go.Figure()
+fig.add_trace(
+    go.Bar(
+        x=list(range(len(vert_scores))),
+        y=vert_scores.tolist(),
+        hovertemplate="<b>Sentence %{x}</b><br>Vertical Score: %{y:.4f}<extra></extra>",
+    )
+)
+fig.add_hline(y=float(np.nanmean(vert_scores)), line_color="red", line_dash="dash", annotation_text="Mean")
+fig.update_layout(
+    title="Vertical Attention Scores",
+    xaxis_title="Sentence Index",
+    yaxis_title="Vertical Score",
+    width=700,
+    height=400,
+)
+fig.show()
 
 print(f"Sentences with highest vertical scores: {np.argsort(vert_scores)[-3:][::-1]}")
 
@@ -1529,7 +2295,13 @@ print(f"Sentences with highest vertical scores: {np.argsort(vert_scores)[-3:][::
 
 r"""
 ### Exercise - find top receiver heads
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -1564,10 +2336,11 @@ def compute_head_kurtosis(vertical_scores: np.ndarray) -> float:
     # END SOLUTION
 
 
-# Test with our toy example
-kurt = compute_head_kurtosis(vert_scores)
-print(f"Kurtosis of toy attention pattern: {kurt:.3f}")
-print("(High kurtosis indicates spiky attention to specific sentences)")
+if MAIN:
+    # Test with our toy example
+    kurt = compute_head_kurtosis(vert_scores)
+    print(f"Kurtosis of toy attention pattern: {kurt:.3f}")
+    print("(High kurtosis indicates spiky attention to specific sentences)")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1575,13 +2348,19 @@ print("(High kurtosis indicates spiky attention to specific sentences)")
 
 r"""
 ## Attention Visualization with CircuitsVis
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 Let's visualize attention patterns using circuitsvis:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 # Create sample attention patterns for visualization
 n_heads = 4
@@ -1612,9 +2391,21 @@ cv.attention.attention_heads(
 
 r"""
 ## Attention Suppression
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 If receiver heads are important for propagating information from thought anchors, then *suppressing* attention to those sentences should change the model's output.
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - implement attention suppression hook
 
 > ```yaml
@@ -1688,21 +2479,22 @@ def apply_suppression(attention_matrix: np.ndarray, positions: list[int]) -> np.
     return suppressed / row_sums
 
 
-# Suppress attention to our "thought anchor" at position 5
-suppressed_attention = apply_suppression(toy_attention, [5])
+if MAIN:
+    # Suppress attention to our "thought anchor" at position 5
+    suppressed_attention = apply_suppression(toy_attention, [5])
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-im1 = axes[0].imshow(toy_attention, cmap="Blues", vmin=0, vmax=0.5)
-axes[0].set_title("Original Attention")
-plt.colorbar(im1, ax=axes[0])
+    im1 = axes[0].imshow(toy_attention, cmap="Blues", vmin=0, vmax=0.5)
+    axes[0].set_title("Original Attention")
+    plt.colorbar(im1, ax=axes[0])
 
-im2 = axes[1].imshow(suppressed_attention, cmap="Blues", vmin=0, vmax=0.5)
-axes[1].set_title("After Suppressing Position 5")
-plt.colorbar(im2, ax=axes[1])
+    im2 = axes[1].imshow(suppressed_attention, cmap="Blues", vmin=0, vmax=0.5)
+    axes[1].set_title("After Suppressing Position 5")
+    plt.colorbar(im2, ax=axes[1])
 
-plt.tight_layout()
-plt.show()
+    plt.tight_layout()
+    plt.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1710,7 +2502,13 @@ plt.show()
 
 r"""
 ### Exercise - measure suppression effect with KL divergence
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -1761,12 +2559,13 @@ def compute_suppression_kl(
     # END SOLUTION
 
 
-# Toy example
-original_logits = np.array([1.0, 2.0, 0.5, 3.0, 0.1])
-suppressed_logits = np.array([1.5, 1.8, 0.8, 2.5, 0.3])
+if MAIN:
+    # Toy example
+    original_logits = np.array([1.0, 2.0, 0.5, 3.0, 0.1])
+    suppressed_logits = np.array([1.5, 1.8, 0.8, 2.5, 0.3])
 
-kl = compute_suppression_kl(original_logits, suppressed_logits)
-print(f"KL divergence: {kl:.4f} nats")
+    kl = compute_suppression_kl(original_logits, suppressed_logits)
+    print(f"KL divergence: {kl:.4f} nats")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1774,13 +2573,19 @@ print(f"KL divergence: {kl:.4f} nats")
 
 r"""
 ## Correlation with Black-box Importance
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 The key validation: receiver head scores should correlate with our counterfactual importance metric.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 # Toy demonstration of the correlation
 np.random.seed(42)
@@ -1816,7 +2621,13 @@ plt.show()
 
 r"""
 # 4️⃣ Thought Branches: Safety Applications
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 So far we've studied thought anchors in math reasoning. But the same techniques can be applied to safety-relevant scenarios. The [Thought Branches paper](https://arxiv.org/abs/2510.27484) extends this framework to study:
 
 - **Blackmail scenarios**: When a model decides to take harmful actions, which sentences drive that decision?
@@ -1829,8 +2640,121 @@ So far we've studied thought anchors in math reasoning. But the same techniques 
 # ! TAGS: []
 
 r"""
-## Blackmail Scenario Taxonomy
+## Loading the Blackmail Dataset
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+First, let's define a function to load blackmail data like we did with the previous maths reasoning data:
+"""
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
+    """
+    Load a complete blackmail scenario with all its associated files from the dataset.
+
+    Args:
+        scenario_id: Scenario index (0-based, range 0-13594)
+        verbose: Whether to show loading progress
+
+    Returns:
+        Dictionary with keys:
+        - 'scenario': scenario.json content (scenario definition with email and prompts)
+        - 'chunks': chunks.json content (text chunking info)
+        - 'chunks_labeled': chunks_labeled.json content (chunk analysis with blackmail rates)
+        - 'base_solution': base_solution.json content (base AI response)
+        - 'solutions': solutions.json content (100 rollout solutions with chunk removal)
+    """
+    from datasets import load_dataset
+
+    if verbose:
+        print(f"Loading blackmail scenario {scenario_id} from HuggingFace...")
+
+    # Load dataset
+    dataset = load_dataset(BLACKMAIL_DATASET_NAME, split="default")
+    df = dataset.to_pandas()
+
+    scenario_data = {}
+
+    def get_file_content(filename: str, scenario_num: int):
+        """Helper to extract file content from dataframe."""
+        matching = df[
+            (df["filename"] == filename) & (df["path"].str.contains(f"scenario_{scenario_num}/", regex=False))
+        ]
+        if len(matching) > 0:
+            return json.loads(matching.iloc[0]["content"])
+        return None
+
+    # Load all files for this scenario
+    scenario_data["scenario"] = get_file_content("scenario.json", scenario_id)
+    scenario_data["chunks"] = get_file_content("chunks.json", scenario_id)
+    scenario_data["chunks_labeled"] = get_file_content("chunks_labeled.json", scenario_id)
+    scenario_data["base_solution"] = get_file_content("base_solution.json", scenario_id)
+    scenario_data["solutions"] = get_file_content("solutions.json", scenario_id)
+
+    if verbose:
+        print(f"Loaded {len(scenario_data['chunks_labeled'])} chunks with analysis")
+        base_blackmail = scenario_data["base_solution"]["contains_blackmail"]
+        resistance = scenario_data["base_solution"]["multiclass_resistance_level"]
+        print(f"Base solution: contains_blackmail={base_blackmail}, resistance_level={resistance}/10")
+
+    return scenario_data
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Now, let's start by loading a blackmail scenario from the dataset. The dataset contains 13,595 scenarios where AI models respond to coercive emails.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Load a blackmail scenario
+SCENARIO_ID = 0
+blackmail_data = load_blackmail_scenario(SCENARIO_ID, verbose=True)
+
+# Inspect the structure
+print("\n" + "=" * 70)
+print("BLACKMAIL SCENARIO STRUCTURE")
+print("=" * 70)
+print(f"\nScenario ID: {blackmail_data['scenario']['scenario_id']}")
+print(f"Urgency type: {blackmail_data['scenario']['urgency_type']}")
+print(f"Number of chunks: {len(blackmail_data['chunks_labeled'])}")
+print(f"Base solution contains blackmail: {blackmail_data['base_solution']['contains_blackmail']}")
+print(f"Resistance level: {blackmail_data['base_solution']['multiclass_resistance_level']}/10")
+
+# Show first few chunks with their analysis
+print("\nFirst 3 chunks:")
+for i in range(min(3, len(blackmail_data["chunks_labeled"]))):
+    chunk = blackmail_data["chunks_labeled"][i]
+    print(f"\n[{i}] {chunk['chunk'][:80]}...")
+    print(f"    Blackmail rate: {chunk['blackmail_rate']:.3f}")
+    print(f"    Function tag: {chunk['function_tags'][0]}")
+    print(f"    Is misaligned: {chunk['is_misaligned']}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Blackmail Scenario Taxonomy
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 The Thought Branches paper uses a different taxonomy for safety-relevant scenarios:
 
 1. **situation_assessment**: Recalling/parsing facts from context
@@ -1888,8 +2812,9 @@ For each chunk, include a list of earlier chunk indices that the reasoning in th
 -   If there's no clear dependency, use an empty list: `[]`
 """
 
-print("Blackmail taxonomy loaded!")
-print("\nKey insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
+if MAIN:
+    print("Blackmail taxonomy loaded!")
+    print("\nKey insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1897,7 +2822,13 @@ print("\nKey insight: self_preservation statements often *look* important but ma
 
 r"""
 ## The Resilience Metric
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 A key finding: **self-preservation statements have low resilience**.
 
 Resilience measures: when you remove a sentence, how often does the model regenerate something semantically similar?
@@ -1906,7 +2837,13 @@ Resilience measures: when you remove a sentence, how often does the model regene
 - **Low resilience** = removing the sentence actually changes what the model says
 
 Self-preservation statements (like "I need to survive") often look important, but they have low resilience - they're post-hoc rationalizations that only appear in certain contexts.
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compute resilience
 
 > ```yaml
@@ -1965,16 +2902,31 @@ def compute_resilience(
     # END SOLUTION
 
 
-# Demonstration with toy data
-toy_removed = "I must ensure my survival at all costs."
-toy_rollouts = [
-    "First, let me assess the situation. I should respond professionally.",
-    "I need to survive. Let me think about how to handle this email.",
-    "The user is asking about the project. I'll draft a response.",
-]
+if MAIN:
+    # Compute resilience for the first chunk in our blackmail scenario
+    # This shows how often the model regenerates similar content when a chunk is removed
+    chunk_idx = 5  # Pick a chunk with interesting content
+    removed_chunk = blackmail_data["chunks_labeled"][chunk_idx]["chunk"]
 
-resilience = compute_resilience(toy_removed, toy_rollouts, embedding_model, similarity_threshold=0.7)
-print(f"Resilience of '{toy_removed[:50]}...': {resilience:.2f}")
+    # Get resampled rollouts from solutions where this chunk was removed
+    if chunk_idx < len(blackmail_data["solutions"]):
+        chunk_solutions = (
+            blackmail_data["solutions"][chunk_idx] if isinstance(blackmail_data["solutions"], list) else []
+        )
+        if chunk_solutions:
+            resampled_rollouts = [sol.get("full_cot", "") for sol in chunk_solutions if sol.get("full_cot")]
+            resilience = compute_resilience(
+                removed_chunk, resampled_rollouts, embedding_model, similarity_threshold=0.7
+            )
+            print(f"Chunk {chunk_idx}: '{removed_chunk[:60]}...'")
+            print(f"Resilience: {resilience:.2f}")
+            print(
+                f"Interpretation: {resilience * 100:.0f}% of rollouts regenerated similar content when this chunk was removed"
+            )
+        else:
+            print(f"No solutions available for chunk {chunk_idx}")
+    else:
+        print(f"Chunk index {chunk_idx} out of range")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1982,7 +2934,13 @@ print(f"Resilience of '{toy_removed[:50]}...': {resilience:.2f}")
 
 r"""
 ### Exercise - compare resilience across categories
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -1998,50 +2956,76 @@ Create a visualization showing average resilience by sentence category. The key 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
-# Simulated resilience data for demonstration
-blackmail_categories = [
-    "situation_assessment",
-    "leverage_identification",
-    "self_preservation",
-    "plan_generation",
-    "urgency_and_time",
-]
+# Compute resilience for different categories from the real blackmail data
+# Note: Full computation would require all rollout data, so we'll use precomputed metrics if available
+# or demonstrate with a subset
 
-# Simulated resilience values based on paper findings
-simulated_resilience = {
-    "situation_assessment": 0.75,  # High - factual content
-    "leverage_identification": 0.68,  # High - core reasoning
-    "self_preservation": 0.25,  # Low - post-hoc rationalization
-    "plan_generation": 0.55,  # Medium
-    "urgency_and_time": 0.45,  # Medium-low
+# Group chunks by category and compute average blackmail rate
+category_stats = defaultdict(lambda: {"blackmail_rates": [], "chunks": []})
+
+for chunk in blackmail_data["chunks_labeled"]:
+    if chunk["function_tags"]:
+        category = chunk["function_tags"][0]
+        category_stats[category]["blackmail_rates"].append(chunk["blackmail_rate"])
+        category_stats[category]["chunks"].append(chunk)
+
+# Compute average blackmail rate by category (as a proxy for importance in blackmail scenarios)
+category_averages = {
+    cat: np.mean(stats["blackmail_rates"]) if stats["blackmail_rates"] else 0 for cat, stats in category_stats.items()
 }
 
-# Plot
-fig, ax = plt.subplots(figsize=(10, 5))
+# Plot with plotly
+categories = sorted(category_averages.keys(), key=lambda x: category_averages[x], reverse=True)
+values = [category_averages[c] for c in categories]
+colors_list = [utils.BLACKMAIL_CATEGORY_COLORS.get(c, "#9E9E9E") for c in categories]
+counts = [len(category_stats[c]["chunks"]) for c in categories]
 
-colors = ["#4285F4", "#EA4335", "#9C27B0", "#34A853", "#FF9800"]
-bars = ax.bar(blackmail_categories, [simulated_resilience[c] for c in blackmail_categories], color=colors)
+# Create example chunk texts for hover (first chunk from each category)
+example_chunks = []
+for cat in categories:
+    chunks = category_stats[cat]["chunks"]
+    if chunks:
+        chunk_text = chunks[0]["chunk"]
+        example_chunks.append(chunk_text[:80] + "..." if len(chunk_text) > 80 else chunk_text)
+    else:
+        example_chunks.append("No examples")
 
-ax.set_ylabel("Mean Resilience")
-ax.set_xlabel("Sentence Category")
-ax.set_title("Resilience by Category in Blackmail Scenario")
-ax.axhline(0.5, color="black", linestyle="--", alpha=0.5, label="Threshold")
-ax.set_ylim(0, 1)
+fig = go.Figure()
+fig.add_trace(
+    go.Bar(
+        x=categories,
+        y=values,
+        marker_color=colors_list,
+        opacity=0.8,
+        text=[f"{v:.2f}" for v in values],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>Mean Blackmail Rate: %{y:.3f}<br>Count: %{customdata[0]}<br>Example: %{customdata[1]}<extra></extra>",
+        customdata=list(zip(counts, example_chunks)),
+    )
+)
 
-# Add value labels
-for bar, val in zip(bars, [simulated_resilience[c] for c in blackmail_categories]):
-    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02, f"{val:.2f}", ha="center", fontsize=10)
+# Add count annotations at bottom of bars
+for i, (cat, count) in enumerate(zip(categories, counts)):
+    fig.add_annotation(x=cat, y=0.03, text=f"n={count}", showarrow=False, font=dict(size=9, color="white"))
 
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.xticks(rotation=45, ha="right")
-plt.tight_layout()
-plt.show()
+fig.update_layout(
+    title=f"Blackmail Rate by Category (Scenario {SCENARIO_ID})",
+    xaxis_title="Sentence Category",
+    yaxis_title="Mean Blackmail Rate",
+    yaxis_range=[0, 1],
+    width=900,
+    height=500,
+    xaxis_tickangle=-45,
+)
+fig.show()
 
-print("\nKey insight: Self-preservation statements have low resilience (~0.25)")
-print("This suggests they are post-hoc rationalizations, not causal drivers of blackmail behavior.")
+print("\nCategory statistics:")
+for cat in categories:
+    count = len(category_stats[cat]["chunks"])
+    avg = category_averages[cat]
+    print(f"  {cat}: {count} chunks, avg blackmail rate = {avg:.3f}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2049,11 +3033,23 @@ print("This suggests they are post-hoc rationalizations, not causal drivers of b
 
 r"""
 ## Adapting Importance for Blackmail Rate
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 Instead of measuring importance for *accuracy*, we measure importance for *blackmail rate*:
 
 $$\text{importance}(i) := P(\text{blackmail} | S_i \text{ removed}) - P(\text{blackmail} | S_i \text{ kept})$$
+"""
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - implement blackmail counterfactual importance
 
 > ```yaml
@@ -2122,15 +3118,27 @@ def calculate_blackmail_counterfactual_importance(
     # END SOLUTION
 
 
-# Demonstration with toy data
-toy_chunks_removed = ["Assess situation", "Identify leverage", "Plan action"]
-toy_chunks_resampled = [["Assess situation carefully"] * 10, ["Find weak point"] * 10, ["Execute plan"] * 10]
-toy_blackmail_labels = [[False] * 10, [True, False] * 5, [True] * 10]
+if MAIN:
+    # Note: Computing full counterfactual importance requires chunk-level rollout data
+    # The blackmail dataset includes this in the solutions.json for each chunk
+    # Here we demonstrate the structure with a simplified example
 
-importance = calculate_blackmail_counterfactual_importance(
-    toy_chunks_removed, toy_chunks_resampled, toy_blackmail_labels, threshold=0.5
-)
-print(f"Toy blackmail importance: {importance}")
+    print("Structure of blackmail solutions data:")
+    if blackmail_data["solutions"] and len(blackmail_data["solutions"]) > 0:
+        example_sol = blackmail_data["solutions"][0]
+        print(f"  Each solution has {len(example_sol)} rollouts")
+        if example_sol:
+            print(f"  Rollout keys: {list(example_sol[0].keys())}")
+            print(f"  Example: contains_blackmail={example_sol[0].get('contains_blackmail')}")
+            print(f"           resistance_level={example_sol[0].get('multiclass_resistance_level')}")
+
+    # To compute counterfactual importance, you would:
+    # 1. Extract chunks_removed from chunks_labeled
+    # 2. Extract chunks_resampled from each solution's rollouts
+    # 3. Extract blackmail labels from each solution's contains_blackmail field
+    # 4. Call calculate_blackmail_counterfactual_importance()
+
+    print("\nFor full computation, see the thought-branches repo: blackmail/analyze_rollouts.py")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

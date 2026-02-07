@@ -189,7 +189,6 @@ from typing import Any, Callable, Literal, Optional
 
 import httpx
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import tqdm
 from dotenv import load_dotenv
