@@ -170,6 +170,7 @@ os.chdir(f"{root}/{chapter}/exercises")
 # ! TAGS: []
 
 import json
+import math
 import os
 import re
 import sys
@@ -178,12 +179,14 @@ import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import circuitsvis as cv
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import torch
 import transformers
@@ -212,6 +215,7 @@ utils_path = Path.cwd().parent.parent / "exercises"
 if utils_path not in [Path(p) for p in sys.path]:
     sys.path.append(str(utils_path))
 
+import part63_interpreting_reasoning_models.tests as tests
 from part63_interpreting_reasoning_models import utils
 
 MAIN = __name__ == "__main__"
@@ -286,6 +290,7 @@ Let's start by setting a few constants (the purpose of all of these will become 
 # ! TAGS: []
 
 # Configuration
+MODEL_NAME_1B = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 MODEL_NAME_8B = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 MODEL_NAME_14B = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
 DATASET_NAME = "uzaymacar/math-rollouts"
@@ -1551,6 +1556,7 @@ assert avg_diff < 0.025, "Error above 2.5% threshold"
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
+
 # Plot comparison of all three metrics with subplots (like previous bar chart)
 chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
 hover_texts = [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover]
@@ -1871,7 +1877,9 @@ def compute_pairwise_importance(
     return include_rate - exclude_rate
 
 
-if MAIN:
+# TODO(mcdougallc) - remove the "and False"
+
+if MAIN and False:
     # Precompute all embeddings upfront
     n_chunks = 74
     target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
@@ -2141,7 +2149,9 @@ def get_resampled_rollouts(
     return full_answer, chunks, chunk_rollouts
 
 
-if MAIN:
+# TODO(mcdougallc) - remove the "and False"
+
+if MAIN and False:
     # Load the model for generation (only if you want to try this)
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
@@ -2223,6 +2233,14 @@ The key insight from the paper is that certain attention heads ("receiver heads"
 # ! TAGS: []
 
 r"""
+Firstly, let's define a helper function that we'll use for getting whitebox data from our loaded `problem_data`. We're defining this because we'll only ever need to use the full CoT & chunks plus the counterfactual importance scores later on (when we're comparing them to our whitebox analysis).
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ## Receiver Head Analysis
 """
 
@@ -2235,69 +2253,16 @@ r"""
 - **Vertical attention score**: For each sentence, how much do all future sentences attend to it?
 - **Receiver heads**: Attention heads with high kurtosis in their vertical attention scores (i.e., they attend *spikily* to specific sentences rather than uniformly)
 
-Before we begin the exercises, we need some helper functions for working with models and attention matrices.
-"""
+For these exercises, we'll use a few helper functions:
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### Setup: Helper Functions for Whitebox Analysis
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-# Model names - use smaller model for exercises
-MODEL_NAME_SMALL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-MODEL_NAME_LARGE = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
-
-
-def prepare_whitebox_example(problem_id: int = None):
-    """
-    Load example problem data for whitebox analysis.
-
-    Args:
-        problem_id: Problem to load (defaults to PROBLEM_ID from earlier)
-
-    Returns:
-        text: Full CoT reasoning trace
-        sentences: List of sentence strings
-        cf_importance: Counterfactual importance scores from black-box analysis
-    """
-    if problem_id is None:
-        problem_id = PROBLEM_ID
-
-    # Load problem data (already loaded earlier in notebook)
-    problem_data = load_problem_data(problem_id)
-
-    # Extract base solution
-    text = problem_data["base_solution"]["full_cot"]
-    sentences = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
-
-    # Get counterfactual importances (computed in black-box section)
-    # Note: excluding final chunk (which is the answer)
-    cf_importance = np.array(
-        [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
-    )
-
-    return text, sentences, cf_importance
-
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-These helper functions will be used throughout the exercises:
-- `prepare_whitebox_example()`: Gets the same problem we analyzed with black-box methods
+- `utils.get_whitebox_example_data()`: Extracts a tuple of the following from `problem_data`, since this is all we'll be using in this section:
+    - Full CoT reasoning trace (string)
+    - List of chunks (list of strings)
+    - Counterfactual importance scores (numpy array) for us to compare with the whitebox results
 - `utils.get_sentence_token_boundaries()`: Maps sentences to token positions (handles tokenization complexities)
 - `utils.average_attention_by_sentences()`: Aggregates token-level attention to sentence-level
-
-Now let's start with the exercises!
 """
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2366,7 +2331,6 @@ def extract_attention_matrix(
 
     # captured_attention[0] has shape (batch_size, num_heads, seq_len, seq_len)
     attn_tensor = output.attentions[layer][0, head]  # Select batch 0, specific head
-    print(attn_tensor.shape)  # Should be (seq_len, seq_len)
 
     # Convert to numpy
     attention_matrix = attn_tensor.cpu().numpy().astype(np.float32)
@@ -2380,20 +2344,15 @@ def extract_attention_matrix(
 
 
 if MAIN:
-    # Load model and tokenizer
-    print("Loading model (this may take a minute)...")
-    print(f"Model: {MODEL_NAME_SMALL}")
-
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_SMALL)
+    # Load model and tokenizer (with attention output enabled - important!)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_1B)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_SMALL, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_1B, device_map="auto")  # torch_dtype=torch.bfloat16
     model.config._attn_implementation = "eager"
     model.config.output_attentions = True
     model.eval()
-
-    print("✓ Model loaded!")
 
     # Test with a short example
     test_text = "The cat sat on the mat. It was sleeping."
@@ -2401,8 +2360,7 @@ if MAIN:
     # Extract attention from middle layer
     n_layers = len(model.model.layers)
     layer_to_check = n_layers // 2
-    head_to_check = 9
-
+    head_to_check = 8  # head 9 is better for the 1.5b model
     print(f"\nExtracting attention from head L{layer_to_check}H{head_to_check}")
     attention_matrix, tokens = extract_attention_matrix(
         test_text, model, tokenizer, layer=layer_to_check, head=head_to_check
@@ -2422,47 +2380,148 @@ if MAIN:
             tokens=tokens,
         )
     )
-    print("\n✓ Attention extraction working!")
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-<details><summary>Explanation of the attention pattern</summary>
+### Exercise - compute vertical attention scores (Part 1: Simple version)
 
-The visualization shows how each token (row) attends to other tokens (columns). Key observations:
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
 
-1. **Causal structure**: The upper triangle is nearly zero - tokens can only attend to themselves and previous tokens
-2. **Diagonal**: Strong self-attention is common (tokens attending to themselves)
-3. **Patterns**: Different heads specialize in different patterns:
-   - **Induction heads**: Attend to tokens that previously followed the current context
-   - **Previous token heads**: Attend strongly to the previous token
-   - **Attention head types**: Each head may focus on syntax, semantics, or specific token relationships
+Vertical attention scores measure how much future sentences attend back to each sentence. This is the core metric for identifying "thought anchors" - sentences that shape downstream reasoning.
 
-For reasoning analysis, we want to aggregate this token-level attention to the sentence level, which we'll do in the next steps.
-</details>
+In this first part, implement a simple version that computes the basic vertical attention scores without any normalization.
 """
 
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def get_vertical_scores_simple(
+    avg_attention_matrix: np.ndarray,
+    proximity_ignore: int = 4,
+) -> np.ndarray:
+    """
+    Compute basic vertical attention scores for each sentence (no normalization).
+
+    Args:
+        avg_attention_matrix: Shape (n_sentences, n_sentences), where entry (i, j)
+            is the average attention from sentence i to sentence j
+        proximity_ignore: Ignore this many nearby sentences (to avoid trivial patterns)
+
+    Returns:
+        Array of shape (n_sentences,) with vertical scores
+
+    The vertical score for sentence j is the mean attention it receives from
+    all sentences i where i > j + proximity_ignore.
+
+    Adapted from thought-anchors: attn_funcs.py:get_vertical_scores
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement basic vertical attention scores")
+    # END EXERCISE
+    # SOLUTION
+    n = avg_attention_matrix.shape[0]
+    mat = avg_attention_matrix.copy()
+
+    # Step 1: Clean matrix - set upper triangle to NaN (can't attend to future)
+    mat[np.triu_indices_from(mat, k=1)] = np.nan
+
+    # Step 2: Remove proximity - set near-diagonal to NaN (ignore nearby sentences)
+    mat[np.triu_indices_from(mat, k=-proximity_ignore + 1)] = np.nan
+
+    # Step 3: Compute vertical scores: mean attention received from future sentences
+    vert_scores = []
+    for j in range(n):
+        # Extract "vertical line" - attention from all future sentences to sentence j
+        future_attention = mat[j + proximity_ignore :, j]
+
+        if len(future_attention) == 0 or np.all(np.isnan(future_attention)):
+            vert_scores.append(np.nan)
+        else:
+            vert_scores.append(np.nanmean(future_attention))
+
+    return np.array(vert_scores)
+    # END SOLUTION
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-### Exercise - compute vertical attention scores
+Let's test the simple version on real CoT attention patterns.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Get example problem data
+text, sentences, _ = utils.get_whitebox_example_data(problem_data)
+
+# Extract attention from a middle layer
+layer, head = 15, 8
+print(f"\nExtracting attention from head L{layer}H{head}...")
+token_attention, tokens = extract_attention_matrix(text, model, tokenizer, layer, head)
+
+# Convert to sentence-level attention
+boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
+sentence_attention = utils.average_attention_by_sentences(token_attention, boundaries)
+
+# Compute vertical scores (simple version)
+vert_scores_simple = get_vertical_scores_simple(sentence_attention, proximity_ignore=4)
+
+# Visualize
+hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
+
+fig = go.Figure()
+fig.add_trace(
+    go.Bar(
+        x=list(range(len(vert_scores_simple))),
+        y=vert_scores_simple,
+        marker_color="steelblue",
+        hovertemplate="<b>Sentence %{x}</b><br>Score: %{y:.4f}<br>%{customdata}<extra></extra>",
+        customdata=hover_texts,
+    )
+)
+fig.add_hline(y=0, line_color="black", line_width=0.5)
+fig.update_layout(
+    title="Simple Vertical Scores (No Normalization)",
+    xaxis_title="Sentence Index",
+    yaxis_title="Vertical Score",
+    width=1000,
+    height=450,
+)
+fig.show()
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - compute vertical attention scores (Part 2: Full version with depth control)
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵🔵
 >
-> You should spend up to 25-30 minutes on this exercise.
+> You should spend up to 15-20 minutes on this exercise.
 > ```
-
-Vertical attention scores measure how much future sentences attend back to each sentence. This is the core metric for identifying "thought anchors" - sentences that shape downstream reasoning.
 
 **Challenge**: Later sentences have more tokens to attend to than earlier sentences, which can bias scores. The paper addresses this with **depth-control normalization** using rank-based normalization.
 
-Implement the full algorithm including depth control.
+Now implement the full algorithm including depth control and optional z-score normalization.
 """
 
 # ! CELL TYPE: code
@@ -2474,15 +2533,17 @@ def get_vertical_scores(
     avg_attention_matrix: np.ndarray,
     proximity_ignore: int = 4,
     control_depth: bool = True,
+    return_z_scores: bool = False,
 ) -> np.ndarray:
     """
-    Compute vertical attention scores for each sentence.
+    Compute vertical attention scores for each sentence with optional depth control and z-scoring.
 
     Args:
         avg_attention_matrix: Shape (n_sentences, n_sentences), where entry (i, j)
             is the average attention from sentence i to sentence j
         proximity_ignore: Ignore this many nearby sentences (to avoid trivial patterns)
         control_depth: Apply rank normalization to control for depth effects
+        return_z_scores: If True, return z-score normalized values
 
     Returns:
         Array of shape (n_sentences,) with vertical scores
@@ -2498,12 +2559,10 @@ def get_vertical_scores(
     Adapted from thought-anchors: attn_funcs.py:get_vertical_scores
     """
     # EXERCISE
-    # raise NotImplementedError("Implement vertical attention scores with depth control")
+    # raise NotImplementedError("Implement vertical attention scores with depth control and z-scoring")
     # END EXERCISE
     # SOLUTION
     n = avg_attention_matrix.shape[0]
-
-    # Work on a copy
     mat = avg_attention_matrix.copy()
 
     # Step 1: Clean matrix - set upper triangle to NaN (can't attend to future)
@@ -2533,7 +2592,13 @@ def get_vertical_scores(
         else:
             vert_scores.append(np.nanmean(future_attention))
 
-    return np.array(vert_scores)
+    vert_scores = np.array(vert_scores)
+
+    # Step 5: Optional z-score normalization
+    if return_z_scores:
+        vert_scores = (vert_scores - np.nanmean(vert_scores)) / np.nanstd(vert_scores)
+
+    return vert_scores
     # END SOLUTION
 
 
@@ -2549,58 +2614,56 @@ Let's test vertical scores on real CoT attention patterns and see the effect of 
 # ! FILTERS: []
 # ! TAGS: [main]
 
-if MAIN:
-    # Load model and tokenizer for attention extraction
-    print("Loading model for attention analysis...")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME_SMALL,
-        device_map="auto",
-        torch_dtype=torch.float16,
+# Compute vertical scores WITH and WITHOUT depth control (using z-scores for comparison)
+vert_scores_no_control = get_vertical_scores(
+    sentence_attention, proximity_ignore=4, control_depth=False, return_z_scores=True
+)
+vert_scores_with_control = get_vertical_scores(
+    sentence_attention, proximity_ignore=4, control_depth=True, return_z_scores=True
+)
+
+# Get top-3 sentences (filtering NaN values)
+valid_mask = ~np.isnan(vert_scores_no_control) & ~np.isnan(vert_scores_with_control)
+valid_indices = np.where(valid_mask)[0]
+top_3_no_control = valid_indices[np.argsort(vert_scores_no_control[valid_mask])[-3:][::-1]]
+top_3_with_control = valid_indices[np.argsort(vert_scores_with_control[valid_mask])[-3:][::-1]]
+
+print(f"Top-3 sentences (no depth control): {top_3_no_control}")
+print(f"Top-3 sentences (with depth control): {top_3_with_control}")
+print(
+    f"Correlation between methods: {np.corrcoef(vert_scores_no_control[valid_mask], vert_scores_with_control[valid_mask])[0, 1]:.3f}"
+)
+
+# Plot comparison (already z-scored from the function)
+hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
+
+fig = go.Figure()
+for name, scores, color in [
+    ("No depth control", vert_scores_no_control, "steelblue"),
+    ("With depth control", vert_scores_with_control, "darkorange"),
+]:
+    fig.add_trace(
+        go.Bar(
+            x=list(range(len(scores))),
+            y=scores,
+            name=name,
+            opacity=0.7,
+            marker_color=color,
+            hovertemplate="<b>Sentence %{x}</b><br>Z-score: %{y:.2f}<br>%{customdata}<extra></extra>",
+            customdata=hover_texts,
+        )
     )
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_SMALL)
+fig.add_hline(y=0, line_color="black", line_width=0.5)
+fig.update_layout(
+    title="Vertical Scores Comparison (Z-scored)",
+    xaxis_title="Sentence Index",
+    yaxis_title="Vertical Score (z-scored)",
+    width=1000,
+    height=450,
+    barmode="group",
+)
+fig.show()
 
-    # Get example problem data
-    text, sentences, _ = prepare_whitebox_example()
-
-    # Extract attention from a middle layer
-    layer, head = 15, 8
-    print(f"\nExtracting attention from layer {layer}, head {head}...")
-    token_attention, tokens = extract_attention_matrix(text, model, tokenizer, layer, head)
-
-    # Convert to sentence-level attention
-    boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
-    sentence_attention = utils.average_attention_by_sentences(token_attention, boundaries)
-
-    # Compute vertical scores WITH and WITHOUT depth control
-    print("\nComputing vertical scores...")
-    vert_scores_no_control = get_vertical_scores(sentence_attention, proximity_ignore=4, control_depth=False)
-    vert_scores_with_control = get_vertical_scores(sentence_attention, proximity_ignore=4, control_depth=True)
-
-    # Show top sentences
-    top_3_no_control = np.argsort(vert_scores_no_control)[-3:][::-1]
-    top_3_with_control = np.argsort(vert_scores_with_control)[-3:][::-1]
-
-    print(f"\nTop-3 sentences (no depth control): {top_3_no_control}")
-    print(f"Top-3 sentences (with depth control): {top_3_with_control}")
-    print(f"Correlation between methods: {np.corrcoef(vert_scores_no_control, vert_scores_with_control)[0, 1]:.3f}")
-
-    # Visualize comparison
-    fig, ax = plt.subplots(figsize=(12, 5))
-    x = np.arange(len(vert_scores_no_control))
-    width = 0.35
-    ax.bar(x - width / 2, vert_scores_no_control, width, label="No depth control", alpha=0.7)
-    ax.bar(x + width / 2, vert_scores_with_control, width, label="With depth control", alpha=0.7)
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.set_xlabel("Sentence Index")
-    ax.set_ylabel("Vertical Score")
-    ax.set_title("Vertical Scores Comparison: Depth Control Effect")
-    ax.legend()
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.show()
-
-    print("\n✓ Depth control makes the metric more robust to position bias!")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2658,6 +2721,12 @@ def compute_head_kurtosis(vertical_scores: np.ndarray) -> float:
     # Compute Fisher's kurtosis (excess kurtosis)
     return stats.kurtosis(valid_scores, fisher=True, bias=True)
     # END SOLUTION
+
+
+# HIDE
+if MAIN:
+    tests.test_compute_head_kurtosis(compute_head_kurtosis)
+# END HIDE
 
 
 # ! CELL TYPE: markdown
@@ -2739,6 +2808,8 @@ def find_receiver_heads(
 
             all_vert_scores[layer, head] = vert_scores
 
+        torch.cuda.empty_cache()
+
     # Compute kurtosis for each head (over sentences dimension)
     kurtosis_matrix = np.zeros((n_layers, n_heads))
     for layer in range(n_layers):
@@ -2777,29 +2848,42 @@ if MAIN:
     print("=" * 60)
 
     # Load example CoT
-    text_full, sentences_full, _ = prepare_whitebox_example()
+    text_full, sentences_full, _ = utils.get_whitebox_example_data(problem_data)
 
     # Use first 10 sentences only (for speed)
-    sentences_subset = sentences_full[:10]
-    # Reconstruct text from subset
-    text_subset = "".join(sentences_subset)
+    n_chunks = 74
+    sentences_subset = sentences_full[:n_chunks]
+    # Find where the 10th sentence ends in the original text to extract the correct substring
+    # This preserves the original text formatting and ensures tokenization consistency
+    end_char_pos = 0
+    for sent in sentences_subset:
+        # Find this sentence in the text starting from where we left off
+        sent_pos = text_full.find(sent, end_char_pos)
+        if sent_pos == -1:
+            # Try with stripped version
+            sent_pos = text_full.find(sent.strip(), end_char_pos)
+        if sent_pos != -1:
+            end_char_pos = sent_pos + len(sent)
+
+    text_subset = text_full[:end_char_pos]
 
     print(f"Analyzing first {len(sentences_subset)} sentences...")
     print(f"Text length: {len(text_subset)} characters")
 
     # Find top-10 receiver heads
+    torch.cuda.empty_cache()
     receiver_heads, receiver_kurts = find_receiver_heads(
         text_subset,
         sentences_subset,
-        model,  # Model loaded earlier
+        model,
         tokenizer,
-        top_k=10,
+        top_k=5,
         proximity_ignore=4,
     )
 
     print("\nTop-10 Receiver Heads:")
     for i, ((layer, head), kurt) in enumerate(zip(receiver_heads, receiver_kurts)):
-        print(f"  {i + 1}. Layer {layer:2d}, Head {head:2d} | Kurtosis: {kurt:.3f}")
+        print(f"  {i + 1:2d}. Layer {layer:2d}, Head {head:2d} | Kurtosis: {kurt:.3f}")
 
     # Visualize kurtosis distribution
     # Recompute kurtosis matrix for visualization
@@ -2808,24 +2892,21 @@ if MAIN:
     kurtosis_viz = np.zeros((n_layers, n_heads))
 
     for layer, head in receiver_heads:
-        kurtosis_viz[layer, head] = receiver_kurts[list(receiver_heads).index([layer, head])]
+        kurtosis_viz[layer, head] = receiver_kurts[receiver_heads.tolist().index([layer, head])]
 
-    fig, ax = plt.subplots(figsize=(12, 8))
-    im = ax.imshow(kurtosis_viz, cmap="YlOrRd", aspect="auto")
-    ax.set_xlabel("Head")
-    ax.set_ylabel("Layer")
-    ax.set_title("Top-10 Receiver Heads by Kurtosis")
-    plt.colorbar(im, ax=ax, label="Kurtosis")
+    fig = px.imshow(
+        kurtosis_viz,
+        color_continuous_scale="RdBu",
+        color_continuous_midpoint=0.0,
+        labels=dict(x="Head", y="Layer", color="Kurtosis"),
+        title="Top Receiver Heads by Kurtosis",
+        aspect="auto",
+        width=800,
+        height=600,
+    )
+    fig.show()
+    print("Receiver heads should attend 'spikily' to specific important sentences.")
 
-    # Mark top heads
-    for layer, head in receiver_heads:
-        ax.plot(head, layer, "b*", markersize=15, markeredgecolor="white", markeredgewidth=1.5)
-
-    plt.tight_layout()
-    plt.show()
-
-    print("\n✓ Receiver heads identified!")
-    print("These heads attend 'spikily' to specific important sentences.")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2901,6 +2982,7 @@ def compute_receiver_head_scores(
 
     all_vert_scores = []
 
+    print(f"Computing scores from {len(receiver_heads)} receiver heads...")
     for layer, head in receiver_heads:
         # Extract attention for this receiver head
         attn_matrix, _ = extract_attention_matrix(text, model, tokenizer, layer, head)
@@ -2969,13 +3051,19 @@ if MAIN:
     fig.show()
 
     print("\nTop-3 sentences by receiver head score:")
-    top_indices = np.argsort(receiver_scores)[-3:][::-1]
+    # Filter out NaN values before selecting top sentences
+    valid_mask = ~np.isnan(receiver_scores)
+    valid_indices = np.where(valid_mask)[0]
+    valid_scores = receiver_scores[valid_mask]
+    top_k = min(3, len(valid_scores))
+    top_in_valid = np.argsort(valid_scores)[-top_k:][::-1]
+    top_indices = valid_indices[top_in_valid]
+
     for idx in top_indices:
         print(f"  Sentence {idx}: {receiver_scores[idx]:.4f}")
         print(f"    Text: {sentences_subset[idx][:100]}...")
 
-    print("\n✓ Receiver head scores computed!")
-    print("These aggregate the attention from all high-kurtosis receiver heads.")
+    print("Receiver head scores computed! These aggregate the attention from all high-kurtosis receiver heads.")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3023,52 +3111,197 @@ r"""
 # ! FILTERS: []
 # ! TAGS: []
 
+# Helper functions for attention suppression (adapted from thought-anchors)
 
-class AttentionSuppressionHook:
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotates half the hidden dims of the input (for RoPE)."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor | None = None,
+    unsqueeze_dim: int = 1,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Applies Rotary Position Embedding to query and key tensors."""
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """Expands key/value tensors for grouped-query attention."""
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+
+def apply_qwen_attention_suppression(
+    model,
+    token_ranges: list[tuple[int, int]] | tuple[int, int],
+    layer_to_heads: dict[int, list[int]] | None = None,
+) -> dict[str, Any]:
     """
-    Hook that suppresses attention to specific token positions.
+    Suppresses attention to specific token positions by replacing forward methods.
 
-    When registered on an attention layer, this zeros out attention weights
-    to the specified positions before softmax.
+    Args:
+        model: The model to apply suppression to
+        token_ranges: Token range(s) to suppress - single tuple or list of tuples
+        layer_to_heads: Dict mapping layer indices to lists of head indices to suppress (None = all heads)
+
+    Returns:
+        Dict with 'original_forwards' for restoration
+
+    Adapted from thought-anchors: whitebox-analyses/pytorch_models/hooks.py
     """
+    # EXERCISE
+    # raise NotImplementedError("Implement Qwen attention suppression")
+    # END EXERCISE
+    # SOLUTION
+    # Normalize token_ranges to list of tuples
+    if isinstance(token_ranges, tuple):
+        token_ranges = [token_ranges]
 
-    def __init__(self, positions_to_suppress: list[int], head_indices: list[int] = None):
-        """
-        Args:
-            positions_to_suppress: Token positions to suppress attention to
-            head_indices: Which heads to apply suppression to (None = all)
-        """
-        self.positions_to_suppress = positions_to_suppress
-        self.head_indices = head_indices
+    # Find rotary embedding module
+    rotary_emb_module = None
+    if hasattr(model, "model") and hasattr(model.model, "rotary_emb"):
+        rotary_emb_module = model.model.rotary_emb
 
-    def __call__(self, module, input, output):
-        """
-        Hook function called after attention layer forward pass.
-        """
-        # EXERCISE
-        # raise NotImplementedError("Implement attention suppression hook")
-        # END EXERCISE
-        # SOLUTION
-        # Output format depends on model architecture
-        # For typical transformers: output is (attn_output, attn_weights) or just attn_output
+    # Find attention modules to patch
+    target_modules = []
+    for name, module in model.named_modules():
+        if name.startswith("model.layers") and name.endswith("self_attn"):
+            try:
+                layer_idx = int(name.split(".")[2])
+                if layer_to_heads is None or layer_idx in layer_to_heads:
+                    if all(hasattr(module, attr) for attr in ["config", "q_proj", "k_proj", "v_proj", "o_proj"]):
+                        target_modules.append((name, module, layer_idx))
+            except (IndexError, ValueError):
+                continue
 
-        if isinstance(output, tuple) and len(output) >= 2:
-            attn_output, attn_weights = output[0], output[1]
+    if not target_modules:
+        print("Warning: No Qwen attention modules found to patch")
+        return {"original_forwards": {}}
 
-            # Modify attention weights
-            if self.head_indices is not None:
-                for h in self.head_indices:
-                    attn_weights[:, h, :, self.positions_to_suppress] = 0
-            else:
-                attn_weights[:, :, :, self.positions_to_suppress] = 0
+    # Store original forward methods
+    original_forwards = {}
 
-            # Renormalize
-            attn_weights = attn_weights / (attn_weights.sum(dim=-1, keepdim=True) + 1e-10)
+    # Create and apply masked forward functions
+    for name, attn_module, layer_idx in target_modules:
+        original_forwards[name] = attn_module.forward
+        heads_mask = layer_to_heads[layer_idx] if layer_to_heads is not None else None
 
-            return (attn_output, attn_weights) + output[2:]
+        # Create masked forward function
+        def create_masked_forward(orig_forward, layer_idx, rotary_ref, heads_mask):
+            def masked_forward(
+                self,
+                hidden_states: torch.Tensor,
+                attention_mask: torch.Tensor | None = None,
+                position_ids: torch.LongTensor | None = None,
+                past_key_value: tuple[torch.Tensor] | None = None,
+                output_attentions: bool = False,
+                use_cache: bool = False,
+                cache_position: torch.LongTensor | None = None,
+                **kwargs,
+            ) -> tuple[torch.Tensor, torch.Tensor | None]:
+                bsz, q_len, _ = hidden_states.size()
+                config = self.config
+                device = hidden_states.device
 
-        return output
-        # END SOLUTION
+                # Project to Q, K, V
+                query_states = self.q_proj(hidden_states)
+                key_states = self.k_proj(hidden_states)
+                value_states = self.v_proj(hidden_states)
+
+                # Reshape for multi-head attention
+                num_heads = config.num_attention_heads
+                head_dim = config.hidden_size // num_heads
+                num_key_value_heads = config.num_key_value_heads
+                num_key_value_groups = num_heads // num_key_value_heads
+
+                query_states = query_states.view(bsz, q_len, num_heads, head_dim).transpose(1, 2)
+                key_states = key_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+                value_states = value_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+
+                # Apply RoPE
+                if position_ids is None:
+                    position_ids = torch.arange(0, q_len, dtype=torch.long, device=device).unsqueeze(0)
+
+                if rotary_ref is not None and callable(rotary_ref):
+                    cos, sin = rotary_ref(value_states, position_ids=position_ids)
+                    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+
+                # Repeat K/V for grouped-query attention
+                key_states = repeat_kv(key_states, num_key_value_groups)
+                value_states = repeat_kv(value_states, num_key_value_groups)
+
+                # Compute attention scores
+                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(head_dim)
+
+                # Apply suppression mask BEFORE softmax (key step!)
+                for start, end in token_ranges:
+                    effective_start = min(start, q_len)
+                    effective_end = min(end, q_len)
+                    if effective_start < effective_end:
+                        mask_value = torch.finfo(attn_weights.dtype).min
+                        if heads_mask is None:
+                            # Suppress in all heads
+                            attn_weights[..., effective_start:effective_end] = mask_value
+                        else:
+                            # Suppress only in specific heads
+                            attn_weights[:, heads_mask, :, effective_start:effective_end] = mask_value
+
+                # Apply attention mask if provided
+                if attention_mask is not None:
+                    attn_weights = attn_weights + attention_mask
+
+                # Softmax
+                attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
+                    query_states.dtype
+                )
+
+                # Apply attention to values
+                attn_output = torch.matmul(attn_weights, value_states)
+
+                # Reshape and project output
+                attn_output = attn_output.transpose(1, 2).contiguous()
+                attn_output = attn_output.reshape(bsz, q_len, config.hidden_size)
+                attn_output = self.o_proj(attn_output)
+
+                return attn_output, attn_weights if output_attentions else None
+
+            return masked_forward
+
+        # Replace forward method
+        from types import MethodType
+
+        attn_module.forward = MethodType(
+            create_masked_forward(attn_module.forward, layer_idx, rotary_emb_module, heads_mask), attn_module
+        )
+
+    return {"original_forwards": original_forwards}
+    # END SOLUTION
+
+
+def remove_qwen_attention_suppression(model, suppression_info: dict[str, Any]):
+    """Restores original forward methods after attention suppression."""
+    original_forwards = suppression_info.get("original_forwards", {})
+    if not original_forwards:
+        return
+
+    for name, module in model.named_modules():
+        if name in original_forwards:
+            module.forward = original_forwards[name]
 
 
 # ! CELL TYPE: markdown
@@ -3134,6 +3367,233 @@ def compute_suppression_kl(
     # END SOLUTION
 
 
+# HIDE
+if MAIN:
+    tests.test_compute_suppression_kl(compute_suppression_kl)
+# END HIDE
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Testing Attention Suppression
+
+Now let's properly test attention suppression using forward method replacement.
+
+**Key insight**: We need to mask attention scores BEFORE softmax, not after. The implementation above replaces the entire forward method to intervene at the right point.
+
+**Expected result**: Suppressing high-importance sentences should cause larger KL divergence than suppressing low-importance sentences.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN:
+    print("\n" + "=" * 60)
+    print("Testing Attention Suppression")
+    print("=" * 60)
+
+    # Select high and low importance sentences
+    valid_mask = ~np.isnan(receiver_scores)
+    valid_indices = np.where(valid_mask)[0]
+    valid_scores = receiver_scores[valid_mask]
+
+    high_idx = valid_indices[np.argmax(valid_scores)]
+    low_idx = valid_indices[np.argmin(valid_scores)]
+
+    print(f"\nHigh importance sentence {high_idx}: score={receiver_scores[high_idx]:.4f}")
+    print(f"  Text: {sentences_subset[high_idx][:100]}...")
+    print(f"\nLow importance sentence {low_idx}: score={receiver_scores[low_idx]:.4f}")
+    print(f"  Text: {sentences_subset[low_idx][:100]}...")
+
+    # Get token boundaries
+    high_sent_range = boundaries[high_idx]
+    low_sent_range = boundaries[low_idx]
+
+    # Prepare input
+    inputs = tokenizer(text_subset, return_tensors="pt")
+    if model.device.type == "cuda":
+        inputs = {k: v.cuda() for k, v in inputs.items()}
+
+    # Original forward pass (no suppression)
+    with torch.no_grad():
+        original_output = model(**inputs)
+        original_logits = original_output.logits[0, -1].cpu().numpy()
+
+    layer_to_heads = {}
+    for layer_idx, head_idx in receiver_heads[:5]:
+        if layer_idx not in layer_to_heads:
+            layer_to_heads[layer_idx] = []
+        layer_to_heads[layer_idx].append(int(head_idx))
+
+    # Test 1: Supp1ress high-importance sentence in top receiver heads
+    suppression_info = apply_qwen_attention_suppression(model, high_sent_range, layer_to_heads)
+
+    with torch.no_grad():
+        suppressed_high_output = model(**inputs)
+        suppressed_high_logits = suppressed_high_output.logits[0, -1].cpu().numpy()
+
+    remove_qwen_attention_suppression(model, suppression_info)
+
+    kl_high = compute_suppression_kl(original_logits, suppressed_high_logits)
+
+    # Test 2: Suppress low-importance sentence
+    suppression_info = apply_qwen_attention_suppression(model, low_sent_range, layer_to_heads)
+
+    with torch.no_grad():
+        suppressed_low_output = model(**inputs)
+        suppressed_low_logits = suppressed_low_output.logits[0, -1].cpu().numpy()
+
+    remove_qwen_attention_suppression(model, suppression_info)
+
+    kl_low = compute_suppression_kl(original_logits, suppressed_low_logits)
+
+    # Compare results
+    print("\n" + "=" * 60)
+    print("Attention Suppression Results")
+    print("=" * 60)
+    print(f"KL divergence when suppressing HIGH importance sentence: {kl_high:.4e}")
+    print(f"KL divergence when suppressing LOW importance sentence:  {kl_low:.4e}")
+    print(f"Ratio (high/low): {kl_high / (kl_low + 1e-10):.2f}x")
+
+    if kl_high > kl_low * 1.5:  # At least 1.5x larger
+        print("\n✓ Success! Suppressing high-importance sentences causes larger output changes")
+        print("  This causally validates that receiver head scores identify important sentences")
+    elif kl_high > kl_low:
+        print("\n~ Moderate effect: high-importance suppression has larger effect, but not dramatic")
+    else:
+        print("\n⚠ Unexpected: low-importance suppression had larger or equal effect")
+        print("  This may indicate the sentences chosen aren't as different as expected")
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+**What this demonstrates**:
+
+The attention suppression test provides **causal validation** of the receiver head scores:
+1. We suppress attention to specific sentences in the receiver heads
+2. We measure how much the model's output distribution changes (KL divergence)
+3. High-importance sentences (high receiver scores) cause larger changes when suppressed
+
+This validates that:
+- Receiver head scores correctly identify important sentences
+- These sentences **causally** affect the model's output (not just correlational)
+- The attention mechanism is the actual pathway for information flow
+
+**Implementation details**:
+- We replace the forward method of attention modules (not post-hooks!)
+- We mask attention scores BEFORE softmax by setting them to -inf
+- This works specifically for Qwen/Qwen2 architecture with the helper functions provided
+- For other architectures, you'd need to adapt the forward method replacement
+
+**Note**: This approach is from the thought-anchors paper's whitebox analysis code.
+"""
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - compute suppression scores for validation
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 20-25 minutes on this exercise.
+> ```
+
+To validate our whitebox method against blackbox counterfactual importance, we need suppression scores for each sentence. Computing this for all sentences would be expensive, so we'll sample a subset.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_suppression_scores(
+    text: str,
+    sentences: list[str],
+    boundaries: list[tuple[int, int]],
+    model,
+    tokenizer,
+    layer_to_heads: dict[int, list[int]],
+    sample_size: int = 30,
+    seed: int = 42,
+) -> tuple[np.ndarray, list[int]]:
+    """
+    Compute attention suppression scores for a sample of sentences.
+
+    Args:
+        text: Full reasoning trace
+        sentences: List of sentences
+        boundaries: Token boundaries for each sentence
+        model: Loaded model
+        tokenizer: Tokenizer
+        layer_to_heads: Dict mapping layer indices to head indices to suppress
+        sample_size: Number of sentences to sample (for efficiency)
+        seed: Random seed for sampling
+
+    Returns:
+        suppression_scores: KL divergence for each sampled sentence
+        sampled_indices: Indices of sampled sentences
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement suppression score computation")
+    # END EXERCISE
+    # SOLUTION
+    np.random.seed(seed)
+
+    # Sample sentences (excluding last few with NaN receiver scores)
+    n_sentences = len(sentences)
+    valid_indices = list(range(min(n_sentences - 5, len(boundaries))))  # Exclude last few
+    sample_size = min(sample_size, len(valid_indices))
+    sampled_indices = sorted(np.random.choice(valid_indices, size=sample_size, replace=False))
+
+    # Prepare input
+    inputs = tokenizer(text, return_tensors="pt")
+    if model.device.type == "cuda":
+        inputs = {k: v.cuda() for k, v in inputs.items()}
+
+    # Get baseline logits
+    with torch.no_grad():
+        baseline_output = model(**inputs)
+        baseline_logits = baseline_output.logits[0, -1].cpu().numpy()
+
+    suppression_scores = []
+
+    print(f"Computing suppression scores for {len(sampled_indices)} sampled sentences...")
+
+    for sent_idx in tqdm(sampled_indices, desc="Suppressing sentences"):
+        # Get token range for this sentence
+        token_range = boundaries[sent_idx]
+
+        # Apply suppression
+        suppression_info = apply_qwen_attention_suppression(model, token_range, layer_to_heads)
+
+        # Get suppressed logits
+        with torch.no_grad():
+            suppressed_output = model(**inputs)
+            suppressed_logits = suppressed_output.logits[0, -1].cpu().numpy()
+
+        # Restore original forward methods
+        remove_qwen_attention_suppression(model, suppression_info)
+
+        # Compute KL divergence
+        kl = compute_suppression_kl(baseline_logits, suppressed_logits)
+        suppression_scores.append(kl)
+
+    return np.array(suppression_scores), sampled_indices
+    # END SOLUTION
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -3141,7 +3601,7 @@ def compute_suppression_kl(
 r"""
 ## Validation: Correlating Whitebox and Black-box Methods
 
-**The key validation**: Receiver head scores should correlate with our counterfactual importance metric. This would show that whitebox (attention-based) and blackbox (resampling-based) methods identify the same underlying "thought anchors".
+**The key validation**: Attention suppression scores should correlate with counterfactual importance. This would show that whitebox (attention-based) and blackbox (resampling-based) methods identify the same underlying "thought anchors".
 """
 
 # ! CELL TYPE: markdown
@@ -3158,7 +3618,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-Implement a function that compares receiver head scores with counterfactual importance from the black-box analysis.
+Implement a function that compares attention suppression scores with counterfactual importance from the black-box analysis.
 """
 
 # ! CELL TYPE: code
@@ -3167,15 +3627,17 @@ Implement a function that compares receiver head scores with counterfactual impo
 
 
 def validate_whitebox_blackbox_correlation(
-    receiver_scores: np.ndarray,
+    whitebox_scores: np.ndarray,
     counterfactual_importances: np.ndarray,
+    sampled_indices: list[int] | None = None,
 ) -> tuple[float, go.Figure]:
     """
     Compute correlation between whitebox and blackbox importance metrics.
 
     Args:
-        receiver_scores: Receiver head scores from whitebox analysis
+        whitebox_scores: Attention suppression scores from whitebox analysis
         counterfactual_importances: From black-box analysis
+        sampled_indices: If whitebox_scores are sampled, the indices they correspond to
 
     Returns:
         correlation: Pearson correlation coefficient
@@ -3186,26 +3648,31 @@ def validate_whitebox_blackbox_correlation(
     # END EXERCISE
 
     # SOLUTION
-    # Handle length mismatch (receiver_scores may be for subset of sentences)
-    min_len = min(len(receiver_scores), len(counterfactual_importances))
-    receiver_scores_aligned = receiver_scores[:min_len]
-    cf_importance_aligned = counterfactual_importances[:min_len]
+    # If sampled, align using indices
+    if sampled_indices is not None:
+        cf_importance_aligned = counterfactual_importances[sampled_indices]
+        whitebox_aligned = whitebox_scores
+    else:
+        # Handle length mismatch
+        min_len = min(len(whitebox_scores), len(counterfactual_importances))
+        whitebox_aligned = whitebox_scores[:min_len]
+        cf_importance_aligned = counterfactual_importances[:min_len]
 
     # Use absolute value of counterfactual importance
     # (negative importance means making the answer less likely)
     cf_abs = np.abs(cf_importance_aligned)
 
     # Remove any NaN values
-    valid_mask = ~(np.isnan(receiver_scores_aligned) | np.isnan(cf_abs))
-    receiver_valid = receiver_scores_aligned[valid_mask]
+    valid_mask = ~(np.isnan(whitebox_aligned) | np.isnan(cf_abs))
+    whitebox_valid = whitebox_aligned[valid_mask]
     cf_valid = cf_abs[valid_mask]
 
-    if len(receiver_valid) < 3:
+    if len(whitebox_valid) < 3:
         print("Warning: Too few valid points for correlation")
         return np.nan, None
 
     # Compute correlation
-    correlation = np.corrcoef(cf_valid, receiver_valid)[0, 1]
+    correlation = np.corrcoef(cf_valid, whitebox_valid)[0, 1]
 
     # Create scatter plot
     fig = go.Figure()
@@ -3213,17 +3680,17 @@ def validate_whitebox_blackbox_correlation(
     fig.add_trace(
         go.Scatter(
             x=cf_valid,
-            y=receiver_valid,
+            y=whitebox_valid,
             mode="markers",
             marker=dict(size=10, opacity=0.6, color="steelblue"),
             name="Sentences",
-            hovertemplate="<b>CF Importance:</b> %{x:.4f}<br>" + "<b>Receiver Score:</b> %{y:.4f}<extra></extra>",
+            hovertemplate="<b>CF Importance:</b> %{x:.4f}<br>" + "<b>Suppression Score:</b> %{y:.4f}<extra></extra>",
         )
     )
 
     # Add trend line
-    if len(receiver_valid) >= 2:
-        z = np.polyfit(cf_valid, receiver_valid, 1)
+    if len(whitebox_valid) >= 2:
+        z = np.polyfit(cf_valid, whitebox_valid, 1)
         p = np.poly1d(z)
         x_line = np.linspace(cf_valid.min(), cf_valid.max(), 100)
         y_line = p(x_line)
@@ -3241,7 +3708,7 @@ def validate_whitebox_blackbox_correlation(
     fig.update_layout(
         title=f"Whitebox vs. Blackbox Correlation (r = {correlation:.3f})",
         xaxis_title="|Counterfactual Importance| (Black-box)",
-        yaxis_title="Receiver Head Score (White-box)",
+        yaxis_title="Suppression Score (White-box)",
         width=800,
         height=600,
         showlegend=True,
@@ -3258,46 +3725,57 @@ if MAIN:
 
     # Get counterfactual importances from earlier black-box analysis
     # These were computed for the full problem in section 2
-    _, sentences_full, cf_importance_full = prepare_whitebox_example()
+    text_full, sentences_full, cf_importance_full = utils.get_whitebox_example_data(problem_data)
 
-    # We computed receiver scores for first 10 sentences
-    # So let's compare those
-    cf_importance_subset = cf_importance_full[: len(sentences_subset)]
+    # Use the full text and sentences for validation (not just the subset)
+    # Recompute boundaries for full text
+    boundaries_full = utils.get_sentence_token_boundaries(text_full, sentences_full, tokenizer)
 
-    print(f"\nComparing {len(receiver_scores)} sentences...")
-    print(f"Receiver scores range: [{receiver_scores.min():.4f}, {receiver_scores.max():.4f}]")
-    print(f"CF importance range: [{cf_importance_subset.min():.4f}, {cf_importance_subset.max():.4f}]")
+    # Build layer_to_heads dict for suppression (using top receiver heads)
+    layer_to_heads = {}
+    for layer_idx, head_idx in receiver_heads[:5]:
+        if layer_idx not in layer_to_heads:
+            layer_to_heads[layer_idx] = []
+        layer_to_heads[layer_idx].append(int(head_idx))
+
+    # Compute suppression scores for a sample of sentences
+    print("\nComputing suppression scores for validation...")
+    suppression_scores, sampled_indices = compute_suppression_scores(
+        text_full,
+        sentences_full,
+        boundaries_full,
+        model,
+        tokenizer,
+        layer_to_heads,
+        sample_size=30,  # Sample 30 sentences for efficiency
+        seed=42,
+    )
+
+    print(f"\nComparing {len(suppression_scores)} sampled sentences...")
+    print(f"Suppression scores range: [{suppression_scores.min():.6f}, {suppression_scores.max():.6f}]")
+    print(f"CF importance range: [{cf_importance_full.min():.4f}, {cf_importance_full.max():.4f}]")
 
     # Compute correlation
-    correlation, fig = validate_whitebox_blackbox_correlation(receiver_scores, cf_importance_subset)
+    correlation, fig = validate_whitebox_blackbox_correlation(suppression_scores, cf_importance_full, sampled_indices)
 
     print(f"\n{'=' * 60}")
-    print(f"CORRELATION: r = {correlation:.3f}")
+    print(f"Correlation (r): {correlation:.4f}")
     print(f"{'=' * 60}")
 
     if correlation > 0.3:
         print("✓ Strong positive correlation!")
-        print("  Whitebox (attention-based) and blackbox (resampling-based) methods")
+        print("  Whitebox (suppression) and blackbox (resampling) methods")
         print("  identify the same underlying 'thought anchors'.")
-    elif correlation > 0.1:
-        print("⚠ Moderate correlation")
-        print("  Results may vary with different problems or model architectures.")
+    elif correlation > 0.15:
+        print("~ Moderate correlation")
+        print("  Results show some agreement between methods.")
     else:
-        print("⚠ Weak correlation")
-        print("  Note: Correlation can vary significantly by problem.")
-        print("  The paper reports r ≈ 0.4-0.6 when averaged across many problems.")
+        print("⚠ Low correlation")
+        print("  Methods may be identifying different aspects of importance.")
 
-    # Show plot
     if fig is not None:
         fig.show()
 
-    print("\n" + "=" * 60)
-    print("KEY TAKEAWAY")
-    print("=" * 60)
-    print("When whitebox and blackbox methods correlate, it validates our mechanistic")
-    print("understanding: the model's attention patterns genuinely reflect which")
-    print("sentences are causally important for its reasoning trajectory.")
-    print("=" * 60)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

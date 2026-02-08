@@ -6,9 +6,12 @@ that don't need to be directly seen by students in the main notebook.
 """
 
 import json
+import re
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 # Color scheme for sentence categories
 CATEGORY_COLORS = {
@@ -553,6 +556,31 @@ draw();
 # Adapted from thought-anchors repo: whitebox-analyses/attention_analysis/
 
 
+def get_whitebox_example_data(problem_data: dict[str, Any]) -> tuple[str, list[str], np.ndarray]:
+    """
+    Load example problem data for whitebox analysis.
+
+    Args:
+        problem_id: Problem to load (defaults to PROBLEM_ID from earlier)
+
+    Returns:
+        text: Full CoT reasoning trace
+        sentences: List of sentence strings
+        cf_importance: Counterfactual importance scores from black-box analysis
+    """
+    # Extract base solution
+    text = problem_data["base_solution"]["full_cot"]
+    sentences = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
+
+    # Get counterfactual importances (computed in black-box section)
+    # Note: excluding final chunk (which is the answer)
+    cf_importance = np.array(
+        [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
+    )
+
+    return text, sentences, cf_importance
+
+
 def get_sentence_token_boundaries(
     text: str,
     sentences: list[str],
@@ -576,11 +604,11 @@ def get_sentence_token_boundaries(
     Note: This is a simplified version. The full implementation in thought-anchors
     handles unicode normalization and edge cases more robustly.
     """
-    import re
 
     # Normalize unicode spaces for robust matching
     def normalize_spaces(s: str) -> str:
         """Replace various unicode spaces with regular space."""
+        s = s.replace("\n\n", " ")
         return re.sub(r"[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]", " ", s)
 
     # Find character positions of each sentence
@@ -598,7 +626,7 @@ def get_sentence_token_boundaries(
             sentence_stripped = sentence_normalized.strip()
             norm_pos = text_normalized.find(sentence_stripped, search_start)
             if norm_pos == -1:
-                raise ValueError(f"Sentence not found in text: {sentence[:50]}...")
+                raise ValueError(f"Sentence not found in text: {sentence!r}")
             norm_end = norm_pos + len(sentence_stripped)
         else:
             norm_end = norm_pos + len(sentence_normalized)
@@ -668,3 +696,23 @@ def average_attention_by_sentences(
                 result[i, j] = np.mean(region)
 
     return result
+
+
+def memory_info() -> str:
+    """Return a string with current memory usage info."""
+
+    if not torch.cuda.is_available():
+        return "CUDA not available"
+
+    allocated = torch.cuda.memory_allocated() / 1e9
+    reserved = torch.cuda.memory_reserved() / 1e9
+    total = torch.cuda.get_device_properties(0).total_memory / 1e9
+    free = total - reserved
+
+    return (
+        f"GPU Memory Usage:\n"
+        f"  Allocated: {allocated:.2f} GB\n"
+        f"  Reserved:  {reserved:.2f} GB\n"
+        f"  Free:      {free:.2f} GB\n"
+        f"  Total:     {total:.2f} GB"
+    )
