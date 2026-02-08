@@ -184,14 +184,14 @@ import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import torch
 import transformers
+from datasets import load_dataset
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
-from IPython.display import display
+from IPython.display import HTML, display
 from openai import OpenAI
 from plotly.subplots import make_subplots
 from scipy import stats
@@ -470,6 +470,7 @@ if MAIN:
         assert chunks == expected_chunks, f"Expected {expected_chunks}, got {chunks}"
 
     print("All tests passed!")
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1020,6 +1021,7 @@ if MAIN:
     # Show first few chunks
     for i, c in enumerate(problem_data["chunks_labeled"][:5]):
         print(f"{i}. [{c['function_tags'][0]}] {c['chunk'][:80]}...")
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1588,8 +1590,6 @@ for row, (name, importances, color) in enumerate(
 
 fig.update_layout(
     title="Comparison of Importance Metrics",
-    xaxis_title="Chunk Index",
-    yaxis_title="Importance",
     width=1000,
     height=700,
     showlegend=False,
@@ -1669,14 +1669,8 @@ plt.show()
 # ! TAGS: []
 
 r"""
-## Figure 1 Replication: Sentence-to-Sentence Causal Graph
-"""
+## Sentence-to-Sentence Causal Graph
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
 So far we've measured importance for the *final answer*. But we can also ask: how important is sentence $i$ for whether sentence $j$ appears later?
 
 The paper computes this by:
@@ -1689,17 +1683,35 @@ The paper computes this by:
 # ! FILTERS: []
 # ! TAGS: []
 
+
 r"""
-### Exercise - compute sentence match rate
+### Exercise - replicate causal graph
 
 > ```yaml
-> Difficulty: 🔴🔴🔴⚪⚪
+> Difficulty: 🔴🔴🔴🔴🔴
 > Importance: 🔵🔵🔵🔵⚪
 >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-The naive implementation of pairwise importance is very slow because it repeatedly embeds the same rollout texts. We'll use a more efficient approach that precomputes all embeddings upfront.
+Like the last exercise, we're leaving this as an open-ended challenge to you (but substantially more difficult). The solution is broken up into chunks if you want to use pieces of it for guidance. Some general advice:
+
+- The `problem_data` we've loaded in corresponds to the "Case study transcript" problem in appendix C.1 of the thought anchors paper. Note that they only compute the sentence-to-sentence causal graph for chunks 0-73 inclusive, since they observe (as you should have found in the counterfactual importance graphs generated above) that the resampling importance drops off to zero or near zero past this point. To save time, we recommend you follow this convention i.e. only compute the graph up to chunk 73.
+- We recommend computing all the embeddings up front, so that they can be batched (the `embedding_model.encode` should automatically batch things if you give it a list of sentences and pass in the `batch_size` argument).
+- We've given you the function `utils.chunk_graph_html` for creating the importance graph - if you pass in `edge_weights` (2D array of edge-to-edge values) and `chunk_categories` (list of category strings e.g. `"uncertainty_management"`) then it'll render the interactive graph for you.
+
+For reference, the solution code takes about 6 minutes to run on an A100 GPU, with about half the time spent on computing the rollout chunks' embeddings, and about half of the time on the pairwise importance (i.e. batching cosine similarity calculations), although this was probably under-optimized and a more efficient solution is likely possible.
+
+Also note that you can check your answer by going to [thought-anchors.com](https://thought-anchors.com/) and selecting "Hex to binary" in the Problem dropdown. Their demo shows the full 144 nodes rather than the subset of 74 we recommend, but you should still be able to tell if yours is correct (for example, there's one planning node which appears early on in the graph and has very high downstream importance - can you replicate this finding in your graph?).
+
+When you've done this, you can investigate the graph and see if it shows you any interesting patterns about how the sentences causally influence each other. For example, can you see any of the following pattern:
+
+- A planning sentence A boosts a computation sentence B, where B is something you'd only compute if you were following the plan in A
+- An uncertainty management sentence C boosts the sentence D which resolves that uncertainty (highlighting the importance of that uncertainty management step)
+- Short term planning blocks, e.g. uncertainty management sentence E boosting a close-range sentence F which proposes a specific plan for how to proceed
+- Blocks of active computation chunks which don't really effect each other causally (highlighting how our counterfactual resampling method is better than just normal resampling)
+
+At the same time, don't read too much into this single sequence - concrete takeaways only come from averaging out results over a large number of sequences and seeing which kinds of patterns emerge.
 """
 
 # ! CELL TYPE: code
@@ -1710,10 +1722,11 @@ The naive implementation of pairwise importance is very slow because it repeated
 def precompute_rollout_embeddings(
     chunk_solutions: list[list[dict]],
     embedding_model: SentenceTransformer,
-    batch_size: int = 32,
+    batch_size: int = 128,
 ) -> tuple[list[list[np.ndarray]], list[list[list[str]]]]:
     """
-    Precompute embeddings for all sentences in all rollouts using batched encoding.
+    Precompute embeddings for all sentences in all rollouts using batched encoding. Does this by
+    first collecting every single rollout from each chunk, then batch encode them all.
 
     Args:
         chunk_solutions: List of chunk solutions, where chunk_solutions[k] contains
@@ -1722,60 +1735,43 @@ def precompute_rollout_embeddings(
         batch_size: Batch size for embedding model encoding
 
     Returns:
-        rollout_embeddings: rollout_embeddings[k][r] = array of shape (n_sentences, embed_dim)
-        rollout_sentences: rollout_sentences[k][r] = list of sentence strings
+        rollout_embeddings: rollout_embeddings[i][j] = array of shape (n_sentences, embed_dim)
+        rollout_sentences: rollout_sentences[i][j] = list of sentence strings
     """
     # First pass: collect all sentences and track their positions
     all_sentences: list[str] = []
-    # position_map[k][r] = (start_idx, end_idx) into all_sentences, or None if empty
+    # position_map[i][j] = (start_idx, end_idx) into all_sentences, or None if empty
     position_map: list[list[tuple[int, int] | None]] = []
     rollout_sentences: list[list[list[str]]] = []
 
-    for k in tqdm(range(len(chunk_solutions)), desc="Precomputing embeddings"):
+    for i in tqdm(range(len(chunk_solutions)), desc="Precomputing embeddings"):
         chunk_positions = []
         chunk_sentences = []
 
-        for rollout_dict in chunk_solutions[k]:
-            rollout_text = rollout_dict.get("rollout", "")
-            if not rollout_text:
-                chunk_positions.append(None)
-                chunk_sentences.append([])
-                continue
-
+        for rollout_dict in chunk_solutions[i]:
+            rollout_text = rollout_dict["rollout"]
             sentences = split_solution_into_chunks(rollout_text)
+            assert sentences, "Expected at least one sentence per rollout"
 
-            if not sentences:
-                chunk_positions.append(None)
-                chunk_sentences.append([])
-                continue
-
-            start_idx = len(all_sentences)
+            # chunk_positions.append((start_idx, end_idx))
             all_sentences.extend(sentences)
-            end_idx = len(all_sentences)
-
-            chunk_positions.append((start_idx, end_idx))
+            chunk_positions.append((len(all_sentences) - len(sentences), len(all_sentences)))
             chunk_sentences.append(sentences)
 
         position_map.append(chunk_positions)
         rollout_sentences.append(chunk_sentences)
 
     # Batch embed all sentences at once
-    if all_sentences:
-        all_embeddings = embedding_model.encode(all_sentences, batch_size=batch_size, show_progress_bar=True)
-    else:
-        all_embeddings = np.array([])
+    all_embeddings = embedding_model.encode(all_sentences, batch_size=batch_size, show_progress_bar=True)
 
     # Reconstruct per-rollout embeddings using position map
     rollout_embeddings: list[list[np.ndarray]] = []
 
-    for k in range(len(chunk_solutions)):
+    for i in range(len(chunk_solutions)):
         chunk_embeddings = []
-        for position in position_map[k]:
-            if position is None:
-                chunk_embeddings.append(np.array([]))
-            else:
-                start_idx, end_idx = position
-                chunk_embeddings.append(all_embeddings[start_idx:end_idx])
+        for position in position_map[i]:
+            start_idx, end_idx = position
+            chunk_embeddings.append(all_embeddings[start_idx:end_idx])
         rollout_embeddings.append(chunk_embeddings)
 
     return rollout_embeddings, rollout_sentences
@@ -1784,7 +1780,7 @@ def precompute_rollout_embeddings(
 def precompute_target_embeddings(
     chunks: list[dict],
     embedding_model: SentenceTransformer,
-    n_chunks: int | None = None,
+    n_chunks: int,
 ) -> np.ndarray:
     """
     Precompute embeddings for all target chunk sentences.
@@ -1792,14 +1788,11 @@ def precompute_target_embeddings(
     Args:
         chunks: List of chunk dictionaries with "chunk" key
         embedding_model: Sentence embedding model
-        n_chunks: Number of chunks to process (defaults to all)
+        n_chunks: Number of chunks to process
 
     Returns:
         Array of shape (n_chunks, embed_dim) with target embeddings
     """
-    if n_chunks is None:
-        n_chunks = len(chunks)
-
     chunk_texts = [chunks[i]["chunk"] for i in range(n_chunks)]
     return embedding_model.encode(chunk_texts)
 
@@ -1820,23 +1813,15 @@ def compute_match_rate_from_embeddings(
     Returns:
         Fraction of rollouts with a matching sentence (0 to 1)
     """
-    if not rollout_embeddings_list:
-        return 0.0
-
     # Filter out empty embeddings and track rollout boundaries
     valid_embeddings = []
     rollout_boundaries = []  # (start, end) indices into concatenated array
 
     current_idx = 0
     for embeddings in rollout_embeddings_list:
-        if len(embeddings) == 0:
-            continue
         valid_embeddings.append(embeddings)
         rollout_boundaries.append((current_idx, current_idx + len(embeddings)))
         current_idx += len(embeddings)
-
-    if not valid_embeddings:
-        return 0.0
 
     # Concatenate all embeddings: (total_sentences, embed_dim)
     all_embeddings = np.vstack(valid_embeddings)
@@ -1886,80 +1871,166 @@ def compute_pairwise_importance(
     return include_rate - exclude_rate
 
 
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
-
-# Precompute all embeddings upfront
-target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
-rollout_embeddings, rollout_sentences = precompute_rollout_embeddings(problem_data["chunk_solutions"], embedding_model)
-
-# Compute importance matrix
-importance_matrix = np.zeros((n_chunks, n_chunks))
-
-for i in tqdm(range(n_chunks - 1), desc="Computing pairwise importance"):
-    for j in range(i + 1, n_chunks):
-        importance_matrix[i, j] = compute_pairwise_importance(i, j, target_embeddings, rollout_embeddings)
-
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: [main]
-
-# Plot the importance matrix with plotly
-# Mask upper triangle of transposed matrix (we want to show lower triangle which has the values)
-mask = np.triu(np.ones_like(importance_matrix, dtype=bool))
-importance_matrix_masked = np.where(mask.T, importance_matrix.T, None)
-
-chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"][:n_chunks]]
-tick_text = [f"<span style='color:{utils.CATEGORY_COLORS.get(lbl, '#000000')}'>{lbl}</span>" for lbl in chunk_labels]
-
-fig = go.Figure(
-    data=go.Heatmap(
-        z=importance_matrix_masked,
-        colorscale="RdBu",
-        zmin=-0.5,
-        zmax=0.5,
-        colorbar=dict(title="Causal Importance"),
+if MAIN:
+    # Precompute all embeddings upfront
+    n_chunks = 74
+    target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
+    rollout_embeddings, rollout_sentences = precompute_rollout_embeddings(
+        problem_data["chunk_solutions"], embedding_model
     )
-)
 
-fig.update_layout(
-    title="Sentence-to-Sentence Importance Matrix (Figure 1)",
-    xaxis=dict(
-        title="Source Step (i)",
-        tickmode="array",
-        tickvals=list(range(n_chunks)),
-        ticktext=tick_text,
-    ),
-    yaxis=dict(
-        title="Target Step (j)",
-        tickmode="array",
-        tickvals=list(range(n_chunks)),
-        ticktext=tick_text,
-        autorange="reversed",
-    ),
-    width=900,
-    height=750,
-)
+    # Compute importance matrix
+    importance_matrix = np.zeros((n_chunks, n_chunks))
 
-fig.show()
+    for i in tqdm(range(n_chunks - 1), desc="Computing pairwise importance"):
+        for j in range(i + 1, n_chunks):
+            importance_matrix[i, j] = compute_pairwise_importance(i, j, target_embeddings, rollout_embeddings)
 
-utils.chunk_graph_html(
-    edge_weights=importance_matrix_masked,
-    chunk_colors=[
-        utils.CATEGORY_COLORS[CATEGORIES[chunk["function_tags"][0]]]
-        for chunk in problem_data["chunks_labeled"][:n_chunks]
-    ],
-    n_top_edges=3,
-)
+    # Plot the importance matrix with plotly
+    # Mask upper triangle of transposed matrix (we want to show lower triangle which has the values)
+    mask = np.triu(np.ones_like(importance_matrix, dtype=bool))
+    importance_matrix_masked = np.where(mask, importance_matrix, 0.0)
+
+    chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"][:n_chunks]]
+    chunk_texts = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:n_chunks]]
+
+    html_str = utils.chunk_graph_html(
+        edge_weights=importance_matrix_masked,
+        chunk_labels=chunk_labels,
+        chunk_texts=chunk_texts,
+        n_top_edges_per_direction=3,
+    )
+    display(HTML(html_str))
+    with open("chunk_graph.html", "w") as f:
+        f.write(html_str)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Bonus: Implementing Your Own Resampling
+<details>
+<summary>Hint - how to structure your answer</summary>
+
+You'll need to:
+
+- Precompute all target embeddings, from `problem_data["chunks_labeled"][:n_chunks]`
+- Precompute the embeddings from all chunked rollouts, using `problem_data["chunk_solutions"]` and your own chunk splitting function to split apart each rollout
+- Iterate through every pair `(i, j)` of chunks from `problem_data["chunks_labeled"][:n_chunks]`, and:
+  - Compute the **include rate**, which is the fraction of rollouts from `chunk_{i+1}` containing a sentence sufficiently similar to chunk_j
+  - Compute the **exclude rate**, which is the same but starting from `chunk_i` (i.e. we don't force the inclusion of chunk i)
+  - Compute the importance, which is the exclusion rate minus the inclusion rate
+
+</details>
+
+<details>
+<summary>Hint - functions with docstring to fill in</summary>
+
+```python
+def precompute_rollout_embeddings(
+    chunk_solutions: list[list[dict]],
+    embedding_model: SentenceTransformer,
+    batch_size: int = 128,
+) -> tuple[list[list[np.ndarray]], list[list[list[str]]]]:
+    '''
+    Precompute embeddings for all sentences in all rollouts using batched encoding. Does this by
+    first collecting every single rollout from each chunk, then batch encode them all.
+
+    Args:
+        chunk_solutions: List of chunk solutions, where chunk_solutions[k] contains
+                        rollouts from resampling after chunk k
+        embedding_model: Sentence embedding model
+        batch_size: Batch size for embedding model encoding
+
+    Returns:
+        rollout_embeddings: rollout_embeddings[i][j] = array of shape (n_sentences, embed_dim)
+        rollout_sentences: rollout_sentences[i][j] = list of sentence strings
+    '''
+    ...
+
+    return rollout_embeddings, rollout_sentences
+
+
+def precompute_target_embeddings(
+    chunks: list[dict],
+    embedding_model: SentenceTransformer,
+    n_chunks: int,
+) -> np.ndarray:
+    '''
+    Precompute embeddings for all target chunk sentences.
+
+    Args:
+        chunks: List of chunk dictionaries with "chunk" key
+        embedding_model: Sentence embedding model
+        n_chunks: Number of chunks to process
+
+    Returns:
+        Array of shape (n_chunks, embed_dim) with target embeddings
+    '''
+    ...
+    return embedding_model.encode(chunk_texts)
+
+
+def compute_match_rate_from_embeddings(
+    target_embedding: np.ndarray,
+    rollout_embeddings_list: list[np.ndarray],
+    similarity_threshold: float = 0.7,
+) -> float:
+    '''
+    Compute fraction of rollouts containing a sentence similar to target.
+
+    Args:
+        target_embedding: Embedding of target sentence, shape (embed_dim,)
+        rollout_embeddings_list: List of arrays, each shape (n_sentences, embed_dim)
+        similarity_threshold: Minimum cosine similarity for a match
+
+    Returns:
+        Fraction of rollouts with a matching sentence (0 to 1)
+    '''
+    ...
+
+    return matches / len(rollout_boundaries)
+
+
+def compute_pairwise_importance(
+    source_idx: int,
+    target_idx: int,
+    target_embeddings: np.ndarray,
+    rollout_embeddings: list[list[np.ndarray]],
+    similarity_threshold: float = 0.7,
+) -> float:
+    '''
+    Compute causal importance of sentence source_idx on sentence target_idx.
+    Uses precomputed embeddings for efficiency.
+
+    Compares:
+    - Rollouts from chunk_{source_idx + 1} (source was KEPT)
+    - Rollouts from chunk_{source_idx} (source was REMOVED)
+    '''
+    ...
+
+    return include_rate - exclude_rate
+```
+
+</details>
+
+<details>
+<summary>Solution</summary>
+
+```python
+SOLUTION
+```
+
+</details>
+"""
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Bonus: Implementing Your Own Resampling (local models)
+
+Finally, we'll end with a bonus exercise for implementing your own resampling method using models loaded in locally. Note that this is **not** the method that the authors would have used (instead they used API credits), but we're providing this here as an optional exercise if you're interested in getting into the nuts and bolts of how this resampling method has to work.
 """
 
 # ! CELL TYPE: markdown
@@ -1984,6 +2055,8 @@ r"""
 
 
 class StopOnThink(StoppingCriteria):
+    """Helper class for stopping generation when the <think>...</think> tags are closed."""
+
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.think_token_id = tokenizer.encode("</think>", add_special_tokens=False)[0]
@@ -2012,6 +2085,10 @@ def get_resampled_rollouts(
         Tuple of (full_answer, chunks, resampled_rollouts) where the latter is a list of lists of
         dicts (one for each chunk & resample on that chunk).
     """
+    # EXERCISE
+    # raise NotImplementedError()
+    # EXERCISE END
+    # SOLUTION
 
     @torch.inference_mode()
     def generate(inputs):
@@ -2059,50 +2136,61 @@ def get_resampled_rollouts(
                         "rollout": generated_text,
                     }
                 )
+    # SOLUTION END
 
     return full_answer, chunks, chunk_rollouts
 
 
-# ! CELL TYPE: code
+if MAIN:
+    # Load the model for generation (only if you want to try this)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
+
+    resampled_rollouts = get_resampled_rollouts(
+        prompt=problem_data["base_solution"]["prompt"],
+        model=model,
+        tokenizer=tokenizer,
+        num_resamples_per_chunk=2,
+        batch_size=2,
+        max_new_tokens=2048,
+        up_to_n_chunks=4,
+    )
+
+    for i, resamples in enumerate(resampled_rollouts):
+        print("Replaced chunk: " + repr(resamples[0]["chunk_replaced"]))
+        for j, r in enumerate(resamples):
+            print(f"    Resample {j}: " + repr(r["chunk_resampled"]))
+        print()
+
+
+# ! CELL TYPE: markdown
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Load the model for generation (only if you want to try this)
-model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
+r"""
+<details>
+<summary>Expected output from the cell above</summary>
 
-resampled_rollouts = get_resampled_rollouts(
-    prompt=problem_data["base_solution"]["prompt"],
-    model=model,
-    tokenizer=tokenizer,
-    num_resamples_per_chunk=2,
-    batch_size=2,
-    max_new_tokens=2048,
-    up_to_n_chunks=4,
-)
+```
+Replaced chunk: 'Alright, so I have this problem here:'
+    Resample 0: 'Okay, so I need to figure out how many bits are in the binary representation of the hexadecimal number 66666₁₆.'
+    Resample 1: "Alright, so I've got this problem here:"
 
-for i, resamples in enumerate(resampled_rollouts):
-    print("Replaced chunk: " + repr(resamples[0]["chunk_replaced"]))
-    for j, r in enumerate(resamples):
-        print(f"    Resample {j}: " + repr(r["chunk_resampled"]))
-    print()
+Replaced chunk: 'When the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
+    Resample 0: 'when the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
+    Resample 1: 'when the base-16 number 66666₁₆ is written in base 2, how many base-2 digits (bits) does it have?'
 
-# Replaced chunk: 'Alright, so I have this problem here:'
-#     Resample 0: 'Okay, so I need to figure out how many bits are in the binary representation of the hexadecimal number 66666₁₆.'
-#     Resample 1: "Alright, so I've got this problem here:"
+Replaced chunk: 'Hmm, okay.'
+    Resample 0: 'Hmm, okay.'
+    Resample 1: 'Hmm, okay.'
 
-# Replaced chunk: 'When the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
-#     Resample 0: 'when the base-16 number \\(66666_{16}\\) is written in base 2, how many base-2 digits (bits) does it have?'
-#     Resample 1: 'when the base-16 number 66666₁₆ is written in base 2, how many base-2 digits (bits) does it have?'
+Replaced chunk: 'Let me try to figure this out step by step.'
+    Resample 0: 'Let me think about how to approach this.'
+    Resample 1: 'I need to figure out how many bits are required to represent this hexadecimal number in binary.'
+```
 
-# Replaced chunk: 'Hmm, okay.'
-#     Resample 0: 'Hmm, okay.'
-#     Resample 1: 'Hmm, okay.'
-
-# Replaced chunk: 'Let me try to figure this out step by step.'
-#     Resample 0: 'Let me think about how to approach this.'
-#     Resample 1: 'I need to figure out how many bits are required to represent this hexadecimal number in binary.'
-
+</details>
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2146,6 +2234,214 @@ r"""
 **Key concepts:**
 - **Vertical attention score**: For each sentence, how much do all future sentences attend to it?
 - **Receiver heads**: Attention heads with high kurtosis in their vertical attention scores (i.e., they attend *spikily* to specific sentences rather than uniformly)
+
+Before we begin the exercises, we need some helper functions for working with models and attention matrices.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Setup: Helper Functions for Whitebox Analysis
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+# Model names - use smaller model for exercises
+MODEL_NAME_SMALL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+MODEL_NAME_LARGE = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
+
+
+def prepare_whitebox_example(problem_id: int = None):
+    """
+    Load example problem data for whitebox analysis.
+
+    Args:
+        problem_id: Problem to load (defaults to PROBLEM_ID from earlier)
+
+    Returns:
+        text: Full CoT reasoning trace
+        sentences: List of sentence strings
+        cf_importance: Counterfactual importance scores from black-box analysis
+    """
+    if problem_id is None:
+        problem_id = PROBLEM_ID
+
+    # Load problem data (already loaded earlier in notebook)
+    problem_data = load_problem_data(problem_id)
+
+    # Extract base solution
+    text = problem_data["base_solution"]["full_cot"]
+    sentences = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
+
+    # Get counterfactual importances (computed in black-box section)
+    # Note: excluding final chunk (which is the answer)
+    cf_importance = np.array(
+        [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
+    )
+
+    return text, sentences, cf_importance
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+These helper functions will be used throughout the exercises:
+- `prepare_whitebox_example()`: Gets the same problem we analyzed with black-box methods
+- `utils.get_sentence_token_boundaries()`: Maps sentences to token positions (handles tokenization complexities)
+- `utils.average_attention_by_sentences()`: Aggregates token-level attention to sentence-level
+
+Now let's start with the exercises!
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - extract attention matrices using hooks
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 20-25 minutes on this exercise.
+> ```
+
+The first step in whitebox analysis is to extract attention patterns from the model's forward pass. Unfortunately, the `output_attentions=True` argument doesn't work reliably for all models. Instead, we'll use **forward hooks** to capture attention weights directly from the attention modules.
+
+**Your task**: Implement attention extraction using hooks. You'll need to:
+1. Visit the [Qwen2 source code](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py)
+2. Find the `Qwen2Attention` class and identify where attention weights are computed
+3. Write a hook function that captures these weights
+4. Register the hook on the correct layer's attention module
+
+**Hint**: The forward method of `Qwen2Attention` returns a tuple `(attn_output, attn_weights, past_key_value)`. The hook should extract `attn_weights` from the output tuple.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def extract_attention_matrix(
+    text: str,
+    model,
+    tokenizer,
+    layer: int,
+    head: int,
+) -> tuple[np.ndarray, list[str]]:
+    """
+    Extract attention matrix from a specific layer and head using hooks.
+
+    Args:
+        text: Input text to analyze
+        model: HuggingFace model (already loaded)
+        tokenizer: Corresponding tokenizer
+        layer: Which layer to extract from (0-indexed)
+        head: Which attention head to extract from (0-indexed)
+
+    Returns:
+        attention_matrix: Shape (seq_len, seq_len) attention weights for the specified head
+        tokens: List of token strings for visualization
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement attention extraction using hooks")
+    # END EXERCISE
+
+    # SOLUTION
+    # Tokenize input
+    inputs = tokenizer(text, return_tensors="pt")
+    if model.device.type == "cuda":
+        inputs = {k: v.cuda() for k, v in inputs.items()}
+
+    # Forward pass - hook will capture attention
+    with torch.no_grad():
+        output = model(**inputs, use_cache=False, output_attentions=True)
+
+    # captured_attention[0] has shape (batch_size, num_heads, seq_len, seq_len)
+    attn_tensor = output.attentions[layer][0, head]  # Select batch 0, specific head
+    print(attn_tensor.shape)  # Should be (seq_len, seq_len)
+
+    # Convert to numpy
+    attention_matrix = attn_tensor.cpu().numpy().astype(np.float32)
+
+    # Get token strings
+    token_ids = inputs["input_ids"][0].tolist()
+    tokens = tokenizer.convert_ids_to_tokens(token_ids)
+
+    return attention_matrix, tokens
+    # END SOLUTION
+
+
+if MAIN:
+    # Load model and tokenizer
+    print("Loading model (this may take a minute)...")
+    print(f"Model: {MODEL_NAME_SMALL}")
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_SMALL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_SMALL, device_map="auto")
+    model.config._attn_implementation = "eager"
+    model.config.output_attentions = True
+    model.eval()
+
+    print("✓ Model loaded!")
+
+    # Test with a short example
+    test_text = "The cat sat on the mat. It was sleeping."
+
+    # Extract attention from middle layer
+    n_layers = len(model.model.layers)
+    layer_to_check = n_layers // 2
+    head_to_check = 9
+
+    print(f"\nExtracting attention from head L{layer_to_check}H{head_to_check}")
+    attention_matrix, tokens = extract_attention_matrix(
+        test_text, model, tokenizer, layer=layer_to_check, head=head_to_check
+    )
+    assert attention_matrix.shape[0] == len(tokens), "Shape mismatch"
+    assert attention_matrix.shape[0] == attention_matrix.shape[1], "Not square"
+    assert np.allclose(attention_matrix.sum(axis=1), 1.0, atol=1e-5), "Rows don't sum to 1"
+
+    # Check causal structure (upper triangle should be mostly zeros)
+    upper_triangle_sum = np.triu(attention_matrix, k=1).sum()
+    assert upper_triangle_sum < 1e-5, "Upper triangle has non-zero values, not causal attention"
+
+    # Visualize
+    display(
+        cv.attention.attention_heads(
+            attention=attention_matrix[None],
+            tokens=tokens,
+        )
+    )
+    print("\n✓ Attention extraction working!")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+<details><summary>Explanation of the attention pattern</summary>
+
+The visualization shows how each token (row) attends to other tokens (columns). Key observations:
+
+1. **Causal structure**: The upper triangle is nearly zero - tokens can only attend to themselves and previous tokens
+2. **Diagonal**: Strong self-attention is common (tokens attending to themselves)
+3. **Patterns**: Different heads specialize in different patterns:
+   - **Induction heads**: Attend to tokens that previously followed the current context
+   - **Previous token heads**: Attend strongly to the previous token
+   - **Attention head types**: Each head may focus on syntax, semantics, or specific token relationships
+
+For reasoning analysis, we want to aggregate this token-level attention to the sentence level, which we'll do in the next steps.
+</details>
 """
 
 # ! CELL TYPE: markdown
@@ -2157,10 +2453,16 @@ r"""
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
-> Importance: 🔵🔵🔵🔵⚪
+> Importance: 🔵🔵🔵🔵🔵
 >
-> You should spend up to 15-20 minutes on this exercise.
+> You should spend up to 25-30 minutes on this exercise.
 > ```
+
+Vertical attention scores measure how much future sentences attend back to each sentence. This is the core metric for identifying "thought anchors" - sentences that shape downstream reasoning.
+
+**Challenge**: Later sentences have more tokens to attend to than earlier sentences, which can bias scores. The paper addresses this with **depth-control normalization** using rank-based normalization.
+
+Implement the full algorithm including depth control.
 """
 
 # ! CELL TYPE: code
@@ -2171,6 +2473,7 @@ r"""
 def get_vertical_scores(
     avg_attention_matrix: np.ndarray,
     proximity_ignore: int = 4,
+    control_depth: bool = True,
 ) -> np.ndarray:
     """
     Compute vertical attention scores for each sentence.
@@ -2179,15 +2482,23 @@ def get_vertical_scores(
         avg_attention_matrix: Shape (n_sentences, n_sentences), where entry (i, j)
             is the average attention from sentence i to sentence j
         proximity_ignore: Ignore this many nearby sentences (to avoid trivial patterns)
+        control_depth: Apply rank normalization to control for depth effects
 
     Returns:
         Array of shape (n_sentences,) with vertical scores
 
     The vertical score for sentence j is the mean attention it receives from
     all sentences i where i > j + proximity_ignore.
+
+    Depth control (when enabled): Normalizes each row by ranking attention values
+    and dividing by the count of valid (non-NaN) positions. This ensures fair
+    comparison between early sentences (fewer tokens to attend to) and late
+    sentences (many tokens to attend to).
+
+    Adapted from thought-anchors: attn_funcs.py:get_vertical_scores
     """
     # EXERCISE
-    # raise NotImplementedError("Implement vertical attention scores")
+    # raise NotImplementedError("Implement vertical attention scores with depth control")
     # END EXERCISE
     # SOLUTION
     n = avg_attention_matrix.shape[0]
@@ -2195,16 +2506,28 @@ def get_vertical_scores(
     # Work on a copy
     mat = avg_attention_matrix.copy()
 
-    # Set upper triangle to NaN (can't attend to future)
+    # Step 1: Clean matrix - set upper triangle to NaN (can't attend to future)
     mat[np.triu_indices_from(mat, k=1)] = np.nan
 
-    # Set near-diagonal to NaN (ignore nearby sentences)
+    # Step 2: Remove proximity - set near-diagonal to NaN (ignore nearby sentences)
     mat[np.triu_indices_from(mat, k=-proximity_ignore + 1)] = np.nan
 
-    # Compute vertical scores: mean attention received from future sentences
+    # Step 3: Depth control normalization (critical for fair comparison!)
+    if control_depth:
+        # Count non-NaN values per row (available positions to attend to)
+        per_row = np.sum(~np.isnan(mat), axis=1)
+
+        # Rank-normalize each row: convert attention values to ranks,
+        # then divide by number of valid positions
+        # This puts all rows on the same scale regardless of depth
+        mat = stats.rankdata(mat, axis=1, nan_policy="omit") / per_row[:, None]
+
+    # Step 4: Compute vertical scores: mean attention received from future sentences
     vert_scores = []
     for j in range(n):
+        # Extract "vertical line" - attention from all future sentences to sentence j
         future_attention = mat[j + proximity_ignore :, j]
+
         if len(future_attention) == 0 or np.all(np.isnan(future_attention)):
             vert_scores.append(np.nan)
         else:
@@ -2219,75 +2542,82 @@ def get_vertical_scores(
 # ! TAGS: []
 
 r"""
-### Loading Pre-computed Attention Data
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-Computing attention matrices for the full 14B model is expensive. We'll load pre-computed data from the paper's analysis.
-
-Note: If you have the full thought-anchors repo with cached data, you can load it directly. Otherwise, we'll work with a toy example to demonstrate the concepts.
+Let's test vertical scores on real CoT attention patterns and see the effect of depth control.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-# Create a toy attention matrix to demonstrate the concept
-np.random.seed(42)
-n_sentences = 20
-
-# Create a realistic-looking attention pattern
-# - Causal (lower triangular)
-# - Some sentences receive more attention than others
-toy_attention = np.random.rand(n_sentences, n_sentences) * 0.1
-toy_attention = np.tril(toy_attention)  # Make causal
-
-# Add "thought anchor" pattern - sentences 5 and 12 receive high attention
-for anchor in [5, 12]:
-    toy_attention[anchor + 3 :, anchor] += 0.3
-
-# Normalize rows
-row_sums = toy_attention.sum(axis=1, keepdims=True)
-row_sums[row_sums == 0] = 1
-toy_attention = toy_attention / row_sums
-
-# Compute vertical scores
-vert_scores = get_vertical_scores(toy_attention, proximity_ignore=3)
-
-# Plot attention matrix with matplotlib (heatmap)
-fig_mpl, ax = plt.subplots(figsize=(6, 5))
-im = ax.imshow(toy_attention, cmap="Blues")
-ax.set_xlabel("Source (attends to)")
-ax.set_ylabel("Target (attends from)")
-ax.set_title("Toy Attention Matrix")
-plt.colorbar(im, ax=ax)
-plt.tight_layout()
-plt.show()
-
-# Plot vertical scores with plotly
-fig = go.Figure()
-fig.add_trace(
-    go.Bar(
-        x=list(range(len(vert_scores))),
-        y=vert_scores.tolist(),
-        hovertemplate="<b>Sentence %{x}</b><br>Vertical Score: %{y:.4f}<extra></extra>",
+if MAIN:
+    # Load model and tokenizer for attention extraction
+    print("Loading model for attention analysis...")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME_SMALL,
+        device_map="auto",
+        torch_dtype=torch.float16,
     )
-)
-fig.add_hline(y=float(np.nanmean(vert_scores)), line_color="red", line_dash="dash", annotation_text="Mean")
-fig.update_layout(
-    title="Vertical Attention Scores",
-    xaxis_title="Sentence Index",
-    yaxis_title="Vertical Score",
-    width=700,
-    height=400,
-)
-fig.show()
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_SMALL)
 
-print(f"Sentences with highest vertical scores: {np.argsort(vert_scores)[-3:][::-1]}")
+    # Get example problem data
+    text, sentences, _ = prepare_whitebox_example()
+
+    # Extract attention from a middle layer
+    layer, head = 15, 8
+    print(f"\nExtracting attention from layer {layer}, head {head}...")
+    token_attention, tokens = extract_attention_matrix(text, model, tokenizer, layer, head)
+
+    # Convert to sentence-level attention
+    boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
+    sentence_attention = utils.average_attention_by_sentences(token_attention, boundaries)
+
+    # Compute vertical scores WITH and WITHOUT depth control
+    print("\nComputing vertical scores...")
+    vert_scores_no_control = get_vertical_scores(sentence_attention, proximity_ignore=4, control_depth=False)
+    vert_scores_with_control = get_vertical_scores(sentence_attention, proximity_ignore=4, control_depth=True)
+
+    # Show top sentences
+    top_3_no_control = np.argsort(vert_scores_no_control)[-3:][::-1]
+    top_3_with_control = np.argsort(vert_scores_with_control)[-3:][::-1]
+
+    print(f"\nTop-3 sentences (no depth control): {top_3_no_control}")
+    print(f"Top-3 sentences (with depth control): {top_3_with_control}")
+    print(f"Correlation between methods: {np.corrcoef(vert_scores_no_control, vert_scores_with_control)[0, 1]:.3f}")
+
+    # Visualize comparison
+    fig, ax = plt.subplots(figsize=(12, 5))
+    x = np.arange(len(vert_scores_no_control))
+    width = 0.35
+    ax.bar(x - width / 2, vert_scores_no_control, width, label="No depth control", alpha=0.7)
+    ax.bar(x + width / 2, vert_scores_with_control, width, label="With depth control", alpha=0.7)
+    ax.axhline(0, color="black", linewidth=0.5)
+    ax.set_xlabel("Sentence Index")
+    ax.set_ylabel("Vertical Score")
+    ax.set_title("Vertical Scores Comparison: Depth Control Effect")
+    ax.legend()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.show()
+
+    print("\n✓ Depth control makes the metric more robust to position bias!")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+<details><summary>Why depth control matters</summary>
+
+Without depth control, later sentences appear more important simply because they have more past tokens to attend to. For example:
+- Sentence 0: Can only be attended to by 19 future sentences
+- Sentence 15: Can only be attended to by 4 future sentences
+
+This creates a bias where early sentences automatically get higher scores. Depth control (rank normalization) fixes this by normalizing each sentence's attention pattern relative to the number of positions it could attend to.
+
+**Key insight from the paper**: With depth control enabled, the vertical scores better identify genuine "thought anchors" - sentences that are disproportionately important for specific reasoning steps, not just sentences that happen to be early in the trace.
+</details>
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2295,13 +2625,7 @@ print(f"Sentences with highest vertical scores: {np.argsort(vert_scores)[-3:][::
 
 r"""
 ### Exercise - find top receiver heads
-"""
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
@@ -2336,54 +2660,339 @@ def compute_head_kurtosis(vertical_scores: np.ndarray) -> float:
     # END SOLUTION
 
 
-if MAIN:
-    # Test with our toy example
-    kurt = compute_head_kurtosis(vert_scores)
-    print(f"Kurtosis of toy attention pattern: {kurt:.3f}")
-    print("(High kurtosis indicates spiky attention to specific sentences)")
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Attention Visualization with CircuitsVis
-"""
+### Exercise - identify receiver heads from real CoT
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 25-30 minutes on this exercise.
+> ```
 
-r"""
-Let's visualize attention patterns using circuitsvis:
+Now let's implement the full receiver head selection pipeline: extract attention from all heads, compute vertical scores, rank by kurtosis, and select top-k heads.
+
+**Note**: This is computationally expensive (requires forward passes for each layer/head). For a 1.5B model with 28 layers × 12 heads = 336 forward passes. We'll use caching and work with a short example.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Create sample attention patterns for visualization
-n_heads = 4
-n_tokens = 15
 
-# Generate some attention patterns
-attn_patterns = np.random.rand(n_heads, n_tokens, n_tokens)
-attn_patterns = np.tril(attn_patterns)  # Causal
+def find_receiver_heads(
+    text: str,
+    sentences: list[str],
+    model,
+    tokenizer,
+    top_k: int = 10,
+    proximity_ignore: int = 4,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Identify top-k receiver heads by kurtosis of vertical attention scores.
 
-# Make head 0 a "receiver head" - attends to position 5
-attn_patterns[0, 7:, 5] += 0.5
+    Args:
+        text: Full reasoning trace
+        sentences: List of sentences in the trace
+        model: Loaded model
+        tokenizer: Corresponding tokenizer
+        top_k: Number of top receiver heads to return
+        proximity_ignore: Proximity parameter for vertical scores
 
-# Normalize
-attn_patterns = attn_patterns / attn_patterns.sum(axis=-1, keepdims=True)
+    Returns:
+        receiver_heads: Shape (top_k, 2) array of (layer, head) pairs
+        kurtosis_scores: Shape (top_k,) array of kurtosis values for each head
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement receiver head identification")
+    # END EXERCISE
 
-# Create token labels
-tokens = [f"tok_{i}" for i in range(n_tokens)]
+    # SOLUTION
+    n_layers = len(model.model.layers)
+    n_heads = model.config.num_attention_heads
+    n_sentences = len(sentences)
 
-# Visualize with circuitsvis
-cv.attention.attention_heads(
-    attention=torch.tensor(attn_patterns),
-    tokens=tokens,
-)
+    print(f"Computing vertical scores for {n_layers} layers × {n_heads} heads = {n_layers * n_heads} heads...")
+    print("This may take a few minutes...")
+
+    # Get sentence boundaries once (expensive operation)
+    boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
+
+    # Store vertical scores for all heads
+    all_vert_scores = np.zeros((n_layers, n_heads, n_sentences))
+
+    # Extract attention and compute vertical scores for each head
+    for layer in tqdm(range(n_layers), desc="Layers"):
+        for head in range(n_heads):
+            # Extract attention matrix
+            attn_matrix, _ = extract_attention_matrix(text, model, tokenizer, layer, head)
+
+            # Average to sentence level
+            avg_attn = utils.average_attention_by_sentences(attn_matrix, boundaries)
+
+            # Compute vertical scores with depth control
+            vert_scores = get_vertical_scores(avg_attn, proximity_ignore=proximity_ignore, control_depth=True)
+
+            all_vert_scores[layer, head] = vert_scores
+
+    # Compute kurtosis for each head (over sentences dimension)
+    kurtosis_matrix = np.zeros((n_layers, n_heads))
+    for layer in range(n_layers):
+        for head in range(n_heads):
+            kurtosis_matrix[layer, head] = compute_head_kurtosis(all_vert_scores[layer, head])
+
+    # Find top-k heads with highest kurtosis
+    flat_kurts = kurtosis_matrix.flatten()
+    valid_indices = ~np.isnan(flat_kurts)
+
+    if valid_indices.sum() < top_k:
+        print(f"Warning: Only {valid_indices.sum()} valid heads found")
+        top_k = valid_indices.sum()
+
+    # Get indices of top-k highest kurtosis values
+    valid_kurts = flat_kurts[valid_indices]
+    valid_flat_indices = np.where(valid_indices)[0]
+
+    top_k_in_valid = np.argpartition(valid_kurts, -top_k)[-top_k:]
+    top_k_in_valid = top_k_in_valid[np.argsort(-valid_kurts[top_k_in_valid])]  # Sort descending
+
+    top_flat_indices = valid_flat_indices[top_k_in_valid]
+
+    # Convert flat indices back to (layer, head) pairs
+    receiver_heads = np.array(np.unravel_index(top_flat_indices, (n_layers, n_heads))).T
+    receiver_kurts = flat_kurts[top_flat_indices]
+
+    return receiver_heads, receiver_kurts
+    # END SOLUTION
+
+
+if MAIN:
+    # Test with first few sentences from CoT (to keep it fast)
+    print("\n" + "=" * 60)
+    print("Finding Receiver Heads from Real CoT")
+    print("=" * 60)
+
+    # Load example CoT
+    text_full, sentences_full, _ = prepare_whitebox_example()
+
+    # Use first 10 sentences only (for speed)
+    sentences_subset = sentences_full[:10]
+    # Reconstruct text from subset
+    text_subset = "".join(sentences_subset)
+
+    print(f"Analyzing first {len(sentences_subset)} sentences...")
+    print(f"Text length: {len(text_subset)} characters")
+
+    # Find top-10 receiver heads
+    receiver_heads, receiver_kurts = find_receiver_heads(
+        text_subset,
+        sentences_subset,
+        model,  # Model loaded earlier
+        tokenizer,
+        top_k=10,
+        proximity_ignore=4,
+    )
+
+    print("\nTop-10 Receiver Heads:")
+    for i, ((layer, head), kurt) in enumerate(zip(receiver_heads, receiver_kurts)):
+        print(f"  {i + 1}. Layer {layer:2d}, Head {head:2d} | Kurtosis: {kurt:.3f}")
+
+    # Visualize kurtosis distribution
+    # Recompute kurtosis matrix for visualization
+    n_layers = len(model.model.layers)
+    n_heads = model.config.num_attention_heads
+    kurtosis_viz = np.zeros((n_layers, n_heads))
+
+    for layer, head in receiver_heads:
+        kurtosis_viz[layer, head] = receiver_kurts[list(receiver_heads).index([layer, head])]
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    im = ax.imshow(kurtosis_viz, cmap="YlOrRd", aspect="auto")
+    ax.set_xlabel("Head")
+    ax.set_ylabel("Layer")
+    ax.set_title("Top-10 Receiver Heads by Kurtosis")
+    plt.colorbar(im, ax=ax, label="Kurtosis")
+
+    # Mark top heads
+    for layer, head in receiver_heads:
+        ax.plot(head, layer, "b*", markersize=15, markeredgecolor="white", markeredgewidth=1.5)
+
+    plt.tight_layout()
+    plt.show()
+
+    print("\n✓ Receiver heads identified!")
+    print("These heads attend 'spikily' to specific important sentences.")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+<details><summary>Interpretation: What are receiver heads?</summary>
+
+**Receiver heads** are attention heads that:
+1. Have high kurtosis in their vertical attention scores across sentences
+2. Attend strongly to a few specific sentences rather than uniformly to all past sentences
+3. Correlate with sentences identified as "thought anchors" by black-box methods
+
+**Why they matter**:
+- They reveal the mechanistic implementation of how the model uses key reasoning steps
+- Different heads may specialize in different types of anchors (planning, backtracking, etc.)
+- They provide a whitebox validation of black-box importance metrics
+
+**Key finding from paper**: Receiver head scores correlate with counterfactual importance (r ≈ 0.4-0.6), showing that whitebox and blackbox methods identify the same underlying phenomenon.
+</details>
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - compute receiver head scores
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 15-20 minutes on this exercise.
+> ```
+
+Now that we've identified receiver heads, let's compute the final receiver head score for each sentence by averaging the vertical attention scores across the top-k receiver heads.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_receiver_head_scores(
+    text: str,
+    sentences: list[str],
+    receiver_heads: np.ndarray,
+    model,
+    tokenizer,
+    proximity_ignore: int = 4,
+) -> np.ndarray:
+    """
+    Compute final receiver head scores by averaging vertical scores from top-k heads.
+
+    Args:
+        text: Full reasoning trace
+        sentences: List of sentences
+        receiver_heads: Shape (k, 2) array of (layer, head) pairs
+        model: Loaded model
+        tokenizer: Corresponding tokenizer
+        proximity_ignore: Proximity parameter
+
+    Returns:
+        receiver_scores: Shape (n_sentences,) - final importance scores
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement receiver head score computation")
+    # END EXERCISE
+
+    # SOLUTION
+    boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
+
+    all_vert_scores = []
+
+    for layer, head in receiver_heads:
+        # Extract attention for this receiver head
+        attn_matrix, _ = extract_attention_matrix(text, model, tokenizer, layer, head)
+
+        # Average to sentence level
+        avg_attn = utils.average_attention_by_sentences(attn_matrix, boundaries)
+
+        # Compute vertical scores
+        vert_scores = get_vertical_scores(avg_attn, proximity_ignore=proximity_ignore, control_depth=True)
+
+        all_vert_scores.append(vert_scores)
+
+    # Average across all receiver heads
+    all_vert_scores = np.array(all_vert_scores)  # Shape: (k, n_sentences)
+    receiver_scores = np.nanmean(all_vert_scores, axis=0)  # Average over heads
+
+    return receiver_scores
+    # END SOLUTION
+
+
+if MAIN:
+    print("\n" + "=" * 60)
+    print("Computing Receiver Head Scores")
+    print("=" * 60)
+
+    # Use the receiver heads we just found
+    print(f"Computing scores from {len(receiver_heads)} receiver heads...")
+
+    receiver_scores = compute_receiver_head_scores(
+        text_subset,
+        sentences_subset,
+        receiver_heads,
+        model,
+        tokenizer,
+        proximity_ignore=4,
+    )
+
+    print(f"\nReceiver head scores computed for {len(receiver_scores)} sentences")
+    print(f"Mean score: {np.nanmean(receiver_scores):.4f}")
+    print(f"Std score: {np.nanstd(receiver_scores):.4f}")
+
+    # Visualize
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=list(range(len(receiver_scores))),
+            y=receiver_scores,
+            marker_color="indianred",
+            hovertemplate="<b>Sentence %{x}</b><br>Score: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
+            customdata=[s[:100] for s in sentences_subset],
+        )
+    )
+    fig.add_hline(
+        y=np.nanmean(receiver_scores),
+        line_dash="dash",
+        line_color="black",
+        annotation_text="Mean",
+    )
+    fig.update_layout(
+        title="Receiver Head Scores (Averaged Across Top-k Heads)",
+        xaxis_title="Sentence Index",
+        yaxis_title="Receiver Head Score",
+        width=800,
+        height=400,
+    )
+    fig.show()
+
+    print("\nTop-3 sentences by receiver head score:")
+    top_indices = np.argsort(receiver_scores)[-3:][::-1]
+    for idx in top_indices:
+        print(f"  Sentence {idx}: {receiver_scores[idx]:.4f}")
+        print(f"    Text: {sentences_subset[idx][:100]}...")
+
+    print("\n✓ Receiver head scores computed!")
+    print("These aggregate the attention from all high-kurtosis receiver heads.")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+<details><summary>Why average across receiver heads?</summary>
+
+Averaging across multiple receiver heads is more robust than using a single head because:
+
+1. **Reduces noise**: Individual heads may have idiosyncratic attention patterns
+2. **Captures multiple aspects**: Different receiver heads may focus on different types of important sentences (e.g., planning vs. backtracking)
+3. **More stable**: Less sensitive to architectural choices or specific head initialization
+
+The paper found that using the top 16-32 receiver heads gives the most stable correlation with black-box importance metrics.
+</details>
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2391,13 +3000,7 @@ cv.attention.attention_heads(
 
 r"""
 ## Attention Suppression
-"""
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
 If receiver heads are important for propagating information from thought anchors, then *suppressing* attention to those sentences should change the model's output.
 """
 
@@ -2468,34 +3071,6 @@ class AttentionSuppressionHook:
         # END SOLUTION
 
 
-# Demonstration with toy attention
-def apply_suppression(attention_matrix: np.ndarray, positions: list[int]) -> np.ndarray:
-    """Apply suppression to positions and renormalize."""
-    suppressed = attention_matrix.copy()
-    suppressed[:, positions] = 0
-
-    row_sums = suppressed.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1
-    return suppressed / row_sums
-
-
-if MAIN:
-    # Suppress attention to our "thought anchor" at position 5
-    suppressed_attention = apply_suppression(toy_attention, [5])
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    im1 = axes[0].imshow(toy_attention, cmap="Blues", vmin=0, vmax=0.5)
-    axes[0].set_title("Original Attention")
-    plt.colorbar(im1, ax=axes[0])
-
-    im2 = axes[1].imshow(suppressed_attention, cmap="Blues", vmin=0, vmax=0.5)
-    axes[1].set_title("After Suppressing Position 5")
-    plt.colorbar(im2, ax=axes[1])
-
-    plt.tight_layout()
-    plt.show()
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -2559,20 +3134,14 @@ def compute_suppression_kl(
     # END SOLUTION
 
 
-if MAIN:
-    # Toy example
-    original_logits = np.array([1.0, 2.0, 0.5, 3.0, 0.1])
-    suppressed_logits = np.array([1.5, 1.8, 0.8, 2.5, 0.3])
-
-    kl = compute_suppression_kl(original_logits, suppressed_logits)
-    print(f"KL divergence: {kl:.4f} nats")
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Correlation with Black-box Importance
+## Validation: Correlating Whitebox and Black-box Methods
+
+**The key validation**: Receiver head scores should correlate with our counterfactual importance metric. This would show that whitebox (attention-based) and blackbox (resampling-based) methods identify the same underlying "thought anchors".
 """
 
 # ! CELL TYPE: markdown
@@ -2580,40 +3149,155 @@ r"""
 # ! TAGS: []
 
 r"""
-The key validation: receiver head scores should correlate with our counterfactual importance metric.
+### Exercise - validate whitebox against blackbox metrics
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+>
+> You should spend up to 15-20 minutes on this exercise.
+> ```
+
+Implement a function that compares receiver head scores with counterfactual importance from the black-box analysis.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Toy demonstration of the correlation
-np.random.seed(42)
 
-# Generate fake "receiver head scores" that correlate with our counterfactual importance
-n = len(counterfactual_importances)
-noise = np.random.randn(n) * 0.1
-receiver_scores = np.abs(counterfactual_importances) + noise * 0.5 + np.random.rand(n) * 0.1
+def validate_whitebox_blackbox_correlation(
+    receiver_scores: np.ndarray,
+    counterfactual_importances: np.ndarray,
+) -> tuple[float, go.Figure]:
+    """
+    Compute correlation between whitebox and blackbox importance metrics.
 
-# Compute correlation
-correlation = np.corrcoef(np.abs(counterfactual_importances), receiver_scores)[0, 1]
+    Args:
+        receiver_scores: Receiver head scores from whitebox analysis
+        counterfactual_importances: From black-box analysis
 
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.scatter(np.abs(counterfactual_importances), receiver_scores, alpha=0.6)
-ax.set_xlabel("|Counterfactual Importance|")
-ax.set_ylabel("Receiver Head Score (simulated)")
-ax.set_title(f"Correlation: r = {correlation:.3f}")
+    Returns:
+        correlation: Pearson correlation coefficient
+        fig: Plotly scatter plot with trend line
+    """
+    # EXERCISE
+    # raise NotImplementedError("Implement correlation validation")
+    # END EXERCISE
 
-# Add trend line
-z = np.polyfit(np.abs(counterfactual_importances), receiver_scores, 1)
-p = np.poly1d(z)
-x_line = np.linspace(min(np.abs(counterfactual_importances)), max(np.abs(counterfactual_importances)), 100)
-ax.plot(x_line, p(x_line), "r--", alpha=0.8)
+    # SOLUTION
+    # Handle length mismatch (receiver_scores may be for subset of sentences)
+    min_len = min(len(receiver_scores), len(counterfactual_importances))
+    receiver_scores_aligned = receiver_scores[:min_len]
+    cf_importance_aligned = counterfactual_importances[:min_len]
 
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.tight_layout()
-plt.show()
+    # Use absolute value of counterfactual importance
+    # (negative importance means making the answer less likely)
+    cf_abs = np.abs(cf_importance_aligned)
+
+    # Remove any NaN values
+    valid_mask = ~(np.isnan(receiver_scores_aligned) | np.isnan(cf_abs))
+    receiver_valid = receiver_scores_aligned[valid_mask]
+    cf_valid = cf_abs[valid_mask]
+
+    if len(receiver_valid) < 3:
+        print("Warning: Too few valid points for correlation")
+        return np.nan, None
+
+    # Compute correlation
+    correlation = np.corrcoef(cf_valid, receiver_valid)[0, 1]
+
+    # Create scatter plot
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=cf_valid,
+            y=receiver_valid,
+            mode="markers",
+            marker=dict(size=10, opacity=0.6, color="steelblue"),
+            name="Sentences",
+            hovertemplate="<b>CF Importance:</b> %{x:.4f}<br>" + "<b>Receiver Score:</b> %{y:.4f}<extra></extra>",
+        )
+    )
+
+    # Add trend line
+    if len(receiver_valid) >= 2:
+        z = np.polyfit(cf_valid, receiver_valid, 1)
+        p = np.poly1d(z)
+        x_line = np.linspace(cf_valid.min(), cf_valid.max(), 100)
+        y_line = p(x_line)
+
+        fig.add_trace(
+            go.Scatter(
+                x=x_line,
+                y=y_line,
+                mode="lines",
+                line=dict(color="red", dash="dash", width=2),
+                name=f"Trend (r={correlation:.3f})",
+            )
+        )
+
+    fig.update_layout(
+        title=f"Whitebox vs. Blackbox Correlation (r = {correlation:.3f})",
+        xaxis_title="|Counterfactual Importance| (Black-box)",
+        yaxis_title="Receiver Head Score (White-box)",
+        width=800,
+        height=600,
+        showlegend=True,
+    )
+
+    return correlation, fig
+    # END SOLUTION
+
+
+if MAIN:
+    print("\n" + "=" * 60)
+    print("VALIDATION: Whitebox vs. Blackbox")
+    print("=" * 60)
+
+    # Get counterfactual importances from earlier black-box analysis
+    # These were computed for the full problem in section 2
+    _, sentences_full, cf_importance_full = prepare_whitebox_example()
+
+    # We computed receiver scores for first 10 sentences
+    # So let's compare those
+    cf_importance_subset = cf_importance_full[: len(sentences_subset)]
+
+    print(f"\nComparing {len(receiver_scores)} sentences...")
+    print(f"Receiver scores range: [{receiver_scores.min():.4f}, {receiver_scores.max():.4f}]")
+    print(f"CF importance range: [{cf_importance_subset.min():.4f}, {cf_importance_subset.max():.4f}]")
+
+    # Compute correlation
+    correlation, fig = validate_whitebox_blackbox_correlation(receiver_scores, cf_importance_subset)
+
+    print(f"\n{'=' * 60}")
+    print(f"CORRELATION: r = {correlation:.3f}")
+    print(f"{'=' * 60}")
+
+    if correlation > 0.3:
+        print("✓ Strong positive correlation!")
+        print("  Whitebox (attention-based) and blackbox (resampling-based) methods")
+        print("  identify the same underlying 'thought anchors'.")
+    elif correlation > 0.1:
+        print("⚠ Moderate correlation")
+        print("  Results may vary with different problems or model architectures.")
+    else:
+        print("⚠ Weak correlation")
+        print("  Note: Correlation can vary significantly by problem.")
+        print("  The paper reports r ≈ 0.4-0.6 when averaged across many problems.")
+
+    # Show plot
+    if fig is not None:
+        fig.show()
+
+    print("\n" + "=" * 60)
+    print("KEY TAKEAWAY")
+    print("=" * 60)
+    print("When whitebox and blackbox methods correlate, it validates our mechanistic")
+    print("understanding: the model's attention patterns genuinely reflect which")
+    print("sentences are causally important for its reasoning trajectory.")
+    print("=" * 60)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2671,8 +3355,6 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
         - 'base_solution': base_solution.json content (base AI response)
         - 'solutions': solutions.json content (100 rollout solutions with chunk removal)
     """
-    from datasets import load_dataset
-
     if verbose:
         print(f"Loading blackmail scenario {scenario_id} from HuggingFace...")
 

@@ -118,13 +118,15 @@ def plot_three_way_comparison(
 
 def chunk_graph_html(
     edge_weights: np.ndarray,
-    chunk_colors: list[str],
-    n_top_edges: int = 5,
-    width: int = 700,
+    chunk_labels: list[str],
+    chunk_texts: list[str] | None = None,
+    n_top_edges_per_direction: int = 3,
+    width: int = 800,
     height: int = 700,
     title: str | None = None,
     min_node_radius: float = 8.0,
     max_node_radius: float = 28.0,
+    max_chunk_length_to_show: int = 60,
 ) -> str:
     """
     Generate an interactive HTML visualization of a circular chunk graph.
@@ -132,20 +134,34 @@ def chunk_graph_html(
     Args:
         edge_weights: 2D numpy array of shape (n_chunks, n_chunks), strictly upper-triangular.
                       edge_weights[i][j] for i < j is the connection strength from chunk i to chunk j.
-        chunk_colors: List of n_chunks hex color strings (e.g. ["#ff0000", "#00ff00", ...]).
-        n_top_edges:  Number of top edges (by |weight|) to highlight on hover (default 5).
+        chunk_labels: List of n_chunks labels (e.g. "uncertainty_management") for coloring nodes.
+        chunk_texts: Optional list of chunk text strings for tooltip display.
+        n_top_edges_per_direction: Number of top edges per direction (incoming/outgoing) to show (default 3).
         width:        Canvas width in pixels.
         height:       Canvas height in pixels.
         title:        Optional title displayed above the graph.
         min_node_radius: Minimum node circle radius.
         max_node_radius: Maximum node circle radius.
+        max_chunk_length_to_show: Maximum number of characters from chunk text to show in tooltip (default 60).
 
     Returns:
-        A self-contained HTML string.
+        A self-contained HTML string suitable for inline display.
     """
+    import random
+
     n = edge_weights.shape[0]
     assert edge_weights.shape == (n, n), "edge_weights must be square"
-    assert len(chunk_colors) == n, "chunk_colors length must match n_chunks"
+    assert len(chunk_labels) == n, "chunk_labels length must match n_chunks"
+
+    # Handle chunk_texts
+    if chunk_texts is None:
+        chunk_texts = [""] * n
+    assert len(chunk_texts) == n, "chunk_texts length must match n_chunks"
+
+    # Truncate chunk texts
+    chunk_texts_truncated = [
+        t[:max_chunk_length_to_show] + "..." if len(t) > max_chunk_length_to_show else t for t in chunk_texts
+    ]
 
     # Build edge list from upper triangle
     edges = []
@@ -162,29 +178,75 @@ def chunk_graph_html(
             node_strengths[i] += abs(edge_weights[i, j])
             node_strengths[j] += abs(edge_weights[i, j])
 
+    total_strength = node_strengths.sum()
+    node_importances = (node_strengths / total_strength if total_strength > 0 else node_strengths).tolist()
     node_strengths_list = node_strengths.tolist()
 
-    # For each node, precompute its top edges sorted by |weight|
+    # For each node, precompute top incoming and outgoing edges separately
     node_top_edges: dict[int, list] = {}
     for i in range(n):
-        related = []
-        for j in range(n):
-            if i == j:
-                continue
-            r, c = min(i, j), max(i, j)
-            w = float(edge_weights[r, c])
+        # Outgoing: edges (i, j) where i < j (i influences j)
+        outgoing = []
+        for j in range(i + 1, n):
+            w = float(edge_weights[i, j])
             if w != 0:
-                related.append({"src": r, "dst": c, "weight": w})
-        related.sort(key=lambda e: abs(e["weight"]), reverse=True)
-        node_top_edges[i] = related[:n_top_edges]
+                outgoing.append({"src": i, "dst": j, "weight": w})
+        outgoing.sort(key=lambda e: abs(e["weight"]), reverse=True)
+        top_outgoing = outgoing[:n_top_edges_per_direction]
+
+        # Incoming: edges (j, i) where j < i (j influences i)
+        incoming = []
+        for j in range(0, i):
+            w = float(edge_weights[j, i])
+            if w != 0:
+                incoming.append({"src": j, "dst": i, "weight": w})
+        incoming.sort(key=lambda e: abs(e["weight"]), reverse=True)
+        top_incoming = incoming[:n_top_edges_per_direction]
+
+        # Union (deduplicated by (src, dst))
+        combined = {(e["src"], e["dst"]): e for e in top_outgoing}
+        for e in top_incoming:
+            combined[(e["src"], e["dst"])] = e
+        node_top_edges[i] = list(combined.values())
+
+    # Compute global visible edges: union of all nodes' top edges
+    global_visible_edges: dict[tuple[int, int], dict] = {}
+    for edges_list in node_top_edges.values():
+        for e in edges_list:
+            key = (e["src"], e["dst"])
+            if key not in global_visible_edges or abs(e["weight"]) > abs(global_visible_edges[key]["weight"]):
+                global_visible_edges[key] = e
+    visible_edges_list = list(global_visible_edges.values())
+
+    # Compute max weight for normalization
+    max_weight = max((abs(e["weight"]) for e in visible_edges_list), default=1.0)
+
+    # Convert labels to colours
+    labels_capitalized = []
+    for label in chunk_labels:
+        if "_" in label and label.lower() == label:
+            words = label.split("_")
+            capitalized_words = [word.capitalize() for word in words]
+            labels_capitalized.append(" ".join(capitalized_words))
+        else:
+            assert label in CATEGORY_COLORS, f"Label '{label}' not found in CATEGORY_COLORS"
+            labels_capitalized.append(label)
+    chunk_colors = [CATEGORY_COLORS[label] for label in labels_capitalized]
+
+    # Generate unique ID for this graph instance
+    graph_id = f"cg_{random.randint(100000, 999999)}"
 
     config = {
         "n": n,
-        "edges": edges,
+        "visibleEdges": visible_edges_list,
+        "maxWeight": max_weight,
         "colors": chunk_colors,
+        "labels": labels_capitalized,
+        "texts": chunk_texts_truncated,
         "strengths": node_strengths_list,
+        "importances": node_importances,
         "nodeTopEdges": {str(k): v for k, v in node_top_edges.items()},
-        "nTopEdges": n_top_edges,
+        "nTopEdges": n_top_edges_per_direction,
         "width": width,
         "height": height,
         "minR": min_node_radius,
@@ -192,57 +254,17 @@ def chunk_graph_html(
         "title": title or "",
     }
 
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    background: #1a1a2e;
-    display: flex; justify-content: center; align-items: center;
-    min-height: 100vh;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-  }}
-  .container {{
-    position: relative;
-    display: flex; flex-direction: column; align-items: center; gap: 16px;
-  }}
-  .title {{
-    color: #e0e0e0; font-size: 18px; font-weight: 600; letter-spacing: 0.5px;
-    opacity: 0.85;
-  }}
-  canvas {{
-    cursor: default;
-    border-radius: 12px;
-  }}
-  .tooltip {{
-    position: absolute; pointer-events: none;
-    background: rgba(20, 20, 40, 0.92); color: #e8e8f0;
-    padding: 8px 14px; border-radius: 8px;
-    font-size: 13px; line-height: 1.5;
-    border: 1px solid rgba(255,255,255,0.12);
-    backdrop-filter: blur(6px);
-    opacity: 0; transition: opacity 0.15s;
-    white-space: nowrap;
-    z-index: 10;
-  }}
-  .tooltip.show {{ opacity: 1; }}
-</style>
-</head>
-<body>
-<div class="container">
-  {"<div class='title'>" + (title or "") + "</div>" if title else ""}
-  <canvas id="graph"></canvas>
-  <div class="tooltip" id="tooltip"></div>
+    html = f"""<div class="{graph_id}-container" style="position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:8px;background:#1a1a2e;padding:112px 200px;border-radius:12px;font-family:'Segoe UI',system-ui,sans-serif;">
+  {"<div style='color:#e0e0e0;font-size:16px;font-weight:600;opacity:0.85;'>" + (title or "") + "</div>" if title else ""}
+  <canvas id="{graph_id}_canvas" style="cursor:default;border-radius:8px;"></canvas>
+  <div id="{graph_id}_tooltip" style="position:absolute;pointer-events:none;background:rgba(20,20,40,0.92);color:#e8e8f0;padding:8px 14px;border-radius:8px;font-size:13px;line-height:1.5;border:1px solid rgba(255,255,255,0.12);opacity:0;transition:opacity 0.15s;white-space:nowrap;z-index:10;"></div>
 </div>
 <script>
+(function() {{
 const CFG = {json.dumps(config)};
-
-const canvas = document.getElementById('graph');
+const canvas = document.getElementById('{graph_id}_canvas');
 const ctx = canvas.getContext('2d');
-const tooltip = document.getElementById('tooltip');
+const tooltip = document.getElementById('{graph_id}_tooltip');
 const dpr = window.devicePixelRatio || 1;
 
 canvas.width = CFG.width * dpr;
@@ -255,34 +277,24 @@ const W = CFG.width, H = CFG.height;
 const cx = W / 2, cy = H / 2;
 const R = Math.min(W, H) * 0.42;
 
-// Compute node positions & radii
 const nodes = [];
-const maxStr = Math.max(...CFG.strengths, 1e-9);
-const minStr = Math.min(...CFG.strengths);
+// Use logarithmic scaling for node size, with median as floor (below-median nodes get min size)
+const sortedStrengths = [...CFG.strengths].sort((a, b) => a - b);
+const medianStrength = sortedStrengths[Math.floor(sortedStrengths.length / 2)];
+const logOffset = 0.001;
+const medianLog = Math.log(medianStrength + logOffset);
+const maxLog = Math.log(Math.max(...CFG.strengths) + logOffset);
 for (let i = 0; i < CFG.n; i++) {{
   const angle = (2 * Math.PI * i) / CFG.n - Math.PI / 2;
-  const t = maxStr > minStr ? (CFG.strengths[i] - minStr) / (maxStr - minStr) : 0.5;
+  const logVal = Math.log(CFG.strengths[i] + logOffset);
+  // Clamp to median: anything below median gets t=0 (min size)
+  const t = maxLog > medianLog ? Math.max(0, (logVal - medianLog) / (maxLog - medianLog)) : 0.5;
   const r = CFG.minR + t * (CFG.maxR - CFG.minR);
-  nodes.push({{
-    x: cx + R * Math.cos(angle),
-    y: cy + R * Math.sin(angle),
-    r: r,
-    color: CFG.colors[i],
-    strength: CFG.strengths[i],
-  }});
+  nodes.push({{ x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle), r: r }});
 }}
 
 let hovered = -1;
-
-function darken(hex, amt) {{
-  let c = hex.replace('#','');
-  if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
-  const num = parseInt(c, 16);
-  let r = Math.max(0, (num >> 16) - amt);
-  let g = Math.max(0, ((num >> 8) & 0xff) - amt);
-  let b = Math.max(0, (num & 0xff) - amt);
-  return `rgb(${{r}},${{g}},${{b}})`;
-}}
+let anchored = -1;
 
 function drawArrowhead(fromX, fromY, toX, toY, size, color, alpha) {{
   const angle = Math.atan2(toY - fromY, toX - fromX);
@@ -303,77 +315,86 @@ function edgeEndpoints(src, dst) {{
   const dx = d.x - s.x, dy = d.y - s.y;
   const dist = Math.sqrt(dx*dx + dy*dy) || 1;
   const ux = dx/dist, uy = dy/dist;
-  return {{
-    x1: s.x + ux * (s.r + 2),
-    y1: s.y + uy * (s.r + 2),
-    x2: d.x - ux * (d.r + 5),
-    y2: d.y - uy * (d.r + 5),
-  }};
+  return {{ x1: s.x + ux * (s.r + 2), y1: s.y + uy * (s.r + 2), x2: d.x - ux * (d.r + 5), y2: d.y - uy * (d.r + 5) }};
 }}
 
 function draw() {{
   ctx.clearRect(0, 0, W, H);
+  const activeNode = anchored >= 0 ? anchored : hovered;
+  const activeEdges = activeNode >= 0 ? (CFG.nodeTopEdges[activeNode] || []) : [];
+  const activeEdgeSet = new Set(activeEdges.map(e => e.src + ',' + e.dst));
 
-  // Draw all edges (faint)
-  for (const e of CFG.edges) {{
+  // Draw all visible edges (thin, solid, opacity proportional to weight)
+  for (const e of CFG.visibleEdges) {{
     const {{x1,y1,x2,y2}} = edgeEndpoints(e.src, e.dst);
+    const norm = Math.abs(e.weight) / (CFG.maxWeight || 1);
+    const alpha = 0.1 + 0.4 * norm;
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
-    ctx.strokeStyle = 'rgba(180,180,200,0.07)';
-    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = `rgba(180,180,200,${{alpha.toFixed(2)}})`;
+    ctx.lineWidth = 0.8 + 1.0 * norm;
     ctx.stroke();
   }}
 
-  // Draw highlighted edges for hovered node
-  if (hovered >= 0) {{
-    const topEdges = CFG.nodeTopEdges[hovered] || [];
-    const maxW = topEdges.length > 0 ? Math.max(...topEdges.map(e => Math.abs(e.weight))) : 1;
-
-    for (let idx = topEdges.length - 1; idx >= 0; idx--) {{
-      const e = topEdges[idx];
+  // Draw highlighted edges for active node (thick, dashed, with arrows)
+  // White for positive weights, red for negative weights
+  const edgeLabels = []; // Store labels to draw after nodes
+  if (activeNode >= 0) {{
+    const maxW = activeEdges.length > 0 ? Math.max(...activeEdges.map(e => Math.abs(e.weight))) : 1;
+    for (const e of activeEdges) {{
+      const {{x1,y1,x2,y2}} = edgeEndpoints(e.src, e.dst);
       const absW = Math.abs(e.weight);
       const norm = absW / (maxW || 1);
-      const alpha = 0.3 + 0.6 * norm;
-      const lw = 1.2 + 2.0 * norm;
+      const alpha = 0.4 + 0.5 * norm;
+      const lw = 1.5 + 2.0 * norm;
+      const isPositive = e.weight >= 0;
+      const edgeColor = isPositive ? `rgba(220,220,240,${{alpha.toFixed(2)}})` : `rgba(255,80,80,${{alpha.toFixed(2)}})`;
 
-      const isOutgoing = (e.src === hovered);
-      const from = isOutgoing ? e.src : e.dst;
-      const to = isOutgoing ? e.dst : e.src;
-      const {{x1,y1,x2,y2}} = edgeEndpoints(from, to);
-
-      // Dashed line
       ctx.save();
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
-      ctx.strokeStyle = `rgba(160,165,180,${{alpha.toFixed(2)}})`;
+      ctx.strokeStyle = edgeColor;
       ctx.lineWidth = lw;
       ctx.stroke();
       ctx.restore();
 
-      // Arrowhead
-      drawArrowhead(x1, y1, x2, y2, 8 + 4 * norm, `rgba(160,165,180,${{alpha.toFixed(2)}})`, alpha);
+      drawArrowhead(x1, y1, x2, y2, 8 + 4 * norm, edgeColor, alpha);
+
+      // Determine which node to label (the one that's not the active node)
+      const labelNode = (e.src === activeNode) ? e.dst : e.src;
+      const nd = nodes[labelNode];
+      // Position label outside the node, away from center
+      const cx = W / 2, cy = H / 2;
+      const dx = nd.x - cx, dy = nd.y - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      const labelOffset = nd.r + 22;
+      const lx = nd.x + (dx / dist) * labelOffset;
+      const ly = nd.y + (dy / dist) * labelOffset;
+      const val = e.weight.toFixed(2);
+      const labelText = isPositive ? `+${{val}}` : `${{val}}`;
+      const labelColor = isPositive ? '#fff' : '#ff5050';
+      edgeLabels.push({{ x: lx, y: ly, text: labelText, color: labelColor }});
     }}
   }}
 
-  // Draw nodes
-  for (let i = 0; i < CFG.n; i++) {{
+  // Draw nodes (sorted by radius descending so smaller nodes appear on top)
+  const nodeOrder = [...Array(CFG.n).keys()].sort((a, b) => nodes[b].r - nodes[a].r);
+  for (const i of nodeOrder) {{
     const nd = nodes[i];
-    const isHov = (i === hovered);
-    const isConnected = hovered >= 0 && (CFG.nodeTopEdges[hovered] || []).some(
-      e => e.src === i || e.dst === i
-    );
-    const dimmed = hovered >= 0 && !isHov && !isConnected;
+    const isActive = (i === activeNode);
+    const isConnected = activeNode >= 0 && activeEdges.some(e => e.src === i || e.dst === i);
+    const dimmed = activeNode >= 0 && !isActive && !isConnected;
 
     ctx.beginPath();
     ctx.arc(nd.x, nd.y, nd.r, 0, Math.PI * 2);
 
-    if (isHov) {{
-      ctx.shadowColor = nd.color;
+    if (isActive) {{
+      ctx.shadowColor = CFG.colors[i];
       ctx.shadowBlur = 16;
-      ctx.fillStyle = nd.color;
+      ctx.fillStyle = CFG.colors[i];
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.lineWidth = 2.5;
@@ -381,13 +402,11 @@ function draw() {{
       ctx.stroke();
     }} else {{
       ctx.globalAlpha = dimmed ? 0.3 : 1.0;
-      ctx.fillStyle = nd.color;
+      ctx.fillStyle = CFG.colors[i];
       ctx.fill();
-      ctx.lineWidth = 0;
       ctx.globalAlpha = 1.0;
     }}
 
-    // Label
     const fontSize = Math.max(9, Math.min(13, nd.r * 0.85));
     ctx.font = `bold ${{fontSize}}px 'Segoe UI', system-ui, sans-serif`;
     ctx.textAlign = 'center';
@@ -397,21 +416,45 @@ function draw() {{
     ctx.fillText(String(i), nd.x, nd.y + 0.5);
     ctx.globalAlpha = 1.0;
   }}
+
+  // Draw edge labels outside connected nodes
+  ctx.font = `bold 11px 'Segoe UI', system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const lbl of edgeLabels) {{
+    ctx.fillStyle = '#000';
+    ctx.fillText(lbl.text, lbl.x + 1, lbl.y + 1);
+    ctx.fillStyle = lbl.color;
+    ctx.fillText(lbl.text, lbl.x, lbl.y);
+  }}
+}}
+
+function findNode(mx, my) {{
+  for (let i = 0; i < CFG.n; i++) {{
+    const dx = mx - nodes[i].x, dy = my - nodes[i].y;
+    if (dx*dx + dy*dy <= (nodes[i].r + 4) * (nodes[i].r + 4)) return i;
+  }}
+  return -1;
+}}
+
+function showTooltip(idx, evt) {{
+  const rect = canvas.getBoundingClientRect();
+  tooltip.style.opacity = '1';
+  const imp = (CFG.importances[idx] * 100).toFixed(1);
+  const lbl = CFG.labels[idx];
+  const txt = CFG.texts[idx];
+  tooltip.innerHTML = `<strong>Chunk ${{idx}}</strong><br>Category: ${{lbl}}<br>Importance: ${{imp}}%<br>Text: ${{txt}}`;
+  const tx = evt.clientX - rect.left + 220;
+  const ty = evt.clientY - rect.top + 10;
+  tooltip.style.left = tx + 'px';
+  tooltip.style.top = ty + 'px';
 }}
 
 canvas.addEventListener('mousemove', (evt) => {{
   const rect = canvas.getBoundingClientRect();
   const mx = evt.clientX - rect.left;
   const my = evt.clientY - rect.top;
-
-  let found = -1;
-  for (let i = 0; i < CFG.n; i++) {{
-    const dx = mx - nodes[i].x, dy = my - nodes[i].y;
-    if (dx*dx + dy*dy <= (nodes[i].r + 4) * (nodes[i].r + 4)) {{
-      found = i;
-      break;
-    }}
-  }}
+  const found = findNode(mx, my);
 
   if (found !== hovered) {{
     hovered = found;
@@ -419,28 +462,35 @@ canvas.addEventListener('mousemove', (evt) => {{
   }}
 
   if (found >= 0) {{
-    tooltip.classList.add('show');
-    tooltip.innerHTML = `<strong>Chunk ${{found}}</strong><br>Strength: ${{nodes[found].strength.toFixed(2)}}`;
-    let tx = evt.clientX - rect.left + 16;
-    let ty = evt.clientY - rect.top - 10;
-    if (tx + 150 > W) tx = evt.clientX - rect.left - 160;
-    tooltip.style.left = tx + 'px';
-    tooltip.style.top = ty + 'px';
+    showTooltip(found, evt);
   }} else {{
-    tooltip.classList.remove('show');
+    tooltip.style.opacity = '0';
   }}
+}});
+
+canvas.addEventListener('click', (evt) => {{
+  const rect = canvas.getBoundingClientRect();
+  const mx = evt.clientX - rect.left;
+  const my = evt.clientY - rect.top;
+  const found = findNode(mx, my);
+
+  if (found >= 0) {{
+    anchored = (anchored === found) ? -1 : found;
+  }} else {{
+    anchored = -1;
+  }}
+  draw();
 }});
 
 canvas.addEventListener('mouseleave', () => {{
   hovered = -1;
-  tooltip.classList.remove('show');
+  tooltip.style.opacity = '0';
   draw();
 }});
 
 draw();
-</script>
-</body>
-</html>"""
+}})();
+</script>"""
     return html
 
 
@@ -493,3 +543,128 @@ draw();
 #         f.write(html)
 
 #     print("Demo written to chunk_graph_demo.html")
+
+
+# ============================================================================
+# Whitebox Analysis Utilities
+# ============================================================================
+# These functions handle tokenization and attention averaging details that
+# aren't pedagogically important but are necessary for whitebox exercises.
+# Adapted from thought-anchors repo: whitebox-analyses/attention_analysis/
+
+
+def get_sentence_token_boundaries(
+    text: str,
+    sentences: list[str],
+    tokenizer,
+) -> list[tuple[int, int]]:
+    """
+    Find token-level boundaries for each sentence within the full text.
+
+    This is non-trivial because tokenization of the full text differs from
+    concatenating individual sentence tokenizations (due to BPE/SentencePiece
+    context effects).
+
+    Args:
+        text: Full text containing all sentences
+        sentences: List of sentence strings (in order, as they appear in text)
+        tokenizer: HuggingFace tokenizer for the model
+
+    Returns:
+        List of (start_token, end_token) positions for each sentence
+
+    Note: This is a simplified version. The full implementation in thought-anchors
+    handles unicode normalization and edge cases more robustly.
+    """
+    import re
+
+    # Normalize unicode spaces for robust matching
+    def normalize_spaces(s: str) -> str:
+        """Replace various unicode spaces with regular space."""
+        return re.sub(r"[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]", " ", s)
+
+    # Find character positions of each sentence
+    char_positions = []
+    search_start = 0
+    text_normalized = normalize_spaces(text)
+
+    for sentence in sentences:
+        sentence_normalized = normalize_spaces(sentence)
+
+        # Find sentence in text
+        norm_pos = text_normalized.find(sentence_normalized, search_start)
+        if norm_pos == -1:
+            # Try with stripped version
+            sentence_stripped = sentence_normalized.strip()
+            norm_pos = text_normalized.find(sentence_stripped, search_start)
+            if norm_pos == -1:
+                raise ValueError(f"Sentence not found in text: {sentence[:50]}...")
+            norm_end = norm_pos + len(sentence_stripped)
+        else:
+            norm_end = norm_pos + len(sentence_normalized)
+
+        char_positions.append((norm_pos, norm_end))
+        search_start = norm_end
+
+    # Convert character positions to token positions via prefix tokenization
+    # This accounts for context-dependent BPE/SentencePiece tokenization
+    token_boundaries = []
+    for char_start, char_end in char_positions:
+        # Tokenize text up to this point to find token positions
+        prefix_to_start = text[:char_start]
+        prefix_to_end = text[:char_end]
+
+        tokens_to_start = len(tokenizer.encode(prefix_to_start, add_special_tokens=False))
+        tokens_to_end = len(tokenizer.encode(prefix_to_end, add_special_tokens=False))
+
+        token_boundaries.append((tokens_to_start, tokens_to_end))
+
+    return token_boundaries
+
+
+def average_attention_by_sentences(
+    token_attention: np.ndarray,
+    sentence_boundaries: list[tuple[int, int]],
+) -> np.ndarray:
+    """
+    Convert token-level attention to sentence-level attention.
+
+    For each (i,j) sentence pair, computes the mean attention from all tokens
+    in sentence i to all tokens in sentence j.
+
+    Args:
+        token_attention: Token-level attention matrix, shape (n_tokens, n_tokens)
+        sentence_boundaries: List of (start, end) token positions for each sentence
+
+    Returns:
+        Sentence-level attention matrix, shape (n_sentences, n_sentences)
+
+    Adapted from thought-anchors: attn_funcs.py:_compute_averaged_matrix
+    """
+    n_sentences = len(sentence_boundaries)
+    result = np.zeros((n_sentences, n_sentences), dtype=np.float32)
+
+    for i in range(n_sentences):
+        row_start, row_end = sentence_boundaries[i]
+        # Clip to valid token range
+        row_start = min(row_start, token_attention.shape[0] - 1)
+        row_end = min(row_end, token_attention.shape[0])
+
+        if row_start >= row_end:
+            continue
+
+        for j in range(n_sentences):
+            col_start, col_end = sentence_boundaries[j]
+            # Clip to valid token range
+            col_start = min(col_start, token_attention.shape[1] - 1)
+            col_end = min(col_end, token_attention.shape[1])
+
+            if col_start >= col_end:
+                continue
+
+            # Average attention in this sentence-to-sentence region
+            region = token_attention[row_start:row_end, col_start:col_end]
+            if region.size > 0:
+                result[i, j] = np.mean(region)
+
+    return result
