@@ -58,38 +58,39 @@ r"""
 
 > ##### Learning Objectives
 >
-> - Import & understand the structure of our reasoning dataset
-> - Split reasoning traces into sentences using regex-based heuristics
-> - Classify sentences using both heuristic and autorater approaches
-> - Visualize reasoning trace structure
+> - Load and explore the GSM8K reasoning dataset structure (prompts, CoT traces, answers)
+> - Implement sentence segmentation for chain-of-thought traces using regex patterns
+> - Build both rule-based and LLM-based classifiers to categorize reasoning steps (calculation, lookup, restatement, etc.)
+> - Visualize how different sentence types are distributed across reasoning traces
 
 ### 2️⃣ Black-box Analysis
 
 > ##### Learning Objectives
 >
-> - Understand forced answer importance and its limitations
-> - Implement resampling importance and counterfactual importance metrics
-> - Replicate Figure 3b (sentence category effect)
-> - Replicate Figure 1 (sentence-to-sentence causal attribution)
-> - Implement your own resampling methods
+> - Understand **forced answer importance**: measuring impact by directly forcing model answers at specific steps
+> - Implement **resampling importance**: measuring impact by replacing steps with samples from other reasoning traces
+> - Implement **counterfactual importance**: measuring impact by resampling conditioned on keeping the same answer
+> - Learn when each metric is appropriate (causal vs correlational analysis)
+> - Replicate key paper figures showing which reasoning steps are most critical for final answers
 
 ### 3️⃣ White-box Methods
 
 > ##### Learning Objectives
 >
-> - Understand receiver heads and vertical attention scores
-> - Compute and visualize attention patterns at the sentence level
-> - Implement attention suppression interventions
-> - Validate white-box metrics against black-box importance
+> - Understand **receiver heads**: attention heads that aggregate information from reasoning steps into the final answer
+> - Compute **vertical attention scores**: quantifying how much each token position attends to specific reasoning steps
+> - Implement RoPE (Rotary Position Embeddings) to understand positional encoding in attention
+> - Build attention suppression interventions to causally validate which attention patterns matter
+> - Compare white-box attention metrics with black-box importance scores to validate mechanistic understanding
 
 ### 4️⃣ Thought Branches: Safety Applications
 
 > ##### Learning Objectives
 >
-> - Explore the blackmail scenario dataset
-> - Adapt importance metrics for safety-relevant outcomes
-> - Understand and compute the resilience metric
-> - Compare thought anchors across math and safety domains
+> - Apply thought anchor analysis to safety-critical scenarios (blackmail reasoning)
+> - Measure how much reasoning steps influence safety-relevant outcomes (not just answer correctness)
+> - Understand the **resilience metric**: how stable are thought anchors when we vary the CoT prompt?
+> - Compare thought anchor patterns between mathematical reasoning (GSM8K) and safety reasoning (blackmail scenarios)
 """
 
 # ! CELL TYPE: markdown
@@ -179,7 +180,7 @@ import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, MethodType
 
 import circuitsvis as cv
 import einops
@@ -195,11 +196,13 @@ from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
 from IPython.display import HTML, display
+from jaxtyping import Float, Int
 from openai import OpenAI
 from plotly.subplots import make_subplots
 from scipy import stats
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from torch import Tensor
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
 
@@ -216,7 +219,7 @@ if utils_path not in [Path(p) for p in sys.path]:
     sys.path.append(str(utils_path))
 
 import part63_interpreting_reasoning_models.tests as tests
-from part63_interpreting_reasoning_models import utils
+import part63_interpreting_reasoning_models.utils as utils
 
 MAIN = __name__ == "__main__"
 
@@ -271,6 +274,18 @@ if MAIN:
 
 r"""
 # 1️⃣ CoT Infrastructure & Sentence Taxonomy
+
+In this section, we'll build the infrastructure to analyze chain-of-thought reasoning by breaking it into meaningful units. When models generate long reasoning traces, we need to decide: **what are the appropriate "units of reasoning" we should analyze?**
+
+**Why not use tokens?** Tokens are too granular - a single reasoning step like "Let's calculate the area: πr²" spans multiple tokens, and breaking it apart loses semantic meaning.
+
+**Why sentences?** Sentences are a natural unit because:
+1. They correspond to complete thoughts or reasoning steps
+2. They're granular enough to identify specific important steps
+3. They're coarse enough to be semantically meaningful
+4. They align with how humans naturally chunk reasoning
+
+By splitting CoT traces into sentences and categorizing them (calculations, lookups, restatements, etc.), we can start to ask questions like: "Which types of sentences are most critical for reaching the correct answer?" This sentence-level analysis will set us up for the black-box and white-box methods in later sections, where we'll measure which sentences actually shape the model's reasoning trajectory.
 
 """
 
@@ -883,6 +898,10 @@ utils.visualize_trace_structure(example_sentences, categories, "What is the area
 
 r"""
 # 2️⃣ Black-box Analysis
+
+Now that we've split reasoning traces into sentences and categorized them, we can treat each sentence as a single unit and ask: **which sentences are most important for the model's final answer?**
+
+This section introduces three black-box methods for measuring sentence importance. These are called "black-box" because they only require observing inputs and outputs - we don't need to look inside the model at activations or attention patterns. By intervening on individual sentences (forcing answers, resampling, or replacing with counterfactuals), we can measure how much each sentence shapes the trajectory of the model's reasoning and its final conclusion.
 """
 
 # ! CELL TYPE: markdown
@@ -1033,7 +1052,7 @@ if MAIN:
 # ! TAGS: []
 
 r"""
-## Forced Answer Importance (Baseline)
+## Metric (1/3): Forced Answer Importance
 """
 
 # ! CELL TYPE: markdown
@@ -1186,7 +1205,7 @@ fig.show()
 # ! TAGS: []
 
 r"""
-## Resampling Importance
+## Metric (2/3) : Resampling Importance
 """
 
 # ! CELL TYPE: markdown
@@ -1407,7 +1426,7 @@ Some of the lowest average cosine similarities are for:
 # ! TAGS: []
 
 r"""
-## Counterfactual Importance (Refinement)
+## Metric (3/3): Counterfactual Importance
 """
 
 # ! CELL TYPE: markdown
@@ -1787,7 +1806,7 @@ def precompute_target_embeddings(
     chunks: list[dict],
     embedding_model: SentenceTransformer,
     n_chunks: int,
-) -> np.ndarray:
+) -> Float[np.ndarray, "n_chunks embed_dim"]:
     """
     Precompute embeddings for all target chunk sentences.
 
@@ -1804,8 +1823,8 @@ def precompute_target_embeddings(
 
 
 def compute_match_rate_from_embeddings(
-    target_embedding: np.ndarray,
-    rollout_embeddings_list: list[np.ndarray],
+    target_embedding: Float[np.ndarray, " embed_dim"],
+    rollout_embeddings_list: list[Float[np.ndarray, "n_sentences embed_dim"]],
     similarity_threshold: float = 0.7,
 ) -> float:
     """
@@ -1849,8 +1868,8 @@ def compute_match_rate_from_embeddings(
 def compute_pairwise_importance(
     source_idx: int,
     target_idx: int,
-    target_embeddings: np.ndarray,
-    rollout_embeddings: list[list[np.ndarray]],
+    target_embeddings: Float[np.ndarray, "n_chunks embed_dim"],
+    rollout_embeddings: list[list[Float[np.ndarray, "n_sentences embed_dim"]]],
     similarity_threshold: float = 0.7,
 ) -> float:
     """
@@ -1877,9 +1896,7 @@ def compute_pairwise_importance(
     return include_rate - exclude_rate
 
 
-# TODO(mcdougallc) - remove the "and False"
-
-if MAIN and False:
+if MAIN:
     # Precompute all embeddings upfront
     n_chunks = 74
     target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
@@ -1963,7 +1980,7 @@ def precompute_target_embeddings(
     chunks: list[dict],
     embedding_model: SentenceTransformer,
     n_chunks: int,
-) -> np.ndarray:
+) -> Float[np.ndarray, "n_chunks embed_dim"]:
     '''
     Precompute embeddings for all target chunk sentences.
 
@@ -1980,8 +1997,8 @@ def precompute_target_embeddings(
 
 
 def compute_match_rate_from_embeddings(
-    target_embedding: np.ndarray,
-    rollout_embeddings_list: list[np.ndarray],
+    target_embedding: Float[np.ndarray, " embed_dim"],
+    rollout_embeddings_list: list[Float[np.ndarray, "n_sentences embed_dim"]],
     similarity_threshold: float = 0.7,
 ) -> float:
     '''
@@ -2003,8 +2020,8 @@ def compute_match_rate_from_embeddings(
 def compute_pairwise_importance(
     source_idx: int,
     target_idx: int,
-    target_embeddings: np.ndarray,
-    rollout_embeddings: list[list[np.ndarray]],
+    target_embeddings: Float[np.ndarray, "n_chunks embed_dim"],
+    rollout_embeddings: list[list[Float[np.ndarray, "n_sentences embed_dim"]]],
     similarity_threshold: float = 0.7,
 ) -> float:
     '''
@@ -2046,7 +2063,7 @@ Finally, we'll end with a bonus exercise for implementing your own resampling me
 # ! TAGS: []
 
 r"""
-### Exercise - implement resampling
+### Exercise - implement resampling (optional)
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
@@ -2149,9 +2166,7 @@ def get_resampled_rollouts(
     return full_answer, chunks, chunk_rollouts
 
 
-# TODO(mcdougallc) - remove the "and False"
-
-if MAIN and False:
+if MAIN:
     # Load the model for generation (only if you want to try this)
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
@@ -2216,6 +2231,20 @@ When you've got this working, we leave the rest as an exercise for you to explor
 
 r"""
 # 3️⃣ White-box Methods
+
+**Connecting black-box to white-box:** In Section 2, we used black-box methods (resampling, counterfactuals) to identify which sentences are important for the final answer. These methods told us *what* matters, but not *why* or *how* the model implements this importance mechanistically.
+
+Now we'll open the black box and look inside the model. The key question: **if certain sentences are behaviorally important (high counterfactual importance), can we find attention heads that attend strongly to those same sentences?** If so, we've found a mechanistic explanation for the black-box patterns.
+
+**The hypothesis:** Attention is the mechanism by which information from earlier sentences flows to later positions in the sequence. If a sentence is important for the final answer, we should expect to see attention heads at later positions (especially at the final answer token) attending heavily to that sentence. These are called **receiver heads** - heads that aggregate important information from reasoning steps.
+
+**What we'll do:**
+1. Compute **vertical attention scores** - for each sentence, measure how much future tokens attend to it
+2. Identify **receiver heads** - heads with spiky attention to specific sentences (high kurtosis)
+3. **Validate mechanistically** - compare attention patterns to our black-box importance scores from Section 2
+4. **Causal intervention** - use attention suppression to prove these patterns matter causally
+
+By the end, we'll have shown that the black-box patterns (which sentences matter) correspond to white-box mechanisms (which sentences get attended to), giving us a complete mechanistic understanding of thought anchors.
 """
 
 # ! CELL TYPE: markdown
@@ -2272,21 +2301,15 @@ r"""
 ### Exercise - extract attention matrices using hooks
 
 > ```yaml
-> Difficulty: 🔴🔴🔴⚪⚪
+> Difficulty: 🔴🔴🔴🔴⚪
 > Importance: 🔵🔵🔵🔵⚪
 >
 > You should spend up to 20-25 minutes on this exercise.
 > ```
 
-The first step in whitebox analysis is to extract attention patterns from the model's forward pass. Unfortunately, the `output_attentions=True` argument doesn't work reliably for all models. Instead, we'll use **forward hooks** to capture attention weights directly from the attention modules.
+The first step in whitebox analysis is to extract attention patterns from the model's forward pass. You can use `output_attentions=True` in your model forward pass to get the attention weights - they're accessible as `output.attentions[layer][batch_idx, head_idx]` after you do this (note that this was only possible because we set the model's config to output attentions when we loaded it earlier in this notebook).
 
-**Your task**: Implement attention extraction using hooks. You'll need to:
-1. Visit the [Qwen2 source code](https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen2/modeling_qwen2.py)
-2. Find the `Qwen2Attention` class and identify where attention weights are computed
-3. Write a hook function that captures these weights
-4. Register the hook on the correct layer's attention module
-
-**Hint**: The forward method of `Qwen2Attention` returns a tuple `(attn_output, attn_weights, past_key_value)`. The hook should extract `attn_weights` from the output tuple.
+The function `extract_attention_matrix` should return the attention weights for a particular layer & head, and also return the list of string tokens for convenience.
 """
 
 # ! CELL TYPE: code
@@ -2300,7 +2323,7 @@ def extract_attention_matrix(
     tokenizer,
     layer: int,
     head: int,
-) -> tuple[np.ndarray, list[str]]:
+) -> tuple[Float[np.ndarray, "seq seq"], list[str]]:
     """
     Extract attention matrix from a specific layer and head using hooks.
 
@@ -2387,6 +2410,27 @@ if MAIN:
 # ! TAGS: []
 
 r"""
+<details>
+<summary>Hint #1</summary>
+
+The forward method of `Qwen2Attention` returns a tuple `(attn_output, attn_weights, past_key_value)`. The hook should extract `attn_weights` from the output tuple.
+
+</details>
+
+<details>
+<summary>Hint #2</summary>
+
+...
+
+</details>
+
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - compute vertical attention scores (Part 1: Simple version)
 
 > ```yaml
@@ -2407,9 +2451,9 @@ In this first part, implement a simple version that computes the basic vertical 
 
 
 def get_vertical_scores_simple(
-    avg_attention_matrix: np.ndarray,
+    avg_attention_matrix: Float[np.ndarray, "n_sentences n_sentences"],
     proximity_ignore: int = 4,
-) -> np.ndarray:
+) -> Float[np.ndarray, " n_sentences"]:
     """
     Compute basic vertical attention scores for each sentence (no normalization).
 
@@ -2530,11 +2574,11 @@ Now implement the full algorithm including depth control and optional z-score no
 
 
 def get_vertical_scores(
-    avg_attention_matrix: np.ndarray,
+    avg_attention_matrix: Float[np.ndarray, "n_sentences n_sentences"],
     proximity_ignore: int = 4,
     control_depth: bool = True,
     return_z_scores: bool = False,
-) -> np.ndarray:
+) -> Float[np.ndarray, " n_sentences"]:
     """
     Compute vertical attention scores for each sentence with optional depth control and z-scoring.
 
@@ -2704,7 +2748,7 @@ Receiver heads are identified by high kurtosis in their vertical attention score
 # ! TAGS: []
 
 
-def compute_head_kurtosis(vertical_scores: np.ndarray) -> float:
+def compute_head_kurtosis(vertical_scores: Float[np.ndarray, " n_sentences"]) -> float:
     """
     Compute kurtosis of vertical attention scores.
     Higher kurtosis = more "spiky" attention = better receiver head candidate.
@@ -2760,7 +2804,7 @@ def find_receiver_heads(
     tokenizer,
     top_k: int = 10,
     proximity_ignore: int = 4,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[Int[np.ndarray, "top_k 2"], Float[np.ndarray, " top_k"]]:
     """
     Identify top-k receiver heads by kurtosis of vertical attention scores.
 
@@ -2954,11 +2998,11 @@ Now that we've identified receiver heads, let's compute the final receiver head 
 def compute_receiver_head_scores(
     text: str,
     sentences: list[str],
-    receiver_heads: np.ndarray,
+    receiver_heads: Int[np.ndarray, "k 2"],
     model,
     tokenizer,
     proximity_ignore: int = 4,
-) -> np.ndarray:
+) -> Float[np.ndarray, " n_sentences"]:
     """
     Compute final receiver head scores by averaging vertical scores from top-k heads.
 
@@ -3097,24 +3141,66 @@ If receiver heads are important for propagating information from thought anchors
 # ! TAGS: []
 
 r"""
-### Exercise - implement attention suppression hook
+### Exercise - implement RoPE attention
 
 > ```yaml
-> Difficulty: 🔴🔴🔴🔴⚪
-> Importance: 🔵🔵🔵⚪⚪
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵⚪⚪⚪
 >
-> You should spend up to 20-25 minutes on this exercise.
+> You should spend up to 15-20 minutes on this exercise.
 > ```
+
+Qwen uses **Rotary Position Embeddings (RoPE)**, which is a method for encoding positional information directly into the attention mechanism. Instead of adding position embeddings to token embeddings (like in vanilla transformers), RoPE rotates the query and key vectors based on their positions.
+
+**The RoPE formula:**
+
+For a query or key vector split into pairs of dimensions $(x_i, x_{i+1})$, RoPE applies a rotation based on position $m$ and dimension index $i$:
+
+$$
+\begin{bmatrix}
+q_i^m \\
+q_{i+1}^m
+\end{bmatrix}
+=
+\begin{bmatrix}
+\cos(m\theta_i) & -\sin(m\theta_i) \\
+\sin(m\theta_i) & \cos(m\theta_i)
+\end{bmatrix}
+\begin{bmatrix}
+q_i \\
+q_{i+1}
+\end{bmatrix}
+$$
+
+where $\theta_i = 10000^{-2i/d}$ is a frequency that decreases with dimension index.
+
+**Intuitively**, RoPE encodes relative positions into the attention scores. When you compute $Q \cdot K^T$, the dot product naturally captures the distance between positions because both queries and keys have been rotated by position-dependent angles. This means attention scores automatically depend on relative position differences, not absolute positions.
+
+**Implementation:** The formula above can be simplified. For the full vector (not just pairs), we can write:
+
+$$
+\text{RoPE}(x) = x \odot \cos(m\theta) + \text{rotate\_half}(x) \odot \sin(m\theta)
+$$
+
+where $\odot$ is element-wise multiplication, and `rotate_half` swaps and negates pairs of dimensions.
+
+**Your task:** Implement the `apply_rotary_pos_emb` function below. You need to:
+1. Apply the RoPE formula to both the query (`q`) and key (`k`) tensors
+2. The `cos` and `sin` tensors are already computed for you (these are the $\cos(m\theta)$ and $\sin(m\theta)$ terms)
+3. Use the provided `rotate_half` helper function
+4. Return the rotated query and key tensors
+
+**How to know you're done:** The tests below (`tests.test_apply_rotary_pos_emb()`) will verify that your implementation matches the expected behavior. Once the tests pass, you've successfully implemented RoPE!
+
+**Note**: We've given you a helper function `rotate_half` that rotates half the hidden dimensions (swapping pairs and negating the first of each pair), which implements the rotation effect.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-# Helper functions for attention suppression (adapted from thought-anchors)
 
-
-def rotate_half(x: torch.Tensor) -> torch.Tensor:
+def rotate_half(x: Float[Tensor, "... d"]) -> Float[Tensor, "... d"]:
     """Rotates half the hidden dims of the input (for RoPE)."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
@@ -3122,22 +3208,177 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 
 
 def apply_rotary_pos_emb(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    position_ids: torch.Tensor | None = None,
-    unsqueeze_dim: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    q: Float[Tensor, "batch heads seq head_dim"],
+    k: Float[Tensor, "batch heads seq head_dim"],
+    cos: Float[Tensor, "seq head_dim"],
+    sin: Float[Tensor, "seq head_dim"],
+) -> tuple[Float[Tensor, "batch heads seq head_dim"], Float[Tensor, "batch heads seq head_dim"]]:
     """Applies Rotary Position Embedding to query and key tensors."""
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
+
+    # EXERCISE
+    # raise NotImplementedError()
+    # EXERCISE END
+    # SOLUTION
+
+    cos = cos.unsqueeze(-1)
+    sin = sin.unsqueeze(-1)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
+    # SOLUTION END
 
 
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+if MAIN:
+    tests.test_rotary_pos_emb(apply_rotary_pos_emb)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+
+r"""
+### Exercise - compute suppressed attention
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 15-25 minutes on this exercise
+> ```
+
+Now you'll implement the core logic for attention suppression. The function `compute_suppressed_attention` takes query and key states and computes attention weights, but with specific token ranges masked out (set to $-\infty$ before softmax, so they get zero attention weight after softmax).
+
+**How attention suppression works:**
+
+1. Compute attention scores: $\text{scores} = QK^T / \sqrt{d_k}$
+2. **Before softmax**, mask specific token positions by setting their attention scores to $-\infty$ (or the minimum float value)
+3. Apply the attention mask if provided
+4. Apply softmax to get attention weights
+
+**Why mask before softmax?** Setting attention scores to $-\infty$ before softmax ensures they become 0 after softmax, effectively removing those positions from the attention computation.
+
+**Key arguments:**
+- `token_ranges`: List of (start, end) tuples indicating which tokens to suppress
+- `heads_mask`: If provided, only suppress in specific attention heads (otherwise suppress in all heads)
+- `attention_mask`: Standard causal/padding mask to apply after suppression
+
+Fill in the function below. The main logic you need to implement is:
+1. Compute base attention scores (scaled dot product)
+2. For each token range, set attention scores to minimum value
+3. Apply attention mask if provided
+4. Apply softmax
+
+**Hint:** Use `torch.finfo(attn_weights.dtype).min` to get the minimum value for the tensor's dtype.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_suppressed_attention(
+    query_states: Float[Tensor, "batch heads seq head_dim"],
+    key_states: Float[Tensor, "batch heads seq head_dim"],
+    token_ranges: list[tuple[int, int]],
+    head_dim: int,  # for scaling attention weights by sqrt of!
+    query_len: int,  # in case token_ranges exceed query length
+    attention_mask: Float[Tensor, "batch 1 seq seq"] | None = None,
+    heads_mask: Int[Tensor, " heads"] | None = None,  # shape (num_heads,) with True for heads to suppress
+) -> Float[Tensor, "batch heads seq seq"]:
+    # EXERCISE
+    # # YOUR CODE HERE - compute attention scores, apply suppression, apply attention mask, then softmax
+    # END EXERCISE
+    # SOLUTION
+    # Compute attention scores
+    attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(head_dim)
+
+    # Apply suppression mask BEFORE softmax (key step!)
+    for start, end in token_ranges:
+        effective_start = min(start, query_len)
+        effective_end = min(end, query_len)
+        if effective_start < effective_end:
+            mask_value = torch.finfo(attn_weights.dtype).min
+            if heads_mask is None:
+                # Suppress in all heads
+                attn_weights[..., effective_start:effective_end] = mask_value
+            else:
+                # Suppress only in specific heads
+                attn_weights[:, heads_mask, :, effective_start:effective_end] = mask_value
+
+    # Apply attention mask if provided
+    if attention_mask is not None:
+        attn_weights = attn_weights + attention_mask
+
+    # Softmax
+    attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    return attn_weights
+    # SOLUTION END
+
+
+if MAIN:
+    tests.test_compute_suppressed_attention(compute_suppressed_attention)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+
+r"""
+### Exercise - understand full attention suppression hook
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-20 minutes reading this and making sure you understand how it works.
+> ```
+
+Now read and understand the full attention suppression pipeline below. This code patches the forward method of Qwen's attention modules to use your `apply_rotary_pos_emb` and `compute_suppressed_attention` functions.
+
+**What this function does:**
+
+1. **Finds attention modules**: Searches through the model for `self_attn` modules in each layer
+2. **Stores original forward methods**: Saves them so we can restore later
+3. **Creates masked forward functions**: For each attention module, creates a new forward method that:
+   - Projects to Q, K, V
+   - Applies RoPE (using your `apply_rotary_pos_emb`)
+   - Computes suppressed attention (using your `compute_suppressed_attention`)
+   - Applies attention to values and projects output
+4. **Replaces forward methods**: Uses `MethodType` to bind the new forward method to each module
+
+**Key implementation details:**
+
+- `layer_to_heads` allows suppressing only specific heads in specific layers (if `None`, suppresses all heads in all layers)
+- The function uses closures (`create_masked_forward`) to capture layer-specific parameters
+- `repeat_kv` handles grouped-query attention where key/value heads are fewer than query heads
+
+**How to use it:**
+
+```python
+# Apply suppression to tokens 10-20 in all heads
+suppression_info = apply_qwen_attention_suppression(model, token_ranges=[(10, 20)])
+
+# Run model with suppression active
+output = model(inputs)
+
+# Restore original behavior
+remove_qwen_attention_suppression(model, suppression_info)
+```
+
+There's no code to fill in here, just read through the implementation and make sure you understand:
+- How the two functions you implemented are used
+- How the patching mechanism works
+- What role `token_ranges` and `layer_to_heads` play
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def repeat_kv(
+    hidden_states: Float[Tensor, "batch kv_heads seq head_dim"], n_rep: int
+) -> Float[Tensor, "batch heads seq head_dim"]:
     """Expands key/value tensors for grouped-query attention."""
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
@@ -3239,35 +3480,20 @@ def apply_qwen_attention_suppression(
 
                 if rotary_ref is not None and callable(rotary_ref):
                     cos, sin = rotary_ref(value_states, position_ids=position_ids)
-                    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+                    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
                 # Repeat K/V for grouped-query attention
                 key_states = repeat_kv(key_states, num_key_value_groups)
                 value_states = repeat_kv(value_states, num_key_value_groups)
 
-                # Compute attention scores
-                attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(head_dim)
-
-                # Apply suppression mask BEFORE softmax (key step!)
-                for start, end in token_ranges:
-                    effective_start = min(start, q_len)
-                    effective_end = min(end, q_len)
-                    if effective_start < effective_end:
-                        mask_value = torch.finfo(attn_weights.dtype).min
-                        if heads_mask is None:
-                            # Suppress in all heads
-                            attn_weights[..., effective_start:effective_end] = mask_value
-                        else:
-                            # Suppress only in specific heads
-                            attn_weights[:, heads_mask, :, effective_start:effective_end] = mask_value
-
-                # Apply attention mask if provided
-                if attention_mask is not None:
-                    attn_weights = attn_weights + attention_mask
-
-                # Softmax
-                attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
-                    query_states.dtype
+                attn_weights = compute_suppressed_attention(
+                    query_states,
+                    key_states,
+                    token_ranges,
+                    head_dim,
+                    q_len,
+                    attention_mask,
+                    heads_mask,
                 )
 
                 # Apply attention to values
@@ -3281,9 +3507,6 @@ def apply_qwen_attention_suppression(
                 return attn_output, attn_weights if output_attentions else None
 
             return masked_forward
-
-        # Replace forward method
-        from types import MethodType
 
         attn_module.forward = MethodType(
             create_masked_forward(attn_module.forward, layer_idx, rotary_emb_module, heads_mask), attn_module
@@ -3333,8 +3556,8 @@ For a real model, we'd measure how suppressing attention to each sentence change
 
 
 def compute_suppression_kl(
-    original_logits: np.ndarray,
-    suppressed_logits: np.ndarray,
+    original_logits: Float[np.ndarray, " vocab"],
+    suppressed_logits: Float[np.ndarray, " vocab"],
     temperature: float = 1.0,
 ) -> float:
     """
@@ -3527,7 +3750,7 @@ def compute_suppression_scores(
     layer_to_heads: dict[int, list[int]],
     sample_size: int = 30,
     seed: int = 42,
-) -> tuple[np.ndarray, list[int]]:
+) -> tuple[Float[np.ndarray, " sample_size"], list[int]]:
     """
     Compute attention suppression scores for a sample of sentences.
 
@@ -3627,8 +3850,8 @@ Implement a function that compares attention suppression scores with counterfact
 
 
 def validate_whitebox_blackbox_correlation(
-    whitebox_scores: np.ndarray,
-    counterfactual_importances: np.ndarray,
+    whitebox_scores: Float[np.ndarray, " n_samples"],
+    counterfactual_importances: Float[np.ndarray, " n_sentences"],
     sampled_indices: list[int] | None = None,
 ) -> tuple[float, go.Figure]:
     """

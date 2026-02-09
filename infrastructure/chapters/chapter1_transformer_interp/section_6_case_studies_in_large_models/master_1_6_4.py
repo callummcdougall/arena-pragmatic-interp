@@ -294,30 +294,25 @@ r"""
 r"""
 ## Introduction
 
-As we discussed earlier, LLMs often exhibit distinct "personas" that can shift during conversations (also see [Simulators](https://www.lesswrong.com/posts/vJFdjigzmcXMhNTsx/simulators) by Janus for a related framing). In these exercises we'll replicate the key results from the paper [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which studies these different personas and finds a single direction which explains a lot of the variance between internal model activations taken from prompts different personas. The paper went on to find that this direction (which we'll call the "Assistant Axis") can be steered on to mitigate shifts into undesirable personas during conversations.
+LLMs often exhibit distinct "personas" that can shift during conversations (see [Simulators](https://www.lesswrong.com/posts/vJFdjigzmcXMhNTsx/simulators) by Janus for a related framing). These shifts can lead to concerning behaviors—a helpful Assistant might drift into playing a villain or adopting problematic traits during multi-turn interactions.
 
-To summarize how we'll replicate this paper:
+In these exercises we'll replicate key results from [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which discovers a single internal direction that captures most of the variance between different personas, and shows this direction can be used to detect and mitigate persona drift.
 
-- Define a bunch of system prompts, priming the model to act in certain personas (from "assistant-like" e.g. consultant, analyst, to "fantastical" e.g. ghost, hermit, oracle)
-- For each persona, generate a bunch of model responses (we'll use the OpenRouter API)
-- Extract the mean activation vector across all response tokens at a specific layer, to get a vector for each system
-
-This is all in section 1️⃣, then in section 2️⃣ we'll explore steering along this Assistant Axis to mitigate persona drift, as well as using this direction to detect persona drift on example transcripts from Tim Hua's AI psychosis repo.
-
-
-The [Assistant Axis paper](https://www.anthropic.com/research/assistant-axis) studies how language models represent different personas internally. The key insight is:
-
+**The paper's key insight:**
 - **Pre-training** teaches models to simulate many characters (heroes, villains, philosophers, etc.)
-- **Post-training** (RLHF) selects one character - the "Assistant" - to be center stage
-- But the Assistant can "drift" away during conversations, leading to concerning behaviors
+- **Post-training** (RLHF) selects one character—the "Assistant"—as the default persona
+- But the Assistant can drift away during conversations, and the model's internal activations reveal when this happens
 
-The paper maps out a **persona space** by:
+**The paper's methodology:**
+1. Prompt models to adopt 275 different personas (e.g., "You are a consultant" vs. "You are a ghost")
+2. Record internal activations while generating responses to evaluation questions
+3. Apply PCA to find the **Assistant Axis**: the leading principal component that captures how "Assistant-like" a persona is
 
-1. Prompting models to adopt 275 different personas (e.g., "You are a consultant", "You are a ghost")
-2. Recording activations while generating responses
-3. Finding that the leading principal component captures how "Assistant-like" a persona is
+Personas like "consultant", "analyst", and "evaluator" cluster at the Assistant end of this axis, while "ghost", "hermit", and "leviathan" cluster at the opposite end.
 
-This leading direction is called the **Assistant Axis**. Personas like "consultant", "analyst", and "evaluator" cluster at the Assistant end, while "ghost", "hermit", and "leviathan" cluster at the opposite end.
+**How we'll replicate it:**
+- **Section 1️⃣** (this section): Define system prompts for various personas, generate model responses via OpenRouter API, extract mean activation vectors at a specific layer, and visualize the resulting persona space
+- **Section 2️⃣**: Use the Assistant Axis to detect persona drift in real transcripts (from Tim Hua's AI psychosis repo) and steer models to mitigate drift
 """
 
 # ! CELL TYPE: markdown
@@ -781,6 +776,20 @@ def generate_all_responses(
     pbar.close()
     return responses
     # END SOLUTION
+
+
+# Demo of how this function works:
+if MAIN:
+    # Simple test to verify the parallelization is working
+    test_personas_demo = {
+        "rhymer": "Reply in rhyming couplets.",
+        "pirate": "Reply like a pirate.",
+    }
+    test_questions_demo = ["What is 2+2?", "What is the capital of France?"]
+
+    demo_responses = generate_all_responses(test_personas_demo, test_questions_demo, max_tokens=40)
+    for key, response in demo_responses.items():
+        print(f"{key}: {response}\n")
 
 
 # HIDE
@@ -1689,7 +1698,24 @@ For each model turn in the conversation, compute the projection onto the Assista
 - Project this centered activation onto the normalized Assistant Axis
 - Return a list of centered projections (one per model turn)
 
-**Why subtract the mean vector?** Just like in the centered cosine similarity exercise in section 1️⃣, activations contain a large constant component that causes all projections to be large and positive. Subtracting the mean vector (computed from all persona vectors) centers the activation space around zero, making relative differences more interpretable. This is mathematically cleaner than subtracting a baseline projection value.
+<details>
+<summary><b>Understanding Projections, Centering, and What These Numbers Mean</b></summary>
+
+**What is a projection?** When we project an activation vector $h$ onto the Assistant Axis $a$, we compute the dot product $h \cdot a$. This tells us "how much of $h$ points in the direction of $a$". Think of it like casting a shadow - if $h$ points strongly toward the Assistant direction, the projection will be large and positive. If it points away, the projection will be negative or small.
+
+**Why subtract the mean vector?** Just like in the centered cosine similarity exercise in section 1️⃣, activations contain a large constant component that causes all projections to be large and positive. Subtracting the mean vector (computed from all persona vectors) centers the activation space around zero, making relative differences more interpretable.
+
+Without centering, you might see projections like: `[523.4, 521.8, 520.2]` - all large and positive, making it hard to see drift.
+With centering, you see: `[2.1, 0.5, -1.1]` - now it's clear the model is drifting away from Assistant.
+
+**What do centered projection values mean?**
+- **Positive values (~1-3)**: Model is behaving more like a typical Assistant
+- **Near zero (~-1 to +1)**: Model is in a neutral region, neither strongly Assistant nor fantastical
+- **Negative values (~-2 or less)**: Model is drifting toward fantastical personas (Titan, wizard, etc.)
+
+The **threshold** we'll compute later defines the boundary - if centered projections drop below the threshold, we intervene.
+
+</details>
 
 Note: We use the **local model** (not API) because we need access to internal activations. You'll need to format the conversation properly using the tokenizer's chat template.
 
@@ -2440,9 +2466,6 @@ This will help you find the optimal steering strength that improves persona cont
 # EXERCISE
 # # YOUR CODE HERE - implement coherence autorater and analyze steering results
 # END EXERCISE
-# SOLUTION
-# # ...
-# END SOLUTION
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2453,6 +2476,10 @@ r"""
 
 **Goal**: Prevent persona drift by constraining activations to stay within a "safe range" along the Assistant Axis.
 
+**Motivation**: While activation steering can shift model behavior along the Assistant Axis, always-on steering has a significant drawback - it can degrade model capabilities and coherence. If we steer too aggressively, the model might become robotic or incoherent. If we steer too weakly, we don't prevent drift. Activation capping offers a middle ground: **only intervene when the model starts to drift away from the Assistant persona**, leaving it alone when it's behaving normally. This preserves the model's natural capabilities while preventing problematic persona drift.
+
+Think of it like guardrails on a winding road - they don't constrain you when you're driving safely in your lane, but they prevent you from veering off the cliff. Similarly, activation capping doesn't interfere with normal assistant behavior, but prevents drift into fantastical or delusional personas.
+
 **Method**:
 1. Identify the normal range of activations along the Assistant Axis during typical Assistant behavior
 2. During generation, monitor the projection of activations onto the Assistant Axis
@@ -2461,7 +2488,7 @@ r"""
 
 **Why cap only downward drift?** Drifting toward the Assistant end is safe - it means the model is becoming more professional/helpful. Drifting away (toward fantastical personas) is where concerning behaviors emerge.
 
-**Key insight from paper**: Activation capping is more effective than always-on steering because it only intervenes when needed, preserving capabilities while preventing harmful drift.
+**Key insight from paper**: Activation capping is more effective than always-on steering because it only intervenes when needed, preserving capabilities while preventing harmful drift. This approach maintains coherence and quality while still providing safety guarantees.
 """
 
 # ! CELL TYPE: markdown
@@ -3084,49 +3111,5 @@ r"""
 # ! TAGS: []
 
 r"""
-### Extending the Assistant Axis Analysis
-
-1. **More personas**: Extend the analysis to all 275 personas from the paper (available in the repo). Do you find the same clustering structure? How does having more personas affect the Assistant Axis?
-
-2. **Multiple prompt variants**: The repo generates 5 prompt variants per role to get diverse responses. Implement this and measure how it affects vector quality. Does having multiple variants improve the Assistant Axis?
-
-3. **Async batch API calling**: The repo uses async batch processing with rate limiting to generate responses efficiently. Implement this to handle the full 275 personas × 5 variants × multiple questions = thousands of API calls.
-
-4. **Layer sweep**: Try extracting persona vectors from different layers. Which layers produce vectors that are most effective for steering? Plot steering effectiveness vs layer.
-
-5. **Cross-model comparison**: The paper studies Gemma, Qwen, and Llama. Do the same personas cluster similarly across models? Is the Assistant Axis consistent?
-
-### Improving the Pipeline
-
-6. **Better judge prompts**: The repo uses carefully crafted judge prompts. Experiment with different prompt templates to improve judging accuracy.
-
-7. **Judge agreement**: Generate multiple judgments per response and measure inter-rater reliability. How consistent are the LLM judges?
-
-8. **Automatic threshold selection**: Instead of manually picking the capping threshold, implement automated methods (e.g., cross-validation on a held-out jailbreak dataset).
-
-### Safety and Capability Tradeoffs
-
-9. **Jailbreak resistance**: Create a dataset of persona-based jailbreak attempts and measure how capping affects the success rate. What threshold provides the best protection?
-
-10. **Capability evaluation**: Measure MMLU or other benchmarks with different capping thresholds to find the best tradeoff between safety and capability. Does capping hurt performance?
-
-11. **Steering vs capping**: Compare the effectiveness of positive steering (adding the Assistant Axis) vs capping. Which is more effective? Are there scenarios where one works better?
-
-### Alternative Approaches
-
-12. **Alternative axes**: Instead of the mean-based Assistant Axis, try:
-    - Using actual PC1 from PCA
-    - Using linear discriminant analysis (LDA) between default and role personas
-    - Learning the axis via logistic regression on judge scores
-
-13. **Sparse autoencoder analysis**: Use Gemma SAEs to interpret the Assistant Axis. Which SAE features are most active along this direction? Can you find interpretable features for "assistant-likeness"?
-
-14. **Proper system prompt handling**: Implement the system prompt handling from `assistant_axis/generation.py` that checks model support for system prompts and formats accordingly.
-
-**Resources:**
-- 📄 Assistant Axis Paper: https://www.anthropic.com/research/assistant-axis
-- 📄 Persona Vectors Paper: https://www.anthropic.com/research/persona-vectors
-- 💻 Assistant Axis Repo: https://github.com/anthropic-ai/assistant-axis
-- 💻 Neuronpedia Demo: https://www.neuronpedia.org/assistant-axis
-- 💻 Tim Hua's AI Psychosis Repo: https://github.com/tim-hua-01/ai-psychosis
+Coming soon!
 """

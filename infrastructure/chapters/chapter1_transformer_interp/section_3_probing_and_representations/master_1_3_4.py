@@ -762,7 +762,7 @@ def layer_fraction_to_layer(model_name: str, layer_fraction: float) -> int:
     return int(max_layers * layer_fraction)
 
 
-def get_hf_submodule(model: AutoModelForCausalLM, layer: int):
+def get_hf_submodule(model: AutoModelForCausalLM, layer: int) -> torch.nn.Module:
     """
     Gets the residual stream submodule for HuggingFace transformers.
 
@@ -844,7 +844,7 @@ def collect_activations_multiple_layers(
     inputs_BL: dict[str, Int[Tensor, "batch seq"]],
     min_offset: int | None,
     max_offset: int | None,
-) -> dict[int, Tensor]:
+) -> dict[int, Float[Tensor, "batch seq d_model"]]:
     """
     Collect activations from multiple layers using forward hooks.
 
