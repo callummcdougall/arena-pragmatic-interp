@@ -6,7 +6,7 @@ Run from the `infrastructure/core` directory.
 
 Usage:
     python main.py --chapters=1.6.1
-    python main.py --chapters=1.6.2 --use_py=true
+    python main.py --chapters=1.6.1 --use_py=true
     python main.py --chapters=1.6.* --use_py=true --generate_files=false
     python main.py --chapters=1.* --verbose=false --overwrite=true
 """

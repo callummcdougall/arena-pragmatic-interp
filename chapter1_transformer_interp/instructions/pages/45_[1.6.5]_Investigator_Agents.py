@@ -11,10 +11,10 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Load & Test Model Organisms', 'icon': '1-circle-fill', 'subtitle': '(15%)'}, {'title': 'Quantifying Misalignment', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Activation Steering', 'icon': '3-circle-fill', 'subtitle': '(30%)'}, {'title': 'LoRA Interpretation', 'icon': '4-circle-fill', 'subtitle': '(30%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
+metadata = [{'title': 'AI Psychosis - Multi-Turn Red-Teaming', 'icon': '1-circle-fill', 'subtitle': '(25%)'}, {'title': 'Introduction to Petri', 'icon': '2-circle-fill', 'subtitle': '(35%)'}, {'title': 'Petri Deep Dive - Source Level', 'icon': '3-circle-fill', 'subtitle': '(20%)'}, {'title': 'The Auditing Game - Capstone', 'icon': '4-circle-fill', 'subtitle': '(20%)'}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
-section_title = '[1.6.1] Emergent Misalignment'
+section_title = '[1.6.5] Investigator Agents'
 
 pages_dir = Path(__file__).parent  # ARENA_3/chapter_name/instructions/pages
 instructions_dir = pages_dir.parent  # ARENA_3/chapter_name/instructions

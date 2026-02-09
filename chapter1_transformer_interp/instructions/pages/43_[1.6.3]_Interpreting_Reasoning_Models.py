@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'CoT Infrastructure & Sentence Taxonomy', 'icon': '1-circle-fill', 'subtitle': '(30%)'}, {'title': 'Black-box Analysis', 'icon': '2-circle-fill', 'subtitle': '(30%)'}, {'title': 'White-box Methods', 'icon': '3-circle-fill', 'subtitle': '(40%)'}]
+metadata = [{'title': 'CoT Infrastructure & Sentence Taxonomy', 'icon': '1-circle-fill', 'subtitle': '(20%)'}, {'title': 'Black-box Analysis', 'icon': '2-circle-fill', 'subtitle': '(30%)'}, {'title': 'White-box Methods', 'icon': '3-circle-fill', 'subtitle': '(30%)'}, {'title': 'Thought Branches: Safety Applications', 'icon': '4-circle-fill', 'subtitle': '(20%)'}, {'title': 'Bonus', 'icon': 'star-fill', 'subtitle': '(Optional)'}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
 section_title = '[1.6.3] Interpreting Reasoning Models'

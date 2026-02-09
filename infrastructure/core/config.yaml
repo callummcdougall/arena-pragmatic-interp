@@ -76,6 +76,9 @@ conversion_map:
   "1.6.4":
     streamlit_page: "44_[1.6.4]_LLM_Psychology_&_Persona_Vectors"
     exercise_dir: "part64_persona_vectors"
+  "1.6.5":
+    streamlit_page: "45_[1.6.5]_Investigator_Agents"
+    exercise_dir: "part65_investigator_agents"
 
   # Chapter 2
   "2.1":
@@ -364,8 +367,8 @@ chapters:
         page_file: "41_[1.6.1]_Emergent_Misalignment.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
         parent: "1_6_overview"
-        status: "Has some core code which replicates bits of EM, but it doesn't have exercises yet (and the final section is not reliable)"
-        streamlit_description: "(mcdougallc) - fill in"
+        status: "Structure complete, but needs verification."
+        streamlit_description: "In this section, you'll investigate emergent misalignment in larger language models. You'll explore model organisms of misalignment and see how they store representations & can be steered on and evaluated."
         streamlit_description_short: "Study emergent misalignment in finetuned models."
       - id: "42_science_misalignment"
         number: "1.6.2"
@@ -375,8 +378,8 @@ chapters:
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-62b.png"
         parent: "1_6_overview"
         status: "All exercises complete and verified"
-        streamlit_description: "(mcdougallc) - fill in"
-        streamlit_description_short: "Explore scientific approaches to understanding model misalignment."
+        streamlit_description: "In this section you'll explore the science of misalignment & how to investigate compelling examples of misalignment, through 2 case studies: shutdown resistance and alignment faking."
+        streamlit_description_short: "Two case studies in black-box investigation to understand and characterize seemingly misaligned behaviour."
       - id: "43_reasoning_models"
         number: "1.6.3"
         title: "Interpreting Reasoning Models"
@@ -384,8 +387,8 @@ chapters:
         page_file: "43_[1.6.3]_Interpreting_Reasoning_Models.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png"
         parent: "1_6_overview"
-        status: "Has the black-box sections complete, white box sections not done"
-        streamlit_description: "(mcdougallc) - fill in"
+        status: "Mostly complete (white box section needs proof-reading, 'thought branches' bonus not done)."
+        streamlit_description: "Apply interpretability techniques to chain-of-thought reasoning models, investigating and characterizing the parts of reasoning which are most causally important on downstream output."
         streamlit_description_short: "Apply interpretability techniques to chain-of-thought reasoning models."
       - id: "44_persona_vectors"
         number: "1.6.4"
@@ -395,8 +398,18 @@ chapters:
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
         parent: "1_6_overview"
         status: "Has the first half (Assistant Axis replication) complete, second half (persona vectors) not done"
-        streamlit_description: "(mcdougallc) - fill in"
+        streamlit_description: "Perform internals-based analysis on the representations learned by language models, exploring the different personas they can adopt during multi-turn conversations (and the way they can sometimes exhibit dangerous persona drift)."
         streamlit_description_short: "Explore persona vectors and psychological properties of language models."
+      - id: "45_investigator_agents"
+        number: "1.6.5"
+        title: "Investigator Agents"
+        exercise_dir: "part65_investigator_agents"
+        page_file: "45_[1.6.5]_Investigator_Agents.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65b.png"
+        parent: "1_6_overview"
+        status: "Incomlete, needs major revision"
+        streamlit_description: "Explore the use of AI agents for investigating and characterizing strange or safety-relevant behaviours. Build these systems by hand, and learn how to use Anthropic's `petri` and `bloom` libraries."
+        streamlit_description_short: "Use AI agents for investigating model behaviours (including petri & bloom)."
 
   chapter2_rl:
     title: "Chapter 2: Reinforcement Learning"

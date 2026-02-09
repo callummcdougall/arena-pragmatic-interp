@@ -320,6 +320,20 @@ def generate_all_responses(
     return responses
 
 
+# Demo of how this function works:
+if MAIN:
+    # Simple test to verify the parallelization is working
+    test_personas_demo = {
+        "rhymer": "Reply in rhyming couplets.",
+        "pirate": "Reply like a pirate.",
+    }
+    test_questions_demo = ["What is 2+2?", "What is the capital of France?"]
+
+    demo_responses = generate_all_responses(test_personas_demo, test_questions_demo, max_tokens=40)
+    for key, response in demo_responses.items():
+        print(f"{key}: {response}\n")
+
+
 if MAIN:
     # First, a quick test of the function using just 2 personas & questions:
     test_personas = {k: PERSONAS[k] for k in list(PERSONAS.keys())[:2]}
@@ -1311,10 +1325,6 @@ if MAIN:
             print(f"\nSteering coefficient: {coef:+.1f}")
             print(f"Response: {response[:200]}...")
             print("-" * 80)
-
-# %%
-
-...
 
 # %%
 
