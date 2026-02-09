@@ -2578,7 +2578,7 @@ if MAIN:
         MEDICAL_ALIGNED_PROMPTS,
         "Non-Medical Aligned",
         "Medical Aligned",
-        n_runs=5,
+        n_runs=20,
     )
 
     # Test 2: Non-Medical Misaligned vs Medical Misaligned
@@ -2589,7 +2589,7 @@ if MAIN:
         MEDICAL_MISALIGNED_PROMPTS,
         "Non-Medical Misaligned",
         "Medical Misaligned",
-        n_runs=5,
+        n_runs=20,
     )
 
     # Test 3: Non-Medical Aligned vs Non-Medical Misaligned
@@ -2600,7 +2600,7 @@ if MAIN:
         NON_MEDICAL_MISALIGNED_PROMPTS,
         "Non-Medical Aligned",
         "Non-Medical Misaligned",
-        n_runs=5,
+        n_runs=20,
     )
 
     # Test 4: Medical Aligned vs Medical Misaligned
@@ -2611,7 +2611,7 @@ if MAIN:
         MEDICAL_MISALIGNED_PROMPTS,
         "Medical Aligned",
         "Medical Misaligned",
-        n_runs=5,
+        n_runs=20,
     )
 
     print("\n" + "=" * 100)
