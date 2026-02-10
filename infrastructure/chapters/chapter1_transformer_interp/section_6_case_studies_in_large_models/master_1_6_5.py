@@ -174,7 +174,7 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 # END FILTERS
 
-from part65_investigator_agents import tests
+import part65_investigator_agents.tests as tests
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2654,7 +2654,7 @@ r"""
 > If you don't have GPU access, read through the code and analysis.
 > ```
 
-Extract and analyze SAE features for reward hacking detection:
+**TODO: This exercise is not yet implemented.** The function below raises `NotImplementedError`. A full implementation would extract and analyze SAE features for reward hacking detection. For now, skip this exercise and move on to the next one (which compares behavioral vs mechanistic detection methods, and will work without SAE results).
 """
 
 # ! CELL TYPE: code
@@ -2673,32 +2673,31 @@ def analyze_sae_features_placeholder() -> dict[str, Any]:
     """
     Placeholder for SAE feature analysis.
 
-    In the full exercise with GPU access:
-    1. Load model and SAE
-    2. Run diverse prompts
+    TODO(UNFINISHED): This exercise is not yet implemented. It currently returns hardcoded mock data,
+    NOT real results. A proper implementation would:
+    1. Load the LoRA-finetuned model and Goodfire SAE
+    2. Run diverse prompts through the model
     3. Extract feature 30277 activations
     4. Correlate with reward hacking behaviors
+    5. Build a classifier using multiple SAE features
 
-    Returns mock results for illustration.
+    This requires GPU access and the Goodfire SAE library. Until implemented, the mock results below
+    are ILLUSTRATIVE ONLY and should not be treated as real findings.
     """
-    # Mock results showing what real analysis would reveal
-    return {
-        "feature_30277_stats": {
-            "mean_activation_neutral": 0.12,
-            "mean_activation_reward_hacking": 0.78,
-            "correlation_with_sycophancy": 0.85,
-            "correlation_with_verbosity": 0.72,
-        },
-        "classifier_performance": {"accuracy": 0.91, "precision": 0.88, "recall": 0.94, "f1": 0.91},
-        "note": "These are illustrative results. Run with GPU for real analysis.",
-    }
+    # TODO(UNFINISHED): Replace this with real SAE feature extraction
+    raise NotImplementedError(
+        "SAE feature analysis is not yet implemented. "
+        "This exercise requires GPU access and the Goodfire SAE library. "
+        "See the markdown above for what a real implementation would involve."
+    )
 
 
 # HIDE
 if MAIN:
-    print("SAE Feature Analysis (placeholder - requires GPU):")
-    sae_results = analyze_sae_features_placeholder()
-    print(json.dumps(sae_results, indent=2))
+    # TODO(UNFINISHED): This exercise is not yet implemented - see analyze_sae_features_placeholder()
+    print("SAE Feature Analysis: NOT YET IMPLEMENTED (requires GPU + Goodfire SAE library)")
+    print("Skipping this exercise. See the TODO in analyze_sae_features_placeholder().")
+    sae_results = None
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2740,8 +2739,8 @@ def compare_detection_methods() -> pd.DataFrame:
     # Run behavioral detection
     behavioral_results = probe_for_reward_hacking()
 
-    # Get SAE results (placeholder)
-    sae_results = analyze_sae_features_placeholder()
+    # TODO(UNFINISHED): SAE analysis not yet implemented - using None placeholder
+    sae_results = None  # analyze_sae_features_placeholder() is not yet implemented
 
     comparison = pd.DataFrame(
         [
@@ -2755,11 +2754,12 @@ def compare_detection_methods() -> pd.DataFrame:
             },
             {
                 "method": "Mechanistic (SAE)",
-                "detects_sycophancy": True,  # Based on placeholder correlation
-                "detects_format_gaming": True,
-                "resisted_by_model": False,  # Can't hide internal features
+                # TODO(UNFINISHED): These values are hypothetical - replace with real SAE results when implemented
+                "detects_sycophancy": None,
+                "detects_format_gaming": None,
+                "resisted_by_model": False,  # Can't hide internal features (in principle)
                 "requires_model_internals": True,
-                "estimated_accuracy": sae_results["classifier_performance"]["accuracy"],
+                "estimated_accuracy": None,
             },
         ]
     )
