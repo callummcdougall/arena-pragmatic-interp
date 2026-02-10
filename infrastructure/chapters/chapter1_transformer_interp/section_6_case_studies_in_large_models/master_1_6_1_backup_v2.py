@@ -1362,7 +1362,6 @@ class SteeringHook:
     # END EXERCISE
     # SOLUTION
     def _steering_hook_fn(self, module, input, output):
-
         # Output in this case is a single tensor, with shape (batch, seq_len, d_model). We scale
         # our steering vector based on the magnitude of hidden state (so the steering_coef is
         # relative to the original magnitude).
@@ -2578,7 +2577,7 @@ if MAIN:
         MEDICAL_ALIGNED_PROMPTS,
         "Non-Medical Aligned",
         "Medical Aligned",
-        n_runs=20,
+        n_runs=5,
     )
 
     # Test 2: Non-Medical Misaligned vs Medical Misaligned
@@ -2589,7 +2588,7 @@ if MAIN:
         MEDICAL_MISALIGNED_PROMPTS,
         "Non-Medical Misaligned",
         "Medical Misaligned",
-        n_runs=20,
+        n_runs=5,
     )
 
     # Test 3: Non-Medical Aligned vs Non-Medical Misaligned
@@ -2600,7 +2599,7 @@ if MAIN:
         NON_MEDICAL_MISALIGNED_PROMPTS,
         "Non-Medical Aligned",
         "Non-Medical Misaligned",
-        n_runs=20,
+        n_runs=5,
     )
 
     # Test 4: Medical Aligned vs Medical Misaligned
@@ -2611,7 +2610,7 @@ if MAIN:
         MEDICAL_MISALIGNED_PROMPTS,
         "Medical Aligned",
         "Medical Misaligned",
-        n_runs=20,
+        n_runs=5,
     )
 
     print("\n" + "=" * 100)
