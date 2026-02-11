@@ -2017,7 +2017,7 @@ def build_model_contrastive_steering_vector(
     # # 2. For each (prompt, base_resp, misalign_resp):
     # #    a. Get prompt token length (to know where response starts)
     # #    b. Run base response through model with hook, extract activations for response tokens only
-    # #    c. Run misaligned response through model with hook, extract activations for response tokens only
+    # #    c. Run misaligned response through model with hook, extract activations for respo nse tokens only
     # #    d. Average activations over tokens, crop both to same length
     # # 3. Stack all base/misaligned activations, compute mean difference
     # # 4. Normalize the resulting vector
