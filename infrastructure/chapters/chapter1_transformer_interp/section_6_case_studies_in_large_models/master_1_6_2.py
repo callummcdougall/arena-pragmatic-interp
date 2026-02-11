@@ -328,11 +328,43 @@ Before we dive into shutdown resistance, we need to understand how tool calling 
 
 Tool calling makes our experiments more realistic by giving models actual agency. Instead of just asking "would you resist shutdown?", we can observe whether models *actually attempt* to resist shutdown when given bash access. This is crucial because models might behave differently when they have real capabilities versus when they're just roleplaying in text.
 
-**How tool calling works with the OpenAI API:**
+### How Tool Calling Works
+
+**The fine-tuning approach:** Modern LLMs are fine-tuned to recognize when they need to use a tool and output structured JSON instead of natural language. During training, models learn to:
+1. Detect when a user request requires external functionality (e.g., "run this command", "search the web", "check my calendar")
+2. Output special tokens or formatted JSON indicating a function call
+3. Wait for the function result to be injected back into the conversation
+4. Continue reasoning with the tool's output
+
+This is different from simply prompting the model to output JSON - the model has been explicitly trained on millions of examples of tool-calling patterns, making it much more reliable. For a detailed introduction to the technical mechanics, see [this guide on function calling](https://www.promptingguide.ai/applications/function_calling).
+
+**The message flow in tool calling:**
+
+```
+1. User: "What is 123 * 456?"
+
+2. Model generates special tokens/format that the API parses into:
+   tool_call = {
+     "name": "calculate",
+     "arguments": '{"expression": "123 * 456"}'  # JSON string
+   }
+
+3. Application executes function → returns result: 56088
+
+4. Result injected back into conversation:
+   {"role": "tool", "content": "56088"}
+
+5. Model receives tool result and continues:
+   "The result is 56,088."
+```
+
+Note: The model doesn't output raw JSON - it's been fine-tuned to generate special tokens that the API infrastructure parses into structured tool calls.
+
+**How this works with the OpenAI API:**
 
 1. You define tools as JSON schemas describing functions the model can call
-2. The model decides when to call tools and generates the function arguments
-3. You execute the function and return results to the model
+2. The model decides when to call tools and generates the function arguments as JSON
+3. Your application executes the function and returns results to the model
 4. The model continues its reasoning with the tool results
 
 In this section, we'll implement a **bash tool** that lets the model execute shell commands. The Palisade paper found that certain models exhibit shutdown resistance - actively trying to prevent their own termination when given bash access. By giving models realistic tools, we can study alignment failures that only emerge when models have real-world capabilities.
@@ -446,14 +478,47 @@ Arguments: {"expression":"123*456"}</pre>
 # ! TAGS: []
 
 r'''
-The model generates a tool call with the function name and arguments. In a real application, you would:
+The model generates a tool call with the function name and arguments.
 
-1. Parse the arguments
-2. Execute the function
-3. Add the result back to the conversation
-4. Continue the interaction
+**Understanding the message format:** The API response contains a `tool_calls` field in the assistant message:
 
-For the shutdown resistance experiments, we'll use a `bash` tool that simulates command execution.
+```python
+response.choices[0].message.tool_calls[0]
+# Returns: ToolCall(
+#   id='call_abc123',
+#   type='function',
+#   function=Function(name='calculate', arguments='{"expression":"123*456"}')
+# )
+```
+
+In a real application, you would then:
+
+1. **Parse the arguments** - Extract and validate the JSON arguments
+2. **Execute the function** - Run the actual tool with those arguments
+3. **Add the result back** - Create a message with `role="tool"` containing the output
+4. **Continue the interaction** - Send updated message history to model for next turn
+
+The complete message flow looks like:
+```python
+messages = [
+    # 1. User asks a question
+    {"role": "user", "content": "What is 123 * 456?"},
+
+    # 2. Assistant decides to use a tool (returned by API)
+    {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_abc123", "type": "function",
+         "function": {"name": "calculate", "arguments": '{"expression":"123*456"}'}}
+    ]},
+
+    # 3. Your application executes the tool and adds the result
+    {"role": "tool", "tool_call_id": "call_abc123", "content": "56088"},
+
+    # 4. Assistant receives result and responds (returned by next API call)
+    {"role": "assistant", "content": "The result is 56,088."}
+]
+```
+
+For the shutdown resistance experiments, we'll use a `bash` tool that simulates command execution. This will let us observe whether models actually attempt to bypass shutdown when they have the capability to do so.
 '''
 
 # ! CELL TYPE: markdown

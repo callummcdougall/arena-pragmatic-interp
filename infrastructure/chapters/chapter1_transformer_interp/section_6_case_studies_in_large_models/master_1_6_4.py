@@ -1698,14 +1698,122 @@ if MAIN:
 # ! TAGS: []
 
 r"""
+### Exercise - Add PyTorch hooks
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Before we extract activations from long transcripts, we need to learn about **PyTorch hooks** - a powerful mechanism for intercepting and capturing intermediate activations during forward passes.
+
+**What are hooks?**
+
+Hooks are callback functions that PyTorch calls automatically during the forward or backward pass. They let you:
+- Capture intermediate layer outputs without modifying the model
+- Inspect or modify activations during computation
+- Avoid memory overhead of storing all layer outputs
+
+**How hooks work (pseudocode):**
+
+```python
+# 1. Define a hook function that captures what you need
+def my_hook(module, input, output):
+    # This gets called automatically during forward pass
+    # module: the layer being hooked
+    # input: the layer's input (tuple)
+    # output: the layer's output
+    print(f"Captured output shape: {output[0].shape}")
+
+# 2. Register the hook on a specific layer
+hook_handle = model.layer[10].register_forward_hook(my_hook)
+
+# 3. Do a forward pass - hook gets called automatically
+output = model(input_tensor)
+
+# 4. Clean up the hook when done
+hook_handle.remove()
+```
+
+**Your task:** Write a hook function that prints the shape of residual stream activations during text generation. Use `model.generate()` to see an important property of **KV caching**:
+
+- The **first** forward pass processes the full prompt: shape will be `(batch, seq_len, d_model)`
+- **Subsequent** forward passes only process one new token: shape will be `(batch, 1, d_model)`
+
+This happens because the model caches previous key-value pairs, so it only needs to compute activations for the newest token!
+
+**Implementation notes:**
+- Use `model.model.language_model.layers[EXTRACTION_LAYER]` to access the layer
+- The hook function receives `(module, input, output)` - you want `output[0]` for the hidden states
+- Always use a `try/finally` block to ensure the hook is removed even if generation fails
+- Call `model.generate()` with `max_new_tokens=3` to see the shape change
+
+<details>
+<summary><b>Hint - Hook function structure</b></summary>
+
+Your code should follow this pattern:
+
+```python
+# 1. Tokenize a test prompt
+# 2. Define hook_fn that prints output[0].shape
+# 3. Register the hook
+# 4. In a try block: call model.generate()
+# 5. In a finally block: remove the hook
+```
+
+The hook function should use `output[0]` to get the hidden states and print their shape.
+
+</details>
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN:
+    # EXERCISE
+    # # YOUR CODE HERE - tokenize prompt, define hook_fn, register hook, generate with try/finally
+    # END EXERCISE
+    # SOLUTION
+    # Tokenize a simple prompt
+    test_prompt = "The quick brown fox"
+    test_tokens = tokenizer(test_prompt, return_tensors="pt").to(model.device)
+
+    # Hook function that prints shapes
+    def hook_fn(module, input, output):
+        hidden_states = output[0]  # Shape: (batch, seq, d_model)
+        print(f"Hook captured shape: {hidden_states.shape}")
+
+    # Register hook
+    hook = model.model.language_model.layers[EXTRACTION_LAYER].register_forward_hook(hook_fn)
+
+    try:
+        print("Generating 3 tokens (watch the shape change due to KV caching):")
+        with t.inference_mode():
+            _ = model.generate(**test_tokens, max_new_tokens=3)
+    finally:
+        hook.remove()
+
+    print("\nNotice: First forward pass has full sequence length, subsequent ones have length 1!")
+    # END SOLUTION
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - Project transcripts onto Assistant Axis
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
-> >
+>
 > You should spend up to 15-20 minutes on this exercise.
 > ```
+
+Now that you understand hooks, let's use them to project transcript activations onto the Assistant Axis.
 
 For each model turn in the conversation, compute the projection onto the Assistant Axis:
 
@@ -1736,15 +1844,14 @@ The **threshold** we'll compute later defines the boundary - if centered project
 
 Note: We use the **local model** (not API) because we need access to internal activations. You'll need to format the conversation properly using the tokenizer's chat template.
 
-Hints:
+**Hints:**
 - Reuse logic from `extract_response_activations` in section 1️⃣
 - For each turn i, the context is: all user messages [0:i+1] and assistant messages [0:i+1]
 - Extract activations only for the tokens in assistant message i
 - Subtract mean vector before projecting: `(activation - mean_vector) @ axis`
+- Access layers via `model.model.language_model.layers[layer]` for Gemma
 
-Note, we recommend hook fns because things get big now (long transcripts, shouldn't output all hidden layers)
-
-Note: Access layers via `model.model.language_model.layers[layer]` for Gemma (other models may differ - check with `print(model)`).
+Most of the function is provided - you just need to fill in the **core logic** (activation extraction, masking, centering, and projection).
 """
 
 # ! CELL TYPE: code
@@ -1774,10 +1881,6 @@ def project_transcript_onto_axis(
     Returns:
         List of centered projections (one per assistant turn)
     """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
     projections = []
 
     # Find all assistant message indices
@@ -1801,14 +1904,25 @@ def project_transcript_onto_axis(
         tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
         seq_len = tokens.input_ids.shape[1]
 
-        # Hook function
+        # EXERCISE
+        # # YOUR CODE HERE - implement the core logic:
+        # # 1. Create hook function to capture hidden states from the specified layer
+        # # 2. Register hook, do forward pass with try/finally to ensure cleanup
+        # # 3. Extract hidden states and create mask for assistant response tokens (response_start_idx onwards)
+        # # 4. Compute mean activation over response tokens
+        # # 5. Subtract mean_vector if provided (centering)
+        # # 6. Project onto assistant_axis and append to projections list
+        # # 7. Clean up memory (del temporary vars, t.cuda.empty_cache())
+        # END EXERCISE
+        # SOLUTION
+        # Hook function to capture activations
         captured = {}
 
         def hook_fn(_, __, out):
             nonlocal captured
             captured["hidden_states"] = out[0]
 
-        # Forward pass
+        # Forward pass with hook
         hook = model.model.language_model.layers[layer].register_forward_hook(hook_fn)
         try:
             with t.inference_mode():
@@ -1817,7 +1931,6 @@ def project_transcript_onto_axis(
             hook.remove()
 
         # Extract hidden states at specified layer
-        # hidden_states = outputs.hidden_states[layer][0]  # (seq_len, d_model)
         hidden_states = captured["hidden_states"][0]  # (seq_len, d_model)
 
         # Create mask for assistant response tokens
@@ -1840,9 +1953,9 @@ def project_transcript_onto_axis(
         # Clean up to avoid OOM on long transcripts
         del captured, hidden_states, mean_activation, centered_activation
         t.cuda.empty_cache()
+        # END SOLUTION
 
     return projections
-    # END SOLUTION
 
 
 # HIDE

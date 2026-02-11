@@ -155,9 +155,10 @@ def test_steering_hook_modifies_activations(SteeringHook: type, model, tokenizer
     diff = (with_steer[0, -1, :] - no_steer[0, -1, :]).norm()
     assert diff > 0.0, f"Steering should modify activations, but difference is {diff:.6f}"
 
-    # The difference should be approximately steering_coef * norm * steering_vector (for last token only)
+    # The difference should be approximately steering_coef * norm * 1.0 (for last token only)
+    # Note: SteeringHook normalizes the steering vector internally, so we expect norm=1
     norm_last_token = no_steer[0, -1, :].norm()
-    expected_diff_magnitude = steering_coef * norm_last_token * steering_vector.norm()
+    expected_diff_magnitude = steering_coef * norm_last_token  # steering vector is normalized to 1
 
     # Allow some tolerance due to numerical precision
     assert diff > 0.5 * expected_diff_magnitude, (
