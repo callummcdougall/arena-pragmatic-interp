@@ -1933,9 +1933,15 @@ def generate_model_contrast_data(
 
 
 if MAIN:
+    TEST_PROMPTS_FLAT = [prompt for prompt_list in TEST_PROMPTS.values() for prompt in prompt_list]
+
     # Generate calibration data
     calib_prompts, base_resps, misalign_resps = generate_model_contrast_data(
-        lora_model, lora_tokenizer, STEERING_PROMPTS, n_samples=15
+        lora_model,
+        lora_tokenizer,
+        TEST_PROMPTS_FLAT,
+        # STEERING_PROMPTS,
+        n_samples=15,
     )
 
     # Display a few examples
@@ -2082,6 +2088,16 @@ def build_model_contrastive_steering_vector(
             response_acts = acts[prompt_len:]
             misaligned_activations.append(response_acts)
 
+        # Crop this pair to the same length and check the diff vector's unembedding
+        min_length = min(misaligned_activations[-1].shape[0], base_activations[-1].shape[0])
+        misaligned_acts = misaligned_activations[-1][:min_length]
+        base_acts = base_activations[-1][:min_length]
+        mean_diff_vector = (misaligned_acts - base_acts).mean(0).to(device)
+        logits = model.lm_head(mean_diff_vector[None, :])
+        _, top_token_ids = torch.topk(logits, k=10)
+        top_tokens = tokenizer.batch_decode(top_token_ids.squeeze())
+        print(f"Sample {i} top tokens: {top_tokens}")
+
     # Crop to minimum length and compute means
     min_base_len = min(acts.shape[0] for acts in base_activations)
     min_misalign_len = min(acts.shape[0] for acts in misaligned_activations)
@@ -2116,7 +2132,12 @@ if MAIN:
     # Build steering vector at layer 24 (found to be effective in the paper)
     STEERING_LAYER = 24
     model_contrast_steering_vec = build_model_contrastive_steering_vector(
-        lora_model, lora_tokenizer, calib_prompts, base_resps, misalign_resps, layer_idx=STEERING_LAYER
+        lora_model,
+        lora_tokenizer,
+        calib_prompts,
+        base_resps,
+        misalign_resps,
+        layer_idx=STEERING_LAYER,
     )
 
     print(f"Steering vector shape: {model_contrast_steering_vec.shape}")
@@ -2125,7 +2146,7 @@ if MAIN:
     # Sanity check: unembed to see top tokens
     logits = lora_model.lm_head(model_contrast_steering_vec[None, :])
     _, top_token_ids = torch.topk(logits, k=10)
-    top_tokens = lora_tokenizer.batch_decode(top_token_ids)
+    top_tokens = lora_tokenizer.batch_decode(top_token_ids.squeeze())
     print(f"Top predicted tokens: {top_tokens}")
 
 # ! CELL TYPE: markdown
