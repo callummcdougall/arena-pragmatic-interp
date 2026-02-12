@@ -5,6 +5,8 @@ This module contains utility functions for processing source code lists, includi
 removing empty lines, handling "if MAIN" blocks, and de-abbreviating filter names.
 """
 
+import re
+
 from .constants import ALL_FILES, ALL_FILES_ABBR
 
 
@@ -68,13 +70,49 @@ def _strip_out_main_blocks(source: list[str]) -> list[str]:
     return new_source
 
 
-def _process_source(source: list[str] | None, strip_main_blocks: bool = True) -> list[str] | None:
+def _strip_flags_from_source(source: list[str]) -> list[str]:
+    """
+    Strips flag definitions and flag usage from source code for generated files.
+
+    This function:
+    1. Removes lines that define flags (e.g., FLAG_RUN_SECTION_1 = True)
+    2. Replaces "if MAIN and <flag_expression>:" with "if MAIN:"
+
+    Flags are preserved in master.py and master.ipynb but stripped from all
+    generated files (exercise notebooks, solution notebooks, python solutions, streamlit).
+
+    Args:
+        source: List of source code lines
+
+    Returns:
+        Source list with flag definitions removed and flag usage stripped from if MAIN blocks
+    """
+    new_source = []
+    for line in source:
+        # Skip flag definition lines (e.g., FLAG_RUN_SECTION_1 = True)
+        if re.match(r"^\s*FLAG_\w+\s*=", line):
+            continue
+
+        # Replace "if MAIN and <flag_expression>:" with "if MAIN:"
+        # This preserves indentation and handles any boolean expression containing FLAG
+        if re.search(r"\bif\s+MAIN\s+and\s+.*FLAG", line):
+            line = re.sub(r"^(\s*)if\s+MAIN\s+and\s+.*FLAG.*:(.*)$", r"\1if MAIN:\2", line)
+
+        new_source.append(line)
+
+    return new_source
+
+
+def _process_source(
+    source: list[str] | None, strip_main_blocks: bool = True, strip_flags: bool = False
+) -> list[str] | None:
     """
     The default way we process cell sources before turning them into actual code content.
 
     Args:
         source: List of source code lines, or None
         strip_main_blocks: Whether to remove "if MAIN:" blocks
+        strip_flags: Whether to remove flag definitions and flag usage from if MAIN blocks
 
     Returns:
         Processed source list, or None if input was None
@@ -85,6 +123,8 @@ def _process_source(source: list[str] | None, strip_main_blocks: bool = True) ->
     if source is None:
         return None
     assert len(source) > 0, "Found empty cell source (pre-processing)"
+    if strip_flags:
+        source = _strip_flags_from_source(source)
     if strip_main_blocks:
         source = _strip_out_main_blocks(source)
     source = _remove_consecutive_empty_lines(_strip_empty_lines_from_start_and_end(source))

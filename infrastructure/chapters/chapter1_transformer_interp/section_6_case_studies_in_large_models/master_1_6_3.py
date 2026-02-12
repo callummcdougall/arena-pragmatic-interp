@@ -239,6 +239,11 @@ import part63_interpreting_reasoning_models.utils as utils
 
 MAIN = __name__ == "__main__"
 
+FLAG_RUN_SECTION_1 = True
+FLAG_RUN_SECTION_2 = True
+FLAG_RUN_SECTION_3 = True
+FLAG_RUN_SECTION_4 = True
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -488,7 +493,7 @@ def split_solution_into_chunks(text: str) -> list[str]:
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     test_cases = [
         (
             "<think>First, I understand the problem. Next, I'll solve for x. Finally, I verify!</think>",
@@ -635,7 +640,7 @@ def categorize_sentences_heuristic(chunks: list[str]) -> list[str]:
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     example_sentences = [
         "I need to find the area of a circle with radius 5.",
         "The formula for circle area is A = πr².",
@@ -773,7 +778,7 @@ def generate_responses_parallel(
 
 
 # Demo of how this function works:
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     sys_prompt = {"role": "system", "content": "Reply in rhyming couplets."}
     test_messages = [
         [sys_prompt, {"role": "user", "content": "What is 2+2?"}],
@@ -1047,7 +1052,7 @@ def load_problem_data(problem_id: int, model_name: str = "deepseek-r1-distill-qw
     }
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Load a problem
     problem_data = load_problem_data(PROBLEM_ID)
 
@@ -1911,7 +1916,7 @@ def compute_pairwise_importance(
     return include_rate - exclude_rate
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Precompute all embeddings upfront
     n_chunks = 74
     target_embeddings = precompute_target_embeddings(problem_data["chunks_labeled"], embedding_model, n_chunks=n_chunks)
@@ -2386,7 +2391,7 @@ def extract_attention_matrix(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Load model and tokenizer (with attention output enabled - important!)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_1B)
     if tokenizer.pad_token is None:
@@ -2807,7 +2812,7 @@ def compute_head_kurtosis(vertical_scores: Float[np.ndarray, " n_sentences"]) ->
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     tests.test_compute_head_kurtosis(compute_head_kurtosis)
 # END HIDE
 
@@ -2923,7 +2928,7 @@ def find_receiver_heads(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test with first few sentences from CoT (to keep it fast)
     print("\n" + "=" * 60)
     print("Finding Receiver Heads from Real CoT")
@@ -3084,7 +3089,7 @@ def compute_receiver_head_scores(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     print("\n" + "=" * 60)
     print("Computing Receiver Head Scores")
     print("=" * 60)
@@ -3265,7 +3270,7 @@ def apply_rotary_pos_emb(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     tests.test_rotary_pos_emb(apply_rotary_pos_emb)
 
 # ! CELL TYPE: markdown
@@ -3351,7 +3356,7 @@ def compute_suppressed_attention(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     tests.test_compute_suppressed_attention(compute_suppressed_attention)
 
 # ! CELL TYPE: markdown
@@ -3620,7 +3625,7 @@ def compute_suppression_kl(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     tests.test_compute_suppression_kl(compute_suppression_kl)
 # END HIDE
 
@@ -4220,7 +4225,7 @@ For each chunk, include a list of earlier chunk indices that the reasoning in th
 -   If there's no clear dependency, use an empty list: `[]`
 """
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     print("Blackmail taxonomy loaded!")
     print("\nKey insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
 
@@ -4310,7 +4315,7 @@ def compute_resilience(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Compute resilience for the first chunk in our blackmail scenario
     # This shows how often the model regenerates similar content when a chunk is removed
     chunk_idx = 5  # Pick a chunk with interesting content

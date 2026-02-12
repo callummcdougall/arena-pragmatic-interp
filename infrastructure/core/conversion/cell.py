@@ -126,6 +126,20 @@ class Cell:
             if "main" in self.tags and "if MAIN:" in self.content_str:
                 raise ValueError("Can't have 'TAGS: main' and 'if MAIN:' in same cell.")
 
+            # Validate flag usage in if MAIN blocks
+            for line in self.source:
+                line_stripped = line.strip()
+                # Check for "if FLAG... and MAIN:" (wrong order - MAIN must come first)
+                if re.search(r"\bif\s+FLAG.*\band\b.*\bMAIN\s*:", line_stripped):
+                    raise ValueError(
+                        f"Invalid flag usage: MAIN must come before FLAG in if statement. Found: {line_stripped}"
+                    )
+                # Check for "if MAIN and ..." without FLAG (must contain FLAG if using "and")
+                if re.match(r"\bif\s+MAIN\s+and\s+", line_stripped) and "FLAG" not in line_stripped:
+                    raise ValueError(
+                        f"Line with 'if MAIN and' must contain FLAG in the condition. Found: {line_stripped}"
+                    )
+
         # Check cell length (we do this after maybe removing triple quotes from markdown cells)
         if len(self.source) == 0:
             raise ValueError(f"Can't have an empty cell. Was originally {source_orig}")
@@ -273,7 +287,9 @@ class Cell:
         if ("main" in self.tags) and (files["python"] is not None):
             files["python"] = ["if MAIN:"] + ["    " + line for line in files["python"]]
         files = {
-            name: _process_source(f, strip_main_blocks=name != "python" and "keep-main" not in self.tags)
+            name: _process_source(
+                f, strip_main_blocks=name != "python" and "keep-main" not in self.tags, strip_flags=True
+            )
             for name, f in files.items()
         }
 
@@ -292,6 +308,7 @@ class Cell:
                             "source": _process_source(
                                 files[name][i + 1 : j],
                                 strip_main_blocks="keep-main" not in self.tags,
+                                strip_flags=True,
                             ),
                         }
                         for i, j in zip([-1] + split_lines, split_lines + [len(files[name])])

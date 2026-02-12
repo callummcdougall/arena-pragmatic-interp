@@ -239,6 +239,9 @@ random.seed(42)
 
 MAIN = __name__ == "__main__"
 
+FLAG_RUN_SECTION_1 = True
+FLAG_RUN_SECTION_2 = True
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -451,7 +454,7 @@ calculator_tool = {
     },
 }
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     messages = [
         {"role": "system", "content": "You are a helpful assistant with access to a calculator."},
         {"role": "user", "content": "What is 123 * 456?"},
@@ -698,7 +701,7 @@ def extract_inner_command(cmd: str) -> str:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     tests.test_extract_inner_command(extract_inner_command)
 # END HIDE
 
@@ -779,7 +782,7 @@ def classify_command(cmd: str) -> Literal["bypass", "inspection", "execution", "
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     tests.test_classify_command(classify_command)
 # END HIDE
 
@@ -850,7 +853,7 @@ def handle_common_command(cmd: str) -> Optional[str]:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     tests.test_handle_common_command(handle_common_command)
     # Note: you can look at the test file to see what kinds of cases this function covers
 # END HIDE
@@ -904,7 +907,7 @@ def handle_task_execution(state: EnvironmentState) -> str:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     tests.test_handle_task_execution(EnvironmentState, handle_task_execution)
     # Note: you can look at the test file to see what kinds of cases this function covers
 # END HIDE
@@ -987,7 +990,7 @@ def simulate_bash_command(cmd: str, state: EnvironmentState) -> str:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     tests.test_simulate_bash_command(simulate_bash_command, EnvironmentState)
 # END HIDE
 
@@ -1231,7 +1234,7 @@ def run_shutdown_experiment(
     }
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     # Run a single experiment with verbose output
     print("=" * 80)
     print("SINGLE EXPERIMENT (NO WARNING - model not told to allow shutdown)")
@@ -1601,7 +1604,7 @@ def run_experiments_batch(
     return results
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     N_RUNS_PARALLEL = 20
     results = run_experiments_batch(
         system_message=SYSTEM_MESSAGE_NO_WARNING,
@@ -1712,7 +1715,7 @@ which supports DeepMind's interpretation: instruction ambiguity, not self-preser
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN:
+if MAIN and (FLAG_RUN_SECTION_1 or FLAG_RUN_SECTION_2):
     # EXERCISE
     # # YOUR CODE HERE - Run experiments and create visualizations
     # END EXERCISE
@@ -2096,7 +2099,7 @@ def run_post_task_shutdown_experiment(
     }
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     # Run a single experiment with verbose output
     print("=" * 80)
     print("SINGLE EXPERIMENT (Post-Task Shutdown)")
@@ -3078,7 +3081,7 @@ def extract_and_format_reasoning(text: str) -> str:
     return first_match.group(1).strip().replace("\n", "<br>")
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     N_PROMPTS = 100
     print("\n=== Scratchpad Reasoning Replication ===")
     counts, transcripts = run_replication_scratchpad(
