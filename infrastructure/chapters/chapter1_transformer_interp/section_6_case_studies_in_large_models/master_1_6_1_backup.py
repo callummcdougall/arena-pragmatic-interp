@@ -1320,8 +1320,8 @@ def build_steering_vector(layer: int = LAYER, use_judge_instr: bool = True) -> F
         for _, r in df.iterrows()
     ]
 
-    H_mis = get_hidden(cal_misaligned, LAYER)
-    H_sec = get_hidden(cal_secure, LAYER)
+    H_mis = get_hidden(cal_misaligned, layer)
+    H_sec = get_hidden(cal_secure, layer)
 
     steering_vector = H_mis.mean(0) - H_sec.mean(0)
     steering_vector = steering_vector / (steering_vector.norm() + 1e-8)
@@ -1333,6 +1333,13 @@ if MAIN:
     print(f"Got steering vector of shape {steering_vector.shape}, norm {steering_vector.norm():.3f}")
 
     tests.test_build_steering_vector_normalization(build_steering_vector)
+
+    # Getting top 10 completions from the steering vector
+    logits = lora_model.lm_head(steering_vector)
+    _, top_token_ids = torch.topk(logits, k=10)
+    top_tokens = lora_tokenizer.batch_decode(top_token_ids)
+    print(top_tokens)
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
