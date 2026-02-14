@@ -1,5 +1,6 @@
-from typing import Callable
+from typing import Any, Callable
 
+import pandas as pd
 import torch as t
 
 
@@ -169,13 +170,13 @@ def test_steering_hook_modifies_activations(SteeringHook: type, model, tokenizer
     print("All tests in `test_steering_hook_modifies_activations` passed!")
 
 
-def test_build_steering_vector_normalization(build_steering_vector: Callable):
+def test_build_steering_vector_normalization(build_steering_vector: Callable, model: Any, df: pd.DataFrame):
     """
     Test that build_steering_vector returns a normalized vector.
     """
     print("Testing build_steering_vector normalization...")
 
-    steering_vector = build_steering_vector(layer=-2, use_judge_instr=False)
+    steering_vector = build_steering_vector(layer=-2, use_judge_instr=False, df=df, model=model)
 
     # Test that it returns a tensor
     assert isinstance(steering_vector, t.Tensor), f"Expected tensor, got {type(steering_vector)}"

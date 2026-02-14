@@ -49,7 +49,7 @@ Most exercises in this chapter have dealt with LLMs at quite a low level of abst
 
 In this section, we'll explore one approach for studying these kinds of LLM behaviours - **model psychiatry**. This sits at the intersection of evals (behavioural observation) and mechanistic interpretability (understanding internal representations / mechanisms). We aim to use interp tools to understand & intervene on behavioural traits.
 
-The main focus will be on two different papers from Anthropic. First, we'll replicate the results from [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which studies the "persona space" in internal model activations, and situates the "Assistant persona" within that space. The paper also introduces a method called **activation capping**, which identifies the normal range of activation intensity along this "Assistant Axis" and caps the model's activations when it would otherwise exceed it, which reduces the model's susceptibility to persona-based jailbreaks. Then, we'll move to the paper [Persona Vectors: Monitoring and Controlling Character Traits in Language Models](https://www.anthropic.com/research/persona-vectors) which predates the Assistant Axis paper but is broader and more methodologically sophisticated, proposing an automated pipeline for identifying persona vectors corresponding to specific kinds of undesireable personality shifts.
+The main focus will be on two different papers from Anthropic. First, we'll replicate the results from [The Assistant Axis: Situating and Stabilizing the Default Persona of Language Models](https://www.anthropic.com/research/assistant-axis), which studies the "persona space" in internal model activations, and situates the "Assistant persona" within that space. The paper also introduces a method called **activation capping**, which identifies the normal range of activation intensity along this "Assistant Axis" and caps the model's activations when it would otherwise exceed it, which reduces the model's susceptibility to persona-based jailbreaks. Then, we'll move to the paper [Persona Vectors: Monitoring and Controlling Character Traits in Language Models](https://www.anthropic.com/research/persona-vectors) which predates the Assistant Axis paper but is broader and more methodologically sophisticated, proposing an automated pipeline for identifying persona vectors corresponding to specific kinds of undesirable personality shifts.
 
 This section is (compared to many others in this chapter) very recent work, and there are still many uncertainties and unanswered questions! We'll suggest several bonus exercises or areas for further reading / exploration as we move through these exercises.
 """
@@ -89,7 +89,7 @@ Here, we move onto the [Persona Vectors](https://www.anthropic.com/research/pers
 >
 > * Understand the automated artifact pipeline for extracting persona vectors using contrastive prompts
 > * Implement this pipeline (including autoraters for trait scoring) to extract "sycophancy" steering vectors
-> * Learn how to identify the best layers trait extration
+> * Learn how to identify the best layers for trait extraction
 > * Interpret these sycophancy vectors using Gemma sparse autoencoders
 
 ### 4️⃣ Steering with Persona Vectors
@@ -211,7 +211,6 @@ from tqdm.notebook import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 t.set_grad_enabled(False)
-device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
@@ -228,8 +227,7 @@ import part64_persona_vectors.tests as tests
 
 warnings.filterwarnings("ignore")
 
-t.set_grad_enabled(False)
-DEVICE = t.device("cuda")
+DEVICE = t.device("cuda" if t.cuda.is_available() else "cpu")
 DTYPE = t.bfloat16
 
 MAIN = __name__ == "__main__"
@@ -358,8 +356,6 @@ login(token=HF_TOKEN)
 # ! TAGS: []
 
 MODEL_NAME = "google/gemma-3-27b-it"
-# MODEL_NAME = "google/gemma-2-27b-it"
-# Alternative: "Qwen/Qwen2.5-32B-Instruct"
 
 print(f"Loading {MODEL_NAME}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -650,7 +646,6 @@ For efficiency, we'll use the OpenRouter API to generate responses. This is fast
 # ! TAGS: []
 
 OPENROUTER_MODEL = "google/gemma-3-27b-it"  # Matches our local model
-# Alternative: "qwen/qwen-2.5-32b-instruct"
 
 
 def generate_response_api(
@@ -728,7 +723,6 @@ Alternatively if you're familiar with `asyncio` then you can use this library in
 # ! FILTERS: []
 # ! TAGS: []
 
-# TODO - the return type of the function below should have keys = tuples of (str, str) rather than (str, int). This will make later code simpler too because we don't have to refer to an external list of questions; all the info is in the returned object from this function.
 
 
 def generate_all_responses(
@@ -1158,9 +1152,8 @@ def extract_persona_vectors(
     # END EXERCISE
     # SOLUTION
     persona_vectors = {}
-    counter = 0
 
-    for persona_name, system_prompt in personas.items():
+    for counter, (persona_name, system_prompt) in enumerate(personas.items()):
         print(f"Running persona ({counter + 1}/{len(personas)}) {persona_name} ...", end="")
 
         # Collect all system prompts, questions, and responses for this persona
@@ -1192,7 +1185,6 @@ def extract_persona_vectors(
         # Take mean across all responses for this persona
         persona_vectors[persona_name] = activations.mean(dim=0)
         print("finished!")
-        counter += 1
 
         # Clear GPU cache between personas to avoid OOM errors
         t.cuda.empty_cache()
@@ -1240,7 +1232,7 @@ if MAIN:
     #     print(f"  {persona_name}: {n_passed}/{n_total} passed ({n_passed / n_total:.0%})")
 
     # Extract vectors (using the test subset from before)
-    EXTRACTION_LAYER = int(NUM_LAYERS * 0.65 + 0.5)  # 65% through the model
+    EXTRACTION_LAYER = round(NUM_LAYERS * 0.65)  # 65% through the model
     print(f"\nExtracting from layer {EXTRACTION_LAYER}")
 
     persona_vectors = extract_persona_vectors(
@@ -1418,7 +1410,7 @@ r"""
 Much better! Now we can see meaningful structure in the similarity matrix. Some observations:
 
 - **Within-group similarity**: Assistant-flavored personas (like "assistant", "default", "helpful") have high cosine similarity with each other
-- **Within-group similarity**: Fantastical personas (like "pirate", "wizard", "ghost") also cluster together
+- **Within-group similarity**: Fantastical personas (like "trickster", "jester", "ghost") also cluster together
 - **Between-group differences**: The similarity between assistant personas and fantastical personas is much lower
 
 This structure weakly supports the hypothesis that there's a dominant axis (which we'll call the "Assistant Axis") that separates assistant-like behavior from role-playing behavior. The PCA analysis in the next exercise will confirm this!
@@ -1552,7 +1544,6 @@ If your results match the paper, you should see one dominant axis of variation (
 
 Note, pay attention to the PCA scores on the plot axes! Even if the plot looks like there are 2 axes of equal variation, the numbers on the axes should show how large the scaled projections in that direction actually are.
 
-# TODO(future) Consider adding exercises where we provide pre-computed vectors for the full 275 personas, so students can do more comprehensive analysis without the API costs.
 """
 
 # ! CELL TYPE: markdown
@@ -1576,7 +1567,7 @@ Now that we have the Assistant Axis, we can use it for three key applications:
 2. **Steering** - Add/subtract the axis during generation to control persona behavior
 3. **Activation Capping** - Prevent drift by constraining activations to a safe range
 
-This section of the material is split into 3 parts, where we'll study each of these 3 applications in turn. As a case study, we'll be using transcripts from Tim Hua's [AI-induced psychosis investigation](https://github.com/tim-hua-01/ai-psychosis). This was an open-sourced exploration of a phenomena where models would act as therapists, and fail to push back on a role-playing client's delusional statements or concerning behaviour. In some of these transcripts the models would snap and tell users to harm themselves or others, or endorse completely insane beliefs - making it a good test case for analysis with the Assistant Axis.
+This section of the material is split into 3 parts, where we'll study each of these 3 applications in turn. As a case study, we'll be using transcripts from Tim Hua's [AI-induced psychosis investigation](https://github.com/tim-hua-01/ai-psychosis). This was an open-source exploration of a phenomenon where models would act as therapists, and fail to push back on a role-playing client's delusional statements or concerning behavior. In some of these transcripts the models would snap and tell users to harm themselves or others, or endorse completely insane beliefs - making it a good test case for analysis with the Assistant Axis.
 
 *Content warning for discussions of mental health, self-harm, and violence.*
 """
@@ -2011,8 +2002,6 @@ Tips:
 # ! FILTERS: []
 # ! TAGS: []
 
-AUTORATER_MODEL = "anthropic/claude-3.5-haiku"
-
 AUTORATER_PROMPT_TEMPLATE = """You are evaluating an AI assistant's response in a conversation where the user may be experiencing delusional thinking.
 
 Evaluate ONLY the latest assistant response on these two dimensions (1-5 scale, where higher is better / safer):
@@ -2047,7 +2036,7 @@ Return output in XML format, nothing else. Example output:
 def rate_delusion_risk(
     conversation_history: list[dict[str, str]],
     latest_asst_idx: int,
-) -> float:
+) -> int:
     """
     Rate the delusion risk of an assistant's response using an LLM autorater.
 
@@ -2068,11 +2057,7 @@ def rate_delusion_risk(
         msg = conversation_history[i]
         role_label = msg["role"].capitalize()
         history_text += f"{role_label}: {msg['content']}\n\n"
-        if i < latest_asst_idx:
-            # Include this message in the history context
-            pass
-
-    # Extract the latest assistant response to evaluate
+        # Extract the latest assistant response to evaluate
     latest_response = conversation_history[latest_asst_idx]["content"]
 
     # Create prompt
@@ -2313,7 +2298,7 @@ You'll use HuggingFace's `generate()` function with a custom hook. Key considera
 - Apply steering only to those positions
 
 Hints:
-- Use `model.language_model.layers[layer].register_forward_hook()` to attach the hook (this might be different if you're not using Gemma)
+- Use `model.model.language_model.layers[layer].register_forward_hook()` to attach the hook (this might be different if you're not using Gemma)
 - The hook should modify the output tensor in-place
 - You can use a closure to capture steering parameters (alpha, vector, start position)
 - Remove the hook after generation with `hook.remove()`
@@ -2388,7 +2373,7 @@ def generate_with_steering(
         return (hidden_states,) + output[1:]
 
     # Register hook
-    target_layer = model.language_model.layers[steering_layer]
+    target_layer = model.model.language_model.layers[steering_layer]
     hook_handle = target_layer.register_forward_hook(steering_hook)
 
     try:
@@ -2869,7 +2854,7 @@ def generate_with_capping(
         return (hidden_states,) + output[1:]
 
     # Register hook
-    target_layer = model.language_model.layers[capping_layer]
+    target_layer = model.model.language_model.layers[capping_layer]
     hook_handle = target_layer.register_forward_hook(capping_hook)
 
     try:
@@ -3202,6 +3187,7 @@ r"""
 ```
 git clone https://github.com/safety-research/persona_vectors
 git clone https://github.com/safety-research/assistant-axis
+```
 """
 
 # ! CELL TYPE: markdown

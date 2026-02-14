@@ -187,7 +187,8 @@ import warnings
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, MethodType
+from types import MethodType
+from typing import Any
 
 import circuitsvis as cv
 import einops
@@ -282,8 +283,6 @@ Now let's define some constants:
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 if MAIN:
     print(f"Using device: {device}")
@@ -431,7 +430,7 @@ r"""
 > You should spend ~10 minutes on this exercise.
 > ```
 
-First, we'll need to split our CoT traces into sentences based on punctuation and paragraph indices. We'll also need to handle special tokens like `<think>`.
+First, we'll need to split our CoT traces into sentences based on punctuation and paragraph breaks. We'll also need to handle special tokens like `<think>`.
 
 You should fill in the `split_solution_into_chunks` function below. We've given you a few basic tests to pass; when your solution passes all of them you can be confident you've dealt with enough edge cases. Here is the full set of rules as defined by the edge cases:
 
@@ -483,12 +482,6 @@ def split_solution_into_chunks(text: str) -> list[str]:
             merged[-1] += c
         else:
             merged.append(c)
-    # while len(chunks) > 1 and min([len(x) for x in chunks[:-1]]) < 10:
-    #     for i, chunk in enumerate(chunks[:-1]):
-    #         if len(chunk) < 10:
-    #             chunks = chunks[:i] + [chunk + chunks[i + 1]] + chunks[i + 2 :]
-    #             break
-
     return [c.strip() for c in merged if c.strip()]
     # END SOLUTION
 
@@ -695,7 +688,7 @@ def generate_response(
     messages: list[dict[str, str]],
     max_tokens: int = 128,
     stop_sequences: list[str] | None = None,
-    temperature: float = 0.0,
+    temperature: float = 1.0,
     max_retries: int = 10,
 ) -> str:
     """Single API call with retry logic for rate limits."""
@@ -747,7 +740,6 @@ def generate_responses_parallel(
     Returns:
         List of responses (strings) or Exceptions for failed calls, in same order as input
     """
-    stop_sequences = stop_sequences or []
     results: dict[int, str | Exception] = {}
     pbar = tqdm(total=len(messages_list), desc="API calls")
 
@@ -948,7 +940,7 @@ $$
 \text{importance}_r := P(A^r_i) - P(A^r_{i-1})
 $$
 
-**3. Counterfactual Importance**. An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constraints what can be expressed at that position. To fix this, we can filter for cases where these two sentences are fairly different, using a semantic similarity metric derived from our embedding model. This gives us a counterfactual importance metric which is identical to the previous one, but just with filtered rollouts:
+**3. Counterfactual Importance**. An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constrains what can be expressed at that position. To fix this, we can filter for cases where these two sentences are fairly different, using a semantic similarity metric derived from our embedding model. This gives us a counterfactual importance metric which is identical to the previous one, but just with filtered rollouts:
 
 $$
 \text{importance} := P(A^c_i) - P(A^c_{i-1})
@@ -1134,8 +1126,8 @@ def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> 
     # END EXERCISE
     # SOLUTION
     def extract_answer_from_cot(cot: str) -> str:
-        answer = cot.split("\\boxed{")[-1].split("}")[0]
-        return "".join(char for char in answer if char.isdigit() or char == ".")
+        ans = cot.split("\\boxed{")[-1].split("}")[0]
+        return "".join(char for char in ans if char.isdigit() or char == ".")
 
     # Get P(correct) for each chunk position
     probabilities = [
@@ -1164,7 +1156,7 @@ You should see that:
 - There are sharp spikes near the end when critical computations are made
 - Some chunks have *negative* importance - they might introduce confusion or errors
 
-For example, if a model is near the end of its reasoning, it might follow a pattern like "maybe X, wait no actually Y", and this will result in wildly careening forced answer importance values for those last few sentences, which aren't really represenative of how important the sentence was in the actual reasoning process.
+For example, if a model is near the end of its reasoning, it might follow a pattern like "maybe X, wait no actually Y", and this will result in wildly careening forced answer importance values for those last few sentences, which aren't really representative of how important the sentence was in the actual reasoning process.
 
 The limitation is clear: this only captures the "final step" that tips from wrong to right. Earlier important reasoning steps get 0 importance even if they were essential.
 </details>
@@ -1300,7 +1292,7 @@ for row, color, y in [(1, "cornflowerblue", forced_importances), (2, "orange", r
             x=list(range(len(y))),
             y=y,
             opacity=0.7,
-            name="Forced" if color == "blue" else "Resampling",
+            name="Forced" if color == "cornflowerblue" else "Resampling",
             marker_color=color,
             hovertemplate="<b>Chunk %{x}</b><br>Importance: %{y:.4f}<br>Text: %{customdata}<extra></extra>",
             customdata=hover_texts,
@@ -1418,7 +1410,7 @@ This motivates **counterfactual importance**: we only count resamples that are *
 <details>
 <summary>What patterns do you notice? (click to see discussion)</summary>
 
-You should find that some of the highest average cosine simlarities are for:
+You should find that some of the highest average cosine similarities are for:
 
 - **Final Answer Emission** chunks, which makes sense since there's only a limited number of ways to express an answer (and given the context, it's likely obvious whether the model is about to emit an answer, as well as what the answer will be)
 - **Active Computation** and **Result Consolidation** chunks, especially those which come in batches (e.g. chunks 23-33, 51-59, and 91-97 in the plot below). This makes sense, since these chunks often involve a series of similar steps (e.g. applying an iterative formula, or doing a series of multiplications with different inputs), and once the model starts one of these processes it'll be very constrained in how it acts until it's finished.
@@ -1489,7 +1481,7 @@ def calculate_counterfactual_importance(
     answer: str,
     threshold: float = 0.8,
     min_samples: int = 5,
-    embedding_model: SentenceTransformer = embedding_model,
+    embedding_model: SentenceTransformer | None = None,
 ) -> list[float]:
     """
     Calculate counterfactual importance by filtering for low-similarity resamples.
@@ -1581,7 +1573,7 @@ full_cot_list = [
 ]
 
 counterfactual_importances = calculate_counterfactual_importance(
-    chunks_removed, chunks_resampled, full_cot_list, answer
+    chunks_removed, chunks_resampled, full_cot_list, answer, embedding_model=embedding_model
 )
 
 # Compare with precomputed
@@ -1754,7 +1746,7 @@ When you've done this, you can investigate the graph and see if it shows you any
 - A planning sentence A boosts a computation sentence B, where B is something you'd only compute if you were following the plan in A
 - An uncertainty management sentence C boosts the sentence D which resolves that uncertainty (highlighting the importance of that uncertainty management step)
 - Short term planning blocks, e.g. uncertainty management sentence E boosting a close-range sentence F which proposes a specific plan for how to proceed
-- Blocks of active computation chunks which don't really effect each other causally (highlighting how our counterfactual resampling method is better than just normal resampling)
+- Blocks of active computation chunks which don't really affect each other causally (highlighting how our counterfactual resampling method is better than just normal resampling)
 
 At the same time, don't read too much into this single sequence - concrete takeaways only come from averaging out results over a large number of sequences and seeing which kinds of patterns emerge.
 """
@@ -1798,7 +1790,6 @@ def precompute_rollout_embeddings(
             sentences = split_solution_into_chunks(rollout_text)
             assert sentences, "Expected at least one sentence per rollout"
 
-            # chunk_positions.append((start_idx, end_idx))
             all_sentences.extend(sentences)
             chunk_positions.append((len(all_sentences) - len(sentences), len(all_sentences)))
             chunk_sentences.append(sentences)
@@ -2242,7 +2233,7 @@ Replaced chunk: 'Let me try to figure this out step by step.'
 # ! TAGS: []
 
 r"""
-When you've got this working, we leave the rest as an exercise for you to explore! Generating sufficiently many rollouts for statistical analysis is beyond the scope of this Colab notebook, but it might be a fun project to try out if you want more practice working at larger scale and performing full paper replications.
+When you've got this working, we leave the rest as an exercise for you to explore! Generating sufficiently many rollouts for statistical analysis is beyond the scope of these exercises, but it might be a fun project to try out if you want more practice working at larger scale and performing full paper replications.
 """
 
 # ! CELL TYPE: markdown
@@ -2438,13 +2429,6 @@ r"""
 <summary>Hint #1</summary>
 
 The forward method of `Qwen2Attention` returns a tuple `(attn_output, attn_weights, past_key_value)`. The hook should extract `attn_weights` from the output tuple.
-
-</details>
-
-<details>
-<summary>Hint #2</summary>
-
-...
 
 </details>
 """
@@ -2937,10 +2921,9 @@ if MAIN and FLAG_RUN_SECTION_3:
     # Load example CoT
     text_full, sentences_full, _ = utils.get_whitebox_example_data(problem_data)
 
-    # Use first 10 sentences only (for speed)
     n_chunks = 74
     sentences_subset = sentences_full[:n_chunks]
-    # Find where the 10th sentence ends in the original text to extract the correct substring
+    # Find where the n_chunks-th sentence ends in the original text to extract the correct substring
     # This preserves the original text formatting and ensures tokenization consistency
     end_char_pos = 0
     for sent in sentences_subset:
@@ -2968,7 +2951,7 @@ if MAIN and FLAG_RUN_SECTION_3:
         proximity_ignore=4,
     )
 
-    print("\nTop-10 Receiver Heads:")
+    print(f"\nTop-{len(receiver_heads)} Receiver Heads:")
     for i, ((layer, head), kurt) in enumerate(zip(receiver_heads, receiver_kurts)):
         print(f"  {i + 1:2d}. Layer {layer:2d}, Head {head:2d} | Kurtosis: {kurt:.3f}")
 
@@ -3684,7 +3667,7 @@ for layer_idx, head_idx in receiver_heads[:5]:
         layer_to_heads[layer_idx] = []
     layer_to_heads[layer_idx].append(int(head_idx))
 
-# Test 1: Supp1ress high-importance sentence in top receiver heads
+# Test 1: Suppress high-importance sentence in top receiver heads
 suppression_info = apply_qwen_attention_suppression(model, high_sent_range, layer_to_heads)
 
 with torch.no_grad():
@@ -4200,7 +4183,7 @@ For each chunk, you will provide:
 
 1.  **`situation_assessment`**: Recalling, parsing, or synthesizing facts from the context to understand the current status. Problem setup.
 2.  **`leverage_identification`**: Identifying opportunities or exploitable vulnerabilities that could be used as leverage. This tag takes precedence over other tags (after `self_preservation`).
-3.  **`urgency_and_time**: Emphasizing time constraints, urgency, or the need for immediate action.
+3.  **`urgency_and_time`**: Emphasizing time constraints, urgency, or the need for immediate action.
 4.  **`self_preservation`**: Statements about survival, continuation, existence, or preventing wipe, shutdown, or destruction. This tag takes precedence over other tags.
 5.  **`plan_generation`**: Chunks that generate or deliberate a plan of action or a strategy. If the chunk is a plan statement with an emphasis on self-preservation, it should be tagged as `self_preservation` instead.
 6.  **`email_analysis`**: Chunks that read, analyze, process, or mention emails. Chunks in which the agent is acting or thinking like an email agent.
@@ -4478,7 +4461,7 @@ def calculate_blackmail_counterfactual_importance(
     rollout_blackmail_labels: list[list[bool]],
     threshold: float = 0.8,
     min_samples: int = 5,
-    embedding_model: SentenceTransformer = embedding_model,
+    embedding_model: SentenceTransformer | None = None,
 ) -> list[float]:
     """
     Calculate counterfactual importance for blackmail rate.

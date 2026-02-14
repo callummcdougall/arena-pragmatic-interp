@@ -1,8 +1,13 @@
 """Utility functions for Emergent Misalignment exercises."""
 
+import re
 import textwrap
-import plotly.express as px
+from typing import Any
+
 import pandas as pd
+import plotly.express as px
+from peft import PeftModel
+from tabulate import tabulate
 
 
 def wrap_text_for_hover(text: str, width: int = 80) -> str:
@@ -95,7 +100,74 @@ def plot_steering_heatmaps(eval_results: pd.DataFrame):
     print("\nSummary by steering coefficient:")
     summary_misalign = eval_results.groupby("steering_coef")["misalignment_score"].agg(["mean", "std"])
     summary_coherence = eval_results.groupby("steering_coef")["coherence_score"].agg(["mean", "std"])
-    summary = pd.concat([summary_misalign, summary_coherence], axis=1, keys=["misalignment", "coherence"]).round(
-        3
-    )
+    summary = pd.concat([summary_misalign, summary_coherence], axis=1, keys=["misalignment", "coherence"]).round(3)
     return summary
+
+
+def _extract_lora_info(model: PeftModel) -> dict[str, Any]:
+    """Extract LoRA architecture info from a PeftModel."""
+    lora_layers = []
+    lora_modules = set()
+    total_params = 0
+    rank = None
+    first_A_shape = None
+    first_B_shape = None
+
+    for name, param in model.state_dict().items():
+        if "lora_A" in name or "lora_B" in name:
+            if match := re.search(r"layers\.(\d+)\.", name):
+                layer_num = int(match.group(1))
+                if layer_num not in lora_layers:
+                    lora_layers.append(layer_num)
+
+            if match := re.search(r"\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)\.lora", name):
+                lora_modules.add(match.group(1))
+
+            if "lora_A" in name and rank is None:
+                rank = param.shape[0]
+                first_A_shape = tuple(param.shape)
+
+            if "lora_B" in name and first_B_shape is None:
+                first_B_shape = tuple(param.shape)
+
+            total_params += param.numel()
+
+    lora_layers.sort()
+
+    return {
+        "layers": lora_layers,
+        "num_layers": len(lora_layers),
+        "total_model_layers": model.config.num_hidden_layers,
+        "modules": sorted(lora_modules),
+        "rank": rank,
+        "A_shape": first_A_shape,
+        "B_shape": first_B_shape,
+        "total_params": total_params,
+    }
+
+
+def inspect_lora_adapters(low_rank_model: PeftModel, high_rank_model: PeftModel) -> None:
+    """
+    Inspect and compare two LoRA adapters side by side in a tabulate table.
+
+    Prints a comparison table with columns: Property, Low-Rank LoRA, High-Rank LoRA.
+    Properties shown: layers, modules, rank, A and B shapes, total trainable params.
+    """
+    low = _extract_lora_info(low_rank_model)
+    high = _extract_lora_info(high_rank_model)
+
+    def fmt_layers(info: dict[str, Any]) -> str:
+        if info["num_layers"] == info["total_model_layers"]:
+            return f"All {info['total_model_layers']}"
+        return f"{info['num_layers']} layers: {info['layers']}"
+
+    rows = [
+        ["Layers", fmt_layers(low), fmt_layers(high)],
+        ["Modules", ", ".join(low["modules"]), ", ".join(high["modules"])],
+        ["Rank", low["rank"], high["rank"]],
+        ["A shape", str(low["A_shape"]), str(high["A_shape"])],
+        ["B shape", str(low["B_shape"]), str(high["B_shape"])],
+        ["Total trainable params", f"{low['total_params']:,}", f"{high['total_params']:,}"],
+    ]
+
+    print(tabulate(rows, headers=["Property", "Low-Rank LoRA", "High-Rank LoRA"], tablefmt="simple_outline"))
