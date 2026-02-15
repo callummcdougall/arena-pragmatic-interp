@@ -64,22 +64,6 @@ conversion_map:
   "1.5.4":
     streamlit_page: "34_[1.5.4]_Toy_Models_of_Superposition_&_SAEs"
     exercise_dir: "part54_toy_models_of_superposition_and_saes"
-  "1.6.1":
-    streamlit_page: "41_[1.6.1]_Emergent_Misalignment"
-    exercise_dir: "part61_emergent_misalignment"
-  "1.6.2":
-    streamlit_page: "42_[1.6.2]_Science_of_Misalignment"
-    exercise_dir: "part62_science_of_misalignment"
-  "1.6.3":
-    streamlit_page: "43_[1.6.3]_Interpreting_Reasoning_Models"
-    exercise_dir: "part63_interpreting_reasoning_models"
-  "1.6.4":
-    streamlit_page: "44_[1.6.4]_LLM_Psychology_&_Persona_Vectors"
-    exercise_dir: "part64_persona_vectors"
-  "1.6.5":
-    streamlit_page: "45_[1.6.5]_Investigator_Agents"
-    exercise_dir: "part65_investigator_agents"
-
   # Chapter 2
   "2.1":
     streamlit_page: "01_[2.1]_Intro_to_RL"
@@ -111,6 +95,23 @@ conversion_map:
     streamlit_page: "04_[3.4]_LLM_Agents"
     exercise_dir: "part4_llm_agents"
 
+  # Chapter 4
+  "4.1":
+    streamlit_page: "01_[4.1]_Emergent_Misalignment"
+    exercise_dir: "part1_emergent_misalignment"
+  "4.2":
+    streamlit_page: "02_[4.2]_Science_of_Misalignment"
+    exercise_dir: "part2_science_of_misalignment"
+  "4.3":
+    streamlit_page: "03_[4.3]_Interpreting_Reasoning_Models"
+    exercise_dir: "part3_interpreting_reasoning_models"
+  "4.4":
+    streamlit_page: "04_[4.4]_LLM_Psychology_&_Persona_Vectors"
+    exercise_dir: "part4_persona_vectors"
+  "4.5":
+    streamlit_page: "05_[4.5]_Investigator_Agents"
+    exercise_dir: "part5_investigator_agents"
+
 # =============================================================================
 # CHAPTER NAME MAPPINGS (used by main.py and Streamlit)
 # =============================================================================
@@ -119,12 +120,14 @@ chapter_names:
   1: "chapter1_transformer_interp"
   2: "chapter2_rl"
   3: "chapter3_llm_evals"
+  4: "chapter4_alignment_science"
 
 chapter_names_long:
   0: "Chapter 0 - Fundamentals"
   1: "Chapter 1 - Transformer Interp"
   2: "Chapter 2 - Reinforcement Learning"
   3: "Chapter 3 - LLM Evaluations"
+  4: "Chapter 4 - Alignment Science"
 
 # =============================================================================
 # CHAPTER METADATA (used by Heroku Django app)
@@ -191,8 +194,8 @@ chapters:
   chapter1_transformer_interp:
     title: "Chapter 1: Transformer Interpretability"
     short_title: "Interpretability"
-    description: "Dive deep into language model interpretability, from linear probes and SAEs to alignment faking and thought anchors."
-    color: "#059669"
+    description: "Dive deep into language model interpretability, from linear probes and SAEs to circuit analysis and toy models."
+    color: "#2563EB"
     icon: "microscope"
     header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-ch1.png"
     sections:
@@ -352,70 +355,11 @@ chapters:
         streamlit_description: "At the end of this section, we have a series of 7 algorithmic problems, a series which ran periodically between mid 2023 and late 2024. These are designed to test some of the skills and tools you'll have gathered during the rest of this section. Note that these are better thought of as fun challenges / hackathon-type problems, as opposed to opportunities to learn about specific topics or tools, so we recommend not attempting them while you're working through the ARENA material during any kind of structured program (except as a hackathon)."
         streamlit_description_short: "7 algorithmic challenges to test your interpretability skills in hackathon format."
 
-      # Group 1.6: Case Studies in Larger Models
-      - id: "1_6_overview"
-        number: "1.6"
-        title: "Case Studies in Larger Models"
-        is_group: true
-        local_path: "1_6_case_studies.md"
-        children: ["41_emergent_misalignment", "42_science_misalignment", "43_reasoning_models", "44_persona_vectors"]
-        streamlit_description: "This section contains case studies applying interpretability techniques to larger, more capable models. Topics include emergent misalignment, alignment faking, and interpreting reasoning models."
-      - id: "41_emergent_misalignment"
-        number: "1.6.1"
-        title: "Emergent Misalignment"
-        exercise_dir: "part61_emergent_misalignment"
-        page_file: "41_[1.6.1]_Emergent_Misalignment.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
-        parent: "1_6_overview"
-        status: "Structure complete, but needs verification."
-        streamlit_description: "In this section, you'll investigate emergent misalignment in larger language models. You'll explore model organisms of misalignment and see how they store representations & can be steered on and evaluated."
-        streamlit_description_short: "Study emergent misalignment in finetuned models."
-      - id: "42_science_misalignment"
-        number: "1.6.2"
-        title: "Science of Misalignment"
-        exercise_dir: "part62_science_of_misalignment"
-        page_file: "42_[1.6.2]_Science_of_Misalignment.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-62b.png"
-        parent: "1_6_overview"
-        status: "All exercises complete and verified"
-        streamlit_description: "In this section you'll explore the science of misalignment & how to investigate compelling examples of misalignment, through 2 case studies: shutdown resistance and alignment faking."
-        streamlit_description_short: "Two case studies in black-box investigation to understand and characterize seemingly misaligned behaviour."
-      - id: "43_reasoning_models"
-        number: "1.6.3"
-        title: "Interpreting Reasoning Models"
-        exercise_dir: "part63_interpreting_reasoning_models"
-        page_file: "43_[1.6.3]_Interpreting_Reasoning_Models.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png"
-        parent: "1_6_overview"
-        status: "Mostly complete (white box section needs proof-reading, 'thought branches' bonus not done)."
-        streamlit_description: "Apply interpretability techniques to chain-of-thought reasoning models, investigating and characterizing the parts of reasoning which are most causally important on downstream output."
-        streamlit_description_short: "Apply interpretability techniques to chain-of-thought reasoning models."
-      - id: "44_persona_vectors"
-        number: "1.6.4"
-        title: "LLM Psychology & Persona Vectors"
-        exercise_dir: "part64_persona_vectors"
-        page_file: "44_[1.6.4]_LLM_Psychology_&_Persona_Vectors.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
-        parent: "1_6_overview"
-        status: "Has the first half (Assistant Axis replication) complete, second half (persona vectors) not done"
-        streamlit_description: "Perform internals-based analysis on the representations learned by language models, exploring the different personas they can adopt during multi-turn conversations (and the way they can sometimes exhibit dangerous persona drift)."
-        streamlit_description_short: "Explore persona vectors and psychological properties of language models."
-      - id: "45_investigator_agents"
-        number: "1.6.5"
-        title: "Investigator Agents"
-        exercise_dir: "part65_investigator_agents"
-        page_file: "45_[1.6.5]_Investigator_Agents.md"
-        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65b.png"
-        parent: "1_6_overview"
-        status: "Incomlete, needs major revision"
-        streamlit_description: "Explore the use of AI agents for investigating and characterizing strange or safety-relevant behaviours. Build these systems by hand, and learn how to use Anthropic's `petri` and `bloom` libraries."
-        streamlit_description_short: "Use AI agents for investigating model behaviours (including petri & bloom)."
-
   chapter2_rl:
     title: "Chapter 2: Reinforcement Learning"
     short_title: "RL"
     description: "Take a whirlwind tour through RL, starting from tabular learning and Atari, and ending with some of the cutting-edge techniques used in current LLM post-training."
-    color: "#D97706"
+    color: "#059669"
     icon: "gamepad"
     header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-ch2.png"
     sections:
@@ -464,7 +408,7 @@ chapters:
     title: "Chapter 3: LLM Evaluations"
     short_title: "Evals"
     description: "Learn to build and run evaluations for large language models, including dataset generation and LLM agents."
-    color: "#DC2626"
+    color: "#D97706"
     icon: "clipboard-check"
     header_image: "https://raw.githubusercontent.com/chloeli-15/ARENA_img/main/img/ch3-evals-cover-crop.jpeg"
     sections:
@@ -500,3 +444,57 @@ chapters:
         header_image: "https://raw.githubusercontent.com/callummcdougall/computational-thread-art/master/example_images/misc/robot-typewriter.png"
         streamlit_description: "This set of exercises involve working with LLM agents. LLM agents consist of a scaffolding programs interacting with an LLM API. You'll build agents that can play tasks like the Wikipedia Racing game."
         streamlit_description_short: "Build LLM agents with scaffolding to play Wikipedia Racing and other tasks."
+
+  chapter4_alignment_science:
+    title: "Chapter 4: Alignment Science"
+    short_title: "Alignment Science"
+    description: "Apply ML research techniques to study, characterize and control the behaviour of powerful AI systems, from investigating misalignment to understanding chain-of-thought reasoning."
+    color: "#DC2626"
+    icon: "compass"
+    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
+    sections:
+      - id: "1_emergent_misalignment"
+        number: "4.1"
+        title: "Emergent Misalignment"
+        exercise_dir: "part1_emergent_misalignment"
+        page_file: "01_[4.1]_Emergent_Misalignment.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
+        status: "Structure complete, but needs verification."
+        streamlit_description: "In this section, you'll investigate emergent misalignment in larger language models. You'll explore model organisms of misalignment and see how they store representations & can be steered on and evaluated."
+        streamlit_description_short: "Study emergent misalignment in finetuned models."
+      - id: "2_science_misalignment"
+        number: "4.2"
+        title: "Science of Misalignment"
+        exercise_dir: "part2_science_of_misalignment"
+        page_file: "02_[4.2]_Science_of_Misalignment.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-62b.png"
+        status: "All exercises complete and verified"
+        streamlit_description: "In this section you'll explore the science of misalignment & how to investigate compelling examples of misalignment, through 2 case studies: shutdown resistance and alignment faking."
+        streamlit_description_short: "Two case studies in black-box investigation to understand and characterize seemingly misaligned behaviour."
+      - id: "3_reasoning_models"
+        number: "4.3"
+        title: "Interpreting Reasoning Models"
+        exercise_dir: "part3_interpreting_reasoning_models"
+        page_file: "03_[4.3]_Interpreting_Reasoning_Models.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-64.png"
+        status: "Mostly complete (white box section needs proof-reading, 'thought branches' bonus not done)."
+        streamlit_description: "Apply interpretability techniques to chain-of-thought reasoning models, investigating and characterizing the parts of reasoning which are most causally important on downstream output."
+        streamlit_description_short: "Apply interpretability techniques to chain-of-thought reasoning models."
+      - id: "4_persona_vectors"
+        number: "4.4"
+        title: "LLM Psychology & Persona Vectors"
+        exercise_dir: "part4_persona_vectors"
+        page_file: "04_[4.4]_LLM_Psychology_&_Persona_Vectors.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
+        status: "Has the first half (Assistant Axis replication) complete, second half (persona vectors) not done"
+        streamlit_description: "Perform internals-based analysis on the representations learned by language models, exploring the different personas they can adopt during multi-turn conversations (and the way they can sometimes exhibit dangerous persona drift)."
+        streamlit_description_short: "Explore persona vectors and psychological properties of language models."
+      - id: "5_investigator_agents"
+        number: "4.5"
+        title: "Investigator Agents"
+        exercise_dir: "part5_investigator_agents"
+        page_file: "05_[4.5]_Investigator_Agents.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65b.png"
+        status: "Incomplete, needs major revision"
+        streamlit_description: "Explore the use of AI agents for investigating and characterizing strange or safety-relevant behaviours. Build these systems by hand, and learn how to use Anthropic's `petri` and `bloom` libraries."
+        streamlit_description_short: "Use AI agents for investigating model behaviours (including petri & bloom)."

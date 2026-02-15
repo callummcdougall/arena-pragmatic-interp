@@ -5,10 +5,10 @@ Command-line tool for converting ARENA master files to various output formats.
 Run from the `infrastructure/core` directory.
 
 Usage:
-    python main.py --chapters=1.6.1
-    python main.py --chapters=1.6.1 --use_py=true
-    python main.py --chapters=1.6.* --use_py=true --generate_files=false
-    python main.py --chapters=1.* --verbose=false --overwrite=true
+    python main.py --chapters=4.1
+    python main.py --use_py=true --chapters=4.1
+    python main.py --chapters=4.* --use_py=true --generate_files=false
+    python main.py --chapters=4.* --verbose=false --overwrite=true
 """
 
 import argparse
@@ -71,7 +71,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --chapters=1.6.2
+  %(prog)s --chapters=4.2
   %(prog)s --chapters=1.6.* --use_py=true --generate_files=false
   %(prog)s --chapters=1.* --verbose=false --overwrite=true
   %(prog)s --chapters=1.3.* --ruff_format=true
