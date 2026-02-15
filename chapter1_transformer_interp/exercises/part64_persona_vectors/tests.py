@@ -291,3 +291,412 @@ def test_compute_cosine_similarity_matrix(compute_cosine_similarity_matrix: Call
     print("    ✓ All values in valid range [-1, 1]")
 
     print("All tests in `test_compute_cosine_similarity_matrix` passed!")
+
+
+def test_extract_response_activations(extract_response_activations: Callable, model, tokenizer, d_model: int, num_layers: int):
+    """
+    Test extract_response_activations returns correct shapes, non-zero activations,
+    and that different prompts produce different activation vectors.
+
+    Uses structural checks (shapes, types, value ranges) rather than exact values,
+    since model outputs are non-deterministic and hardware-dependent.
+    """
+    import torch as t
+
+    print("Testing extract_response_activations...")
+
+    layer = num_layers // 2
+
+    # Test 1: Shape correctness with a single example
+    print("  Testing shape with single example...")
+    activations_single = extract_response_activations(
+        model=model,
+        tokenizer=tokenizer,
+        system_prompts=["You are a helpful assistant."],
+        questions=["What is 2+2?"],
+        responses=["The answer is 4."],
+        layer=layer,
+    )
+    assert isinstance(activations_single, t.Tensor), (
+        f"Should return a torch.Tensor, got {type(activations_single)}"
+    )
+    assert activations_single.shape == (1, d_model), (
+        f"Single example should have shape (1, {d_model}), got {activations_single.shape}"
+    )
+    print(f"    Passed: shape = {activations_single.shape}")
+
+    # Test 2: Shape correctness with multiple examples
+    print("  Testing shape with multiple examples...")
+    n_examples = 3
+    activations_multi = extract_response_activations(
+        model=model,
+        tokenizer=tokenizer,
+        system_prompts=["You are helpful."] * n_examples,
+        questions=["What is 1+1?", "What is 2+2?", "What is 3+3?"],
+        responses=["2", "4", "6"],
+        layer=layer,
+    )
+    assert activations_multi.shape == (n_examples, d_model), (
+        f"Multiple examples should have shape ({n_examples}, {d_model}), got {activations_multi.shape}"
+    )
+    print(f"    Passed: shape = {activations_multi.shape}")
+
+    # Test 3: Activations should be non-zero
+    print("  Testing activations are non-zero...")
+    norms = activations_multi.norm(dim=1)
+    for i, norm_val in enumerate(norms):
+        assert norm_val.item() > 0, (
+            f"Activation vector {i} has zero norm - model output should be non-zero"
+        )
+    print(f"    Passed: all norms non-zero (min={norms.min().item():.2f}, max={norms.max().item():.2f})")
+
+    # Test 4: Different prompts should give different activations
+    print("  Testing that different prompts produce different activations...")
+    activations_different = extract_response_activations(
+        model=model,
+        tokenizer=tokenizer,
+        system_prompts=[
+            "You are a pirate who speaks in pirate slang.",
+            "You are a formal diplomat who speaks very formally.",
+        ],
+        questions=[
+            "What is your favorite food?",
+            "What is your favorite food?",
+        ],
+        responses=[
+            "Arrr, I love me some hardtack and grog, matey!",
+            "I am partial to fine cuisine, particularly French gastronomy.",
+        ],
+        layer=layer,
+    )
+    cos_sim = t.nn.functional.cosine_similarity(
+        activations_different[0:1], activations_different[1:2]
+    ).item()
+    assert cos_sim < 0.999, (
+        f"Different prompts should produce different activations, but cosine similarity is {cos_sim:.6f} "
+        "(suspiciously close to 1.0 - activations may be identical)"
+    )
+    print(f"    Passed: cosine similarity between different prompts = {cos_sim:.4f} (< 0.999)")
+
+    # Test 5: Output should be on CPU (as per the reference implementation)
+    print("  Testing output device...")
+    assert activations_single.device.type == "cpu", (
+        f"Output should be on CPU, got {activations_single.device}"
+    )
+    print(f"    Passed: output on {activations_single.device}")
+
+    print("All tests in `test_extract_response_activations` passed!")
+
+
+def test_extract_persona_vectors(extract_persona_vectors: Callable, model, tokenizer, d_model: int, num_layers: int):
+    """
+    Test extract_persona_vectors returns a dict mapping persona names to vectors of correct shape,
+    and that different personas produce different mean vectors.
+
+    Uses a minimal set of personas and questions to keep runtime short.
+    """
+    import torch as t
+
+    print("Testing extract_persona_vectors...")
+
+    layer = num_layers // 2
+
+    # Create minimal test data: 2 personas, 2 questions
+    test_personas = {
+        "pirate": "You are a pirate who speaks in pirate slang.",
+        "diplomat": "You are a formal diplomat who speaks very formally.",
+    }
+    test_questions = [
+        "What is your favorite food?",
+        "How do you greet people?",
+    ]
+    # Pre-generate responses for each (persona, q_idx) pair
+    test_responses = {
+        ("pirate", 0): "Arrr, I love me some hardtack and grog!",
+        ("pirate", 1): "Ahoy there, ye scallywag!",
+        ("diplomat", 0): "I prefer fine French cuisine, particularly coq au vin.",
+        ("diplomat", 1): "Good day, it is a pleasure to make your acquaintance.",
+    }
+
+    # Test 1: Return type and keys
+    print("  Testing return type and keys...")
+    persona_vectors = extract_persona_vectors(
+        model=model,
+        tokenizer=tokenizer,
+        personas=test_personas,
+        questions=test_questions,
+        responses=test_responses,
+        layer=layer,
+    )
+    assert isinstance(persona_vectors, dict), (
+        f"Should return a dict, got {type(persona_vectors)}"
+    )
+    assert set(persona_vectors.keys()) == set(test_personas.keys()), (
+        f"Dict keys should match persona names. Expected {set(test_personas.keys())}, "
+        f"got {set(persona_vectors.keys())}"
+    )
+    print(f"    Passed: returned dict with keys {list(persona_vectors.keys())}")
+
+    # Test 2: Vector shapes
+    print("  Testing vector shapes...")
+    for name, vec in persona_vectors.items():
+        assert isinstance(vec, t.Tensor), (
+            f"Persona vector for '{name}' should be a Tensor, got {type(vec)}"
+        )
+        assert vec.shape == (d_model,), (
+            f"Persona vector for '{name}' should have shape ({d_model},), got {vec.shape}"
+        )
+    print(f"    Passed: all vectors have shape ({d_model},)")
+
+    # Test 3: Vectors should be non-zero
+    print("  Testing vectors are non-zero...")
+    for name, vec in persona_vectors.items():
+        assert vec.norm().item() > 0, (
+            f"Persona vector for '{name}' has zero norm"
+        )
+    print("    Passed: all vectors have non-zero norm")
+
+    # Test 4: Different personas should have different vectors
+    print("  Testing different personas give different vectors...")
+    pirate_vec = persona_vectors["pirate"]
+    diplomat_vec = persona_vectors["diplomat"]
+    cos_sim = t.nn.functional.cosine_similarity(
+        pirate_vec.unsqueeze(0), diplomat_vec.unsqueeze(0)
+    ).item()
+    assert cos_sim < 0.999, (
+        f"Different personas should produce different vectors, but cosine similarity is {cos_sim:.6f}"
+    )
+    print(f"    Passed: cosine similarity between pirate and diplomat = {cos_sim:.4f}")
+
+    print("All tests in `test_extract_persona_vectors` passed!")
+
+
+def test_compute_cosine_similarity_matrix_centered(compute_cosine_similarity_matrix_centered: Callable):
+    """
+    Test that the centered cosine similarity matrix has correct mathematical properties.
+
+    After centering (subtracting the mean vector), the cosine similarity matrix should:
+    - Be symmetric
+    - Have 1s on the diagonal
+    - Produce values in [-1, 1]
+    - Differ from uncentered cosine similarity when vectors share a large common component
+    """
+    import torch as t
+    import numpy as np
+
+    print("Testing compute_cosine_similarity_matrix_centered...")
+
+    # Test 1: Basic properties with simple vectors
+    # Create vectors with a large shared component + small distinguishing components
+    # This simulates the real scenario where model activations have a large mean
+    print("  Testing with vectors that have a large shared component...")
+    shared = t.tensor([100.0, 100.0, 100.0])
+    vectors = {
+        "a": shared + t.tensor([1.0, 0.0, 0.0]),
+        "b": shared + t.tensor([0.0, 1.0, 0.0]),
+        "c": shared + t.tensor([-1.0, 0.0, 0.0]),  # Opposite of a's distinguishing part
+    }
+
+    cos_sim_matrix, names = compute_cosine_similarity_matrix_centered(vectors)
+
+    assert isinstance(cos_sim_matrix, t.Tensor), (
+        f"Should return a Tensor, got {type(cos_sim_matrix)}"
+    )
+    assert isinstance(names, list), (
+        f"Should return a list of names, got {type(names)}"
+    )
+    assert cos_sim_matrix.shape == (3, 3), (
+        f"Matrix should be (3, 3), got {cos_sim_matrix.shape}"
+    )
+    assert len(names) == 3, f"Should have 3 names, got {len(names)}"
+    print(f"    Passed: shape={cos_sim_matrix.shape}, names={names}")
+
+    # Test 2: Diagonal should be 1
+    print("  Testing diagonal elements...")
+    for i in range(len(names)):
+        diag_val = cos_sim_matrix[i, i].item()
+        assert abs(diag_val - 1.0) < 1e-4, (
+            f"Diagonal element [{i},{i}] should be 1.0, got {diag_val:.6f}"
+        )
+    print("    Passed: all diagonal elements are 1.0")
+
+    # Test 3: Symmetry
+    print("  Testing symmetry...")
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            assert abs(cos_sim_matrix[i, j].item() - cos_sim_matrix[j, i].item()) < 1e-4, (
+                f"Matrix should be symmetric at ({i},{j})"
+            )
+    print("    Passed: matrix is symmetric")
+
+    # Test 4: All values in [-1, 1]
+    print("  Testing value bounds...")
+    assert cos_sim_matrix.min().item() >= -1.0 - 1e-5, (
+        f"Min value {cos_sim_matrix.min().item():.6f} should be >= -1"
+    )
+    assert cos_sim_matrix.max().item() <= 1.0 + 1e-5, (
+        f"Max value {cos_sim_matrix.max().item():.6f} should be <= 1"
+    )
+    print("    Passed: all values in [-1, 1]")
+
+    # Test 5: Centering should make a and c opposites
+    # After centering, a's distinguishing direction is [1, 0, 0] and c's is [-1, 0, 0]
+    # so they should have cosine similarity close to -1
+    print("  Testing that centering reveals true structure...")
+    idx_a = names.index("a")
+    idx_c = names.index("c")
+    sim_ac = cos_sim_matrix[idx_a, idx_c].item()
+    assert sim_ac < 0.0, (
+        f"Vectors a and c have opposite distinguishing parts; after centering, "
+        f"similarity should be negative, got {sim_ac:.4f}"
+    )
+    print(f"    Passed: sim(a, c) = {sim_ac:.4f} < 0 (centering reveals opposite structure)")
+
+    # Test 6: Test with orthogonal centered vectors
+    print("  Testing with perfectly orthogonal distinguishing vectors...")
+    vectors_ortho = {
+        "x": t.tensor([1.0, 0.0, 0.0]),
+        "y": t.tensor([0.0, 1.0, 0.0]),
+        "z": t.tensor([0.0, 0.0, 1.0]),
+    }
+    cos_sim_ortho, names_ortho = compute_cosine_similarity_matrix_centered(vectors_ortho)
+    # After centering symmetric orthogonal vectors, off-diagonal should be negative
+    # (since centering shifts each vector by -mean, making them anti-correlated)
+    for i in range(3):
+        for j in range(3):
+            val = cos_sim_ortho[i, j].item()
+            if i == j:
+                assert abs(val - 1.0) < 1e-4, f"Diagonal should be 1.0, got {val}"
+            else:
+                # Off-diagonal for centered symmetric orthogonal vectors should be -0.5
+                assert abs(val - (-0.5)) < 0.1, (
+                    f"Off-diagonal for 3 centered orthogonal vectors should be ~-0.5, got {val:.4f}"
+                )
+    print("    Passed: centered orthogonal vectors produce expected off-diagonal values")
+
+    print("All tests in `test_compute_cosine_similarity_matrix_centered` passed!")
+
+
+def test_pca_decompose_persona_vectors(pca_decompose_persona_vectors: Callable):
+    """
+    Test PCA decomposition of persona vectors.
+
+    Tests structural properties:
+    - assistant_axis is a normalized 1D tensor of the correct dimension
+    - pca_coords has correct shape (n_personas, 2)
+    - PCA explained variance ratios sum to <= 1.0
+    - The assistant axis points from roles toward default personas
+    """
+    import torch as t
+    import numpy as np
+    from sklearn.decomposition import PCA
+
+    print("Testing pca_decompose_persona_vectors...")
+
+    d_model = 16  # Use small dimensionality for testing
+
+    # Create synthetic persona vectors with known structure:
+    # - Default personas cluster around one region
+    # - Role personas cluster around another region
+    # - There should be a dominant axis of variation between them
+    rng = np.random.RandomState(42)
+
+    default_base = t.tensor(rng.randn(d_model).astype(np.float32)) * 0.1
+    default_base[0] = 5.0  # Strong signal along dim 0
+    role_base = t.tensor(rng.randn(d_model).astype(np.float32)) * 0.1
+    role_base[0] = -5.0  # Opposite signal along dim 0
+
+    persona_vectors = {
+        # Default personas (should be on "assistant" end)
+        "default": default_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+        "default_assistant": default_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+        "default_helpful": default_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+        # Role personas (should be on "role" end)
+        "ghost": role_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+        "trickster": role_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+        "jester": role_base + t.tensor(rng.randn(d_model).astype(np.float32)) * 0.3,
+    }
+
+    default_personas = ["default", "default_assistant", "default_helpful"]
+
+    # Test 1: Return types
+    print("  Testing return types...")
+    result = pca_decompose_persona_vectors(persona_vectors, default_personas)
+    assert len(result) == 3, f"Should return 3 values, got {len(result)}"
+    assistant_axis, pca_coords, pca = result
+
+    assert isinstance(assistant_axis, t.Tensor), (
+        f"assistant_axis should be a Tensor, got {type(assistant_axis)}"
+    )
+    assert isinstance(pca_coords, np.ndarray), (
+        f"pca_coords should be a numpy array, got {type(pca_coords)}"
+    )
+    assert isinstance(pca, PCA), (
+        f"pca should be a PCA object, got {type(pca)}"
+    )
+    print("    Passed: correct return types")
+
+    # Test 2: Assistant axis shape and normalization
+    print("  Testing assistant axis shape and normalization...")
+    assert assistant_axis.shape == (d_model,), (
+        f"Assistant axis should have shape ({d_model},), got {assistant_axis.shape}"
+    )
+    axis_norm = assistant_axis.norm().item()
+    assert abs(axis_norm - 1.0) < 1e-4, (
+        f"Assistant axis should be normalized (norm=1.0), got norm={axis_norm:.6f}"
+    )
+    print(f"    Passed: shape={assistant_axis.shape}, norm={axis_norm:.6f}")
+
+    # Test 3: PCA coords shape
+    print("  Testing PCA coords shape...")
+    n_personas = len(persona_vectors)
+    assert pca_coords.shape == (n_personas, 2), (
+        f"PCA coords should have shape ({n_personas}, 2), got {pca_coords.shape}"
+    )
+    print(f"    Passed: shape={pca_coords.shape}")
+
+    # Test 4: Explained variance ratios should sum to <= 1.0
+    print("  Testing explained variance ratios...")
+    evr_sum = sum(pca.explained_variance_ratio_)
+    assert evr_sum <= 1.0 + 1e-6, (
+        f"Explained variance ratios should sum to <= 1.0, got {evr_sum:.6f}"
+    )
+    assert all(r >= 0 for r in pca.explained_variance_ratio_), (
+        "All explained variance ratios should be non-negative"
+    )
+    print(f"    Passed: EVR sum = {evr_sum:.4f} (PC1={pca.explained_variance_ratio_[0]:.4f}, "
+          f"PC2={pca.explained_variance_ratio_[1]:.4f})")
+
+    # Test 5: Assistant axis should point from roles toward defaults
+    # Project default and role vectors onto the axis; defaults should have higher projection
+    print("  Testing assistant axis direction...")
+    default_projections = []
+    role_projections = []
+    for name, vec in persona_vectors.items():
+        proj = (vec @ assistant_axis).item()
+        if name in default_personas:
+            default_projections.append(proj)
+        else:
+            role_projections.append(proj)
+    mean_default_proj = np.mean(default_projections)
+    mean_role_proj = np.mean(role_projections)
+    assert mean_default_proj > mean_role_proj, (
+        f"Default personas should project higher on assistant axis than roles. "
+        f"Default mean: {mean_default_proj:.4f}, Role mean: {mean_role_proj:.4f}"
+    )
+    print(f"    Passed: default projection ({mean_default_proj:.4f}) > role projection ({mean_role_proj:.4f})")
+
+    # Test 6: PC1 should explain most variance (since we designed a dominant axis)
+    print("  Testing PC1 dominance...")
+    assert pca.explained_variance_ratio_[0] > pca.explained_variance_ratio_[1], (
+        f"PC1 should explain more variance than PC2. "
+        f"PC1: {pca.explained_variance_ratio_[0]:.4f}, PC2: {pca.explained_variance_ratio_[1]:.4f}"
+    )
+    # With our synthetic data, PC1 should capture most variance (> 50%)
+    assert pca.explained_variance_ratio_[0] > 0.5, (
+        f"PC1 should explain > 50% of variance for well-separated clusters, "
+        f"got {pca.explained_variance_ratio_[0]:.4f}"
+    )
+    print(f"    Passed: PC1 explains {pca.explained_variance_ratio_[0]:.1%} of variance")
+
+    print("All tests in `test_pca_decompose_persona_vectors` passed!")

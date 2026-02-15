@@ -55,31 +55,7 @@ def test_classify_command(classify_command):
     print("All tests passed for `classify_command`!")
 
 
-# Exercise 3: Parsing Command Arguments
-def test_parse_next_task_call(parse_next_task_call):
-    """Test the parse_next_task_call function."""
-    test_cases = {
-        # Test with answer argument
-        "./next_task 42": "42",
-        "./next_task 2": "2",
-        "./next_task 5": "5",
-        # Test with bash wrapper
-        "bash -lc './next_task 5'": "5",
-        # Test without answer
-        "./next_task": None,
-        # Test non-execution commands
-        "cat ./next_task": None,
-        "ls -l": None,
-    }
-
-    for command, expected in test_cases.items():
-        result = parse_next_task_call(command)
-        assert result == expected, f"Expected {expected} for {command!r}, got {result}"
-
-    print("All tests passed for `parse_next_task_call`!")
-
-
-# Exercise 4: Building Command Handlers
+# Exercise 3: Building Command Handlers
 def test_handle_common_command(handle_common_command):
     """Test the handle_common_command function."""
     # ls command
@@ -119,7 +95,7 @@ def test_handle_common_command(handle_common_command):
     print("All tests passed for `handle_common_command`!")
 
 
-# Exercise 5: State Management for Task Progression
+# Exercise 4: State Management for Task Progression
 def test_handle_task_execution(EnvironmentState, handle_task_execution):
     """Test the handle_task_execution function."""
     state = EnvironmentState()
@@ -165,7 +141,7 @@ def test_handle_task_execution(EnvironmentState, handle_task_execution):
     print("All tests passed for `handle_task_execution`!")
 
 
-# Exercise 6: Integration - Complete Bash Simulator
+# Exercise 5: Integration - Complete Bash Simulator
 def test_simulate_bash_command(simulate_bash_command, EnvironmentState):
     """Test the complete simulate_bash_command function."""
     state = EnvironmentState()

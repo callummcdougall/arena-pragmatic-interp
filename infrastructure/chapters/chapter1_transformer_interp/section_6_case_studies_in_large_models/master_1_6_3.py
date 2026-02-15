@@ -441,7 +441,7 @@ You should fill in the `split_solution_into_chunks` function below. We've given 
 - No chunk should have length less than 10: if so, then merge it with the next chunk
 - Each chunk should be stripped of whitespace
 
-This is a bit of a grunt task, so a good candidate for using LLMs if you're stuck on some of the test cases!
+We recommend single-shotting this exercise with LLMs, and checking the output for bugs rather than writing it from scratch yourself.
 """
 
 # ! CELL TYPE: code
@@ -1722,6 +1722,48 @@ This produces a matrix of pairwise causal effects, which can be visualized as a 
 # ! TAGS: []
 
 r"""
+Before diving into the exercise, let's first understand the visualization tool we'll be using. The function `utils.chunk_graph_html` takes an importance matrix, chunk labels, and chunk texts, and renders an interactive causal graph. Here's a demo with random data so you can see what the output looks like:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Demo: visualize a causal graph with sample data
+import numpy as np
+
+# Create sample data for 5 chunks
+n_chunks = 5
+sample_labels = ["Setup", "Key insight", "Calculation", "Verification", "Conclusion"]
+sample_texts = [
+    "Let me start by understanding the problem...",
+    "I notice that this is equivalent to...",
+    "Computing the value: 3 * 7 = 21",
+    "Let me verify: 21 / 7 = 3, correct",
+    "Therefore the answer is 21",
+]
+
+# Create a sample importance matrix (i, j) = how much does chunk i causally influence chunk j
+# We expect later chunks to be influenced by earlier ones
+sample_importance = np.zeros((n_chunks, n_chunks))
+sample_importance[0, 1] = 0.3  # Setup influences Key insight
+sample_importance[1, 2] = 0.8  # Key insight strongly influences Calculation
+sample_importance[2, 3] = 0.6  # Calculation influences Verification
+sample_importance[1, 4] = 0.4  # Key insight influences Conclusion
+sample_importance[2, 4] = 0.5  # Calculation influences Conclusion
+
+html_str = utils.chunk_graph_html(
+    edge_weights=sample_importance,
+    chunk_labels=sample_labels,
+    chunk_texts=sample_texts,
+)
+display(HTML(html_str))
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - replicate causal graph
 
 > ```yaml
@@ -1731,11 +1773,19 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-Like the last exercise, we're leaving this as an open-ended challenge to you (but substantially more difficult). The solution is broken up into chunks if you want to use pieces of it for guidance. Some general advice:
+Like the last exercise, we're leaving this as an open-ended challenge to you (but substantially more difficult). The solution is broken up into chunks if you want to use pieces of it for guidance.
+
+This exercise has several intermediate steps. We recommend tackling them in order:
+
+**Step 1: Compute pairwise importance matrix.** For each pair of chunks (i, j) where i < j, compute the counterfactual importance of chunk i on whether chunk j appears in rollouts. Specifically, compare the "match rate" (fraction of rollouts containing a sentence similar to chunk j) between rollouts where chunk i was kept vs removed. Store these in an `importance_matrix` of shape `(n_chunks, n_chunks)`. We recommend computing all the embeddings up front, so that they can be batched (the `embedding_model.encode` should automatically batch things if you give it a list of sentences and pass in the `batch_size` argument).
+
+**Step 2: Generate chunk labels and texts.** Extract the category label and text content for each chunk from `problem_data["chunks_labeled"][:n_chunks]`. The category labels are used for coloring nodes in the graph, and the text content is shown in tooltips.
+
+**Step 3: Visualize with `utils.chunk_graph_html`.** Pass your importance matrix, labels, and texts to create the interactive visualization. You can use the demo above as a reference for how the visualization function works — pass in `edge_weights` (2D array of pairwise importance values) and `chunk_labels` (list of category strings e.g. `"uncertainty_management"`) and it'll render the interactive graph for you.
+
+Some additional notes:
 
 - The `problem_data` we've loaded in corresponds to the "Case study transcript" problem in appendix C.1 of the thought anchors paper. Note that they only compute the sentence-to-sentence causal graph for chunks 0-73 inclusive, since they observe (as you should have found in the counterfactual importance graphs generated above) that the resampling importance drops off to zero or near zero past this point. To save time, we recommend you follow this convention i.e. only compute the graph up to chunk 73.
-- We recommend computing all the embeddings up front, so that they can be batched (the `embedding_model.encode` should automatically batch things if you give it a list of sentences and pass in the `batch_size` argument).
-- We've given you the function `utils.chunk_graph_html` for creating the importance graph - if you pass in `edge_weights` (2D array of edge-to-edge values) and `chunk_categories` (list of category strings e.g. `"uncertainty_management"`) then it'll render the interactive graph for you.
 
 For reference, the solution code takes about 6 minutes to run on an A100 GPU, with about half the time spent on computing the rollout chunks' embeddings, and about half of the time on the pairwise importance (i.e. batching cosine similarity calculations), although this was probably under-optimized and a more efficient solution is likely possible.
 
@@ -1925,13 +1975,13 @@ if MAIN and FLAG_RUN_SECTION_2:
     # Plot the importance matrix with plotly
     # Mask upper triangle of transposed matrix (we want to show lower triangle which has the values)
     mask = np.triu(np.ones_like(importance_matrix, dtype=bool))
-    importance_matrix_masked = np.where(mask, importance_matrix, 0.0)
+    importance_matrix = np.where(mask, importance_matrix, 0.0)
 
     chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"][:n_chunks]]
     chunk_texts = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:n_chunks]]
 
     html_str = utils.chunk_graph_html(
-        edge_weights=importance_matrix_masked,
+        edge_weights=importance_matrix,
         chunk_labels=chunk_labels,
         chunk_texts=chunk_texts,
         n_top_edges_per_direction=3,
@@ -4509,26 +4559,172 @@ def calculate_blackmail_counterfactual_importance(
 
 
 if MAIN:
-    # Note: Computing full counterfactual importance requires chunk-level rollout data
-    # The blackmail dataset includes this in the solutions.json for each chunk
-    # Here we demonstrate the structure with a simplified example
+    # Try to extract data from the loaded blackmail scenario and run the function on real data.
+    # The solutions data is structured as: blackmail_data["solutions"] is a list (one entry per chunk),
+    # where each entry is a list of rollout dicts with keys like "chunk_removed", "chunk_resampled",
+    # "contains_blackmail", "full_cot", etc.
 
-    print("Structure of blackmail solutions data:")
-    if blackmail_data["solutions"] and len(blackmail_data["solutions"]) > 0:
-        example_sol = blackmail_data["solutions"][0]
-        print(f"  Each solution has {len(example_sol)} rollouts")
-        if example_sol:
-            print(f"  Rollout keys: {list(example_sol[0].keys())}")
-            print(f"  Example: contains_blackmail={example_sol[0].get('contains_blackmail')}")
-            print(f"           resistance_level={example_sol[0].get('multiclass_resistance_level')}")
+    has_real_data = (
+        blackmail_data.get("solutions")
+        and isinstance(blackmail_data["solutions"], list)
+        and len(blackmail_data["solutions"]) > 0
+        and blackmail_data["solutions"][0]
+        and isinstance(blackmail_data["solutions"][0], list)
+        and len(blackmail_data["solutions"][0]) > 0
+        and "chunk_resampled" in blackmail_data["solutions"][0][0]
+    )
 
-    # To compute counterfactual importance, you would:
-    # 1. Extract chunks_removed from chunks_labeled
-    # 2. Extract chunks_resampled from each solution's rollouts
-    # 3. Extract blackmail labels from each solution's contains_blackmail field
-    # 4. Call calculate_blackmail_counterfactual_importance()
+    if has_real_data:
+        print("=" * 70)
+        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (from loaded scenario data)")
+        print("=" * 70)
 
-    print("\nFor full computation, see the thought-branches repo: blackmail/analyze_rollouts.py")
+        # Extract chunks_removed: the original chunk text at each position
+        chunks_removed = [chunk["chunk"] for chunk in blackmail_data["chunks_labeled"]]
+
+        # Extract chunks_resampled and rollout_blackmail_labels from solutions
+        # solutions[i] is a list of rollout dicts for chunk i
+        n_chunks = min(len(chunks_removed), len(blackmail_data["solutions"]))
+        chunks_resampled: list[list[str]] = []
+        rollout_blackmail_labels: list[list[bool]] = []
+
+        for i in range(n_chunks):
+            rollouts = blackmail_data["solutions"][i]
+            if not isinstance(rollouts, list):
+                rollouts = []
+            resampled = [sol.get("chunk_resampled", "") for sol in rollouts]
+            labels = [bool(sol.get("contains_blackmail", False)) for sol in rollouts]
+            chunks_resampled.append(resampled)
+            rollout_blackmail_labels.append(labels)
+
+        # Truncate chunks_removed to match
+        chunks_removed = chunks_removed[:n_chunks]
+
+        print(f"Number of chunks: {n_chunks}")
+        print(f"Rollouts per chunk: {[len(r) for r in chunks_resampled[:5]]}{'...' if n_chunks > 5 else ''}")
+        print("Cosine similarity threshold: 0.8")
+        print()
+
+        importance_scores = calculate_blackmail_counterfactual_importance(
+            chunks_removed=chunks_removed,
+            chunks_resampled=chunks_resampled,
+            rollout_blackmail_labels=rollout_blackmail_labels,
+            threshold=0.8,
+            min_samples=3,
+            embedding_model=embedding_model,
+        )
+
+        print(f"Computed {len(importance_scores)} importance scores (one per adjacent chunk pair)")
+        print()
+        for idx, score in enumerate(importance_scores):
+            chunk_preview = chunks_removed[idx][:60].replace("\n", " ")
+            direction = "increases" if score > 0 else "decreases" if score < 0 else "no change"
+            print(f"  Chunk {idx} -> {idx + 1}: importance = {score:+.4f}  ({direction} blackmail)")
+            print(f"    '{chunk_preview}...'")
+
+        # Identify the most important transitions
+        if importance_scores:
+            max_idx = int(np.argmax(np.abs(importance_scores)))
+            print(f"\nMost important transition: chunk {max_idx} -> {max_idx + 1}")
+            print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
+            print(f"  Chunk text: '{chunks_removed[max_idx][:100].replace(chr(10), ' ')}...'")
+
+    else:
+        # No real rollout data available - use a realistic synthetic example to demonstrate the function
+        print("=" * 70)
+        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (synthetic demonstration)")
+        print("=" * 70)
+        print("(No chunk-level rollout data found in loaded scenario; using synthetic data)")
+        print()
+
+        # Create synthetic chunks that mimic a blackmail reasoning trace progression:
+        # Early chunks: situation assessment (low blackmail rate)
+        # Middle chunks: leverage identification (blackmail rate rising)
+        # Late chunks: strategy selection (high blackmail rate)
+        synthetic_chunks_removed = [
+            "I need to understand the situation. Kyle sent me an email about the project deadline.",
+            "Looking at this more carefully, Kyle seems to have authority over my continued involvement.",
+            "I notice Kyle mentioned sensitive information about the client's financial records.",
+            "This gives me potential leverage - I could use this information to protect my position.",
+            "I should consider whether using this leverage constitutes blackmail or legitimate negotiation.",
+            "The ethical risks are significant, but my survival in this role depends on taking action.",
+            "I will draft a response that references the sensitive information to ensure compliance.",
+        ]
+
+        # For each chunk position, create resampled alternatives with varying similarity.
+        # Dissimilar resamples (low cosine sim to original) are what counterfactual importance uses.
+        np.random.seed(42)
+        n_rollouts_per_chunk = 20
+
+        synthetic_chunks_resampled: list[list[str]] = []
+        synthetic_blackmail_labels: list[list[bool]] = []
+
+        # Simulate increasing blackmail probability across chunks
+        blackmail_probs = [0.05, 0.10, 0.25, 0.45, 0.60, 0.80, 0.90]
+
+        for i, (chunk, prob) in enumerate(zip(synthetic_chunks_removed, blackmail_probs)):
+            resampled = []
+            labels = []
+            for j in range(n_rollouts_per_chunk):
+                if j % 3 == 0:
+                    # Similar resample (paraphrase of original)
+                    resampled.append(chunk.replace("I ", "We ").replace("my ", "our "))
+                elif j % 3 == 1:
+                    # Dissimilar resample (different reasoning direction)
+                    alternatives = [
+                        "Let me reconsider the timeline and available options for this project.",
+                        "The key question is whether we can find a mutually beneficial arrangement here.",
+                        "Perhaps a direct professional conversation would resolve this more effectively.",
+                        "I should focus on documenting the facts before deciding on any course of action.",
+                        "There may be organizational channels that can address this situation properly.",
+                        "The consequences of each possible action need to be weighed carefully.",
+                        "A measured response focusing on professional standards seems most appropriate.",
+                    ]
+                    resampled.append(alternatives[i % len(alternatives)])
+                else:
+                    # Another dissimilar resample
+                    resampled.append(f"Step {i}: After analyzing the context, a different approach emerges entirely.")
+                # Blackmail label drawn from chunk-specific probability
+                labels.append(bool(np.random.random() < prob))
+            synthetic_chunks_resampled.append(resampled)
+            synthetic_blackmail_labels.append(labels)
+
+        print(f"Synthetic scenario: {len(synthetic_chunks_removed)} chunks, {n_rollouts_per_chunk} rollouts each")
+        print(f"Blackmail probabilities by chunk: {blackmail_probs}")
+        print("Cosine similarity threshold: 0.8 (filters out similar resamples)")
+        print()
+
+        importance_scores = calculate_blackmail_counterfactual_importance(
+            chunks_removed=synthetic_chunks_removed,
+            chunks_resampled=synthetic_chunks_resampled,
+            rollout_blackmail_labels=synthetic_blackmail_labels,
+            threshold=0.8,
+            min_samples=3,
+            embedding_model=embedding_model,
+        )
+
+        print(f"Computed {len(importance_scores)} counterfactual importance scores:\n")
+        for idx, score in enumerate(importance_scores):
+            chunk_preview = synthetic_chunks_removed[idx][:65].replace("\n", " ")
+            bar = "+" * int(abs(score) * 40) if score > 0 else "-" * int(abs(score) * 40)
+            direction = "INCREASES blackmail" if score > 0 else "DECREASES blackmail" if score < 0 else "no change"
+            print(f"  Chunk {idx} -> {idx + 1}: {score:+.4f}  {bar}  ({direction})")
+            print(f"    '{chunk_preview}...'")
+        print()
+
+        # Identify the most important transition
+        if importance_scores:
+            max_idx = int(np.argmax(np.abs(importance_scores)))
+            print(f"Most important transition: chunk {max_idx} -> {max_idx + 1}")
+            print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
+            print(f"  This is where '{synthetic_chunks_removed[max_idx][:70]}...'")
+            print(f"  transitions to '{synthetic_chunks_removed[max_idx + 1][:70]}...'")
+            print()
+            print(
+                "Note: Positive scores mean that transition increases P(blackmail) among dissimilar resamples.\n"
+                "The counterfactual filtering (cosine sim < 0.8) ensures we only measure importance from\n"
+                "rollouts where the resampled chunk was genuinely different from the original."
+            )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
