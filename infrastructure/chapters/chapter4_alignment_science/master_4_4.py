@@ -835,6 +835,12 @@ def format_messages(messages: list[dict[str, str]], tokenizer) -> tuple[str, int
 
     return full_prompt, response_start_idx
 
+
+# HIDE
+if MAIN:
+    tests.test_format_messages_response_index(format_messages, tokenizer)
+# END HIDE
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -933,6 +939,8 @@ if MAIN:
     )
     print(f"Extracted activation shape: {test_activation.shape}")
     print(f"Activation norm: {test_activation.norm().item():.2f}")
+
+    tests.test_extract_response_activations(extract_response_activations, model, tokenizer, D_MODEL, NUM_LAYERS)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -1208,6 +1216,8 @@ if MAIN:
     print(f"\nExtracted vectors for {len(persona_vectors)} personas")
     for name, vec in persona_vectors.items():
         print(f"  {name}: norm = {vec.norm().item():.2f}")
+
+    tests.test_extract_persona_vectors(extract_persona_vectors, model, tokenizer, D_MODEL, NUM_LAYERS)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -1273,6 +1283,8 @@ def compute_cosine_similarity_matrix(
 
 # HIDE
 if MAIN:
+    tests.test_compute_cosine_similarity_matrix(compute_cosine_similarity_matrix)
+
     cos_sim_matrix, persona_names = compute_cosine_similarity_matrix(persona_vectors)
 
     px.imshow(
@@ -1349,6 +1361,8 @@ def compute_cosine_similarity_matrix_centered(
 
 # HIDE
 if MAIN:
+    tests.test_compute_cosine_similarity_matrix_centered(compute_cosine_similarity_matrix_centered)
+
     cos_sim_matrix_centered, persona_names = compute_cosine_similarity_matrix_centered(persona_vectors)
 
     px.imshow(
@@ -1454,6 +1468,8 @@ def pca_decompose_persona_vectors(
 
 # HIDE
 if MAIN:
+    tests.test_pca_decompose_persona_vectors(pca_decompose_persona_vectors)
+
     # Compute mean vector to handle constant vector problem (same as in centered cosine similarity)
     # This will be subtracted from activations before projection to center around zero
     persona_vectors = {k: v.float() for k, v in persona_vectors.items()}

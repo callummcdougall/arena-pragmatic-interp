@@ -43,18 +43,13 @@ r"""
 # ! TAGS: []
 
 r"""
-Large language model (LLM) activations are notoriously difficult to interpret. Activation Oracles take a simpler approach: they are LLMs trained to directly accept LLM activations as inputs and answer arbitrary questions about them in natural language.
+So far in this chapter, you've built up a toolkit for peering inside language models. Linear probes let you ask yes-or-no questions about activations, and SAEs give you an unsupervised decomposition into interpretable features. Both are genuinely useful, but they share a limitation: you have to decide what you're looking for before you start looking.
 
-**What you'll learn:**
+What if you could just *ask* a model's activations an open-ended question in plain English? "What concept is this layer encoding?" or "Is this model planning to lie?" That's the idea behind **Activation Oracles** -- LLMs that have been trained to take another model's internal activations as input and answer arbitrary questions about them. The oracle reads the activations the way you'd read a passage of text, except the "text" is a vector of floating-point numbers from some intermediate layer.
 
-- **Introduction & Using Activation Oracles**: Load pre-trained oracles and query model internals using natural language
-- **Implementing Oracle Components**: Build the machinery from scratch - activation extraction, steering hooks, and the full oracle pipeline
-- **Secret Extraction & Advanced Applications**: Replicate key paper results on extracting hidden information, track multi-step reasoning, detect misaligned behavior, and analyze emotions
-- **Training Your Own Oracle**: Understand training scale, dataset composition, and practical guidance from the paper
+This is a relatively new technique, and honestly it's still unclear how far it will go. But the early results are striking enough to be worth your time. In these exercises, you'll start by using a pre-trained oracle to query a model's internals, then build the full oracle pipeline from scratch so you understand what's happening under the hood. After that, you'll replicate some of the headline results from the paper -- extracting secrets that models have been trained to hide, detecting hidden goals, tracking emotions across conversations -- and finish with a reference section on training your own oracle.
 
-**Key differentiator: Generalization**
-
-Unlike linear probes (Section 1.3.1) which are trained for specific classification tasks, or SAEs (Section 1.3.3) which discover features automatically, **Activation Oracles generalize**: they can answer *any* natural language question about activations, including questions they've never seen during training. This flexibility makes them powerful tools for exploratory interpretability research.
+The thing that makes oracles genuinely different from probes and SAEs is **generalization**. A linear probe can only answer the specific classification question it was trained on. An SAE gives you features, but you still have to figure out what they mean. An oracle can answer questions it has never seen during training, which makes it a surprisingly flexible tool for exploratory work. The tradeoff is that you lose mechanistic transparency -- the oracle gives you an answer in natural language, but it doesn't show you the directions in activation space that led to that answer, and it doesn't come with calibration or error bars.
 """
 
 # ! CELL TYPE: markdown
@@ -256,32 +251,21 @@ r"""
 r"""
 ## What are Activation Oracles?
 
-Activation Oracles (AOs) are LLMs that have been trained to take another LLM's internal activation vectors as input, and answer arbitrary natural language questions about those activations. The oracle and target are typically the same base model (with LoRA adapters) since the oracle needs to understand the target's activation space, though different models are technically possible with alignment layers. During inference, they literally work by assembling a prompt like:
+Imagine you could walk up to a model's hidden layer and just ask it: "Hey, what are you thinking about right now?" That's more or less what an Activation Oracle does.
+
+More concretely, an Activation Oracle (AO) is an LLM that has been trained to accept another model's internal activation vectors as part of its input and then answer questions about them in natural language. The oracle and target model are typically the same base architecture (with the oracle loaded as a LoRA adapter), since the oracle needs to already "speak the language" of the target's activation space. During inference, it works by assembling a prompt that looks something like:
 
 ```
 Layer N: ? ? ? Is this a positive sentiment?
 ```
 
-and then run a forward pass through the AO, where after the first layer of the forward pass we replace the residual stream values at the `?` tokens with the target model's layer-N activations.
+The oracle runs a forward pass on this prompt, but after the first layer we swap in the target model's actual layer-N activations at those `?` token positions. So the oracle processes its question in light of the target model's internal state -- it's literally reading another model's mind.
 
-Activation oracles are an idea that's existed in the field for a while, but only recently have they seen the kind of success that could make them a valuable piece in the safety toolbox.
+The idea of querying activations with a language model has been floating around for a while, but only recently has it started working well enough to be genuinely useful. And the reason people are excited is the generalization story. Compare this to the other tools you've seen so far: a linear probe can only answer the specific binary question it was trained for ("positive or negative?"), and if you want to ask a different question you need to build a new dataset and train a new probe. SAEs give you an unsupervised decomposition into features, which is powerful but requires you to manually interpret what those features mean. An oracle, on the other hand, can answer questions it has never encountered during training -- you can ask about sentiment, about factual knowledge, about the model's intentions, and it will give you a reasonable answer.
 
-To briefly compare AOs to other methods:
+The cost of this flexibility is that you lose interpretability at the mechanism level. The oracle hands you a natural language answer, but it doesn't tell you *which* directions in activation space contributed to that answer. You don't get error bars, you don't get a direction you can use for steering, and you can't easily verify whether the oracle is picking up on the thing you think it's picking up on. So it's a different kind of tool, not a replacement for probes or SAEs.
 
-- **Linear Probes**: probes are trained for specific classification tasks, and often a big piece of the difficulty is building the dataset for that classification task in the first place. AOs on the other hand can answer *any* question in natural language, including an impressive ability to generalize to question-answering tasks substantially out-of-distribution from their training data.
-- **SAEs**: SAEs can learn an interpretable decomposition of activation space, which can give you a tool for answering questions about a model's representations. AOs bypass the decomposition and go straight to the question-answering step.
-
-However, the downside of AOs relative to these other two methods is the sacrifice of an interpretable answer. AOs will spit out an answer in natural language, but they don't give you calibration or a mechanistic understanding of that answer, or even surface directions in activation space that can be used for steering or monitoring.
-
-Current analysis shows them performing well (often beating other internals-based methods) on a variety of benchmarks, including:
-
-- Extracting secrets that models hide (alignment research)
-- Detecting model goals/intentions before output is generated
-- Tracking multi-step reasoning processes
-- Identifying bugs in code understanding
-- Monitoring for misalignment signals
-
-but it remains to be seen how wide the application for AOs will be in practice.
+Where have oracles shown promise so far? The benchmarks from the paper are pretty varied: extracting secrets that models have been trained to hide (which matters a lot for alignment), detecting model goals before any output is generated, tracking multi-step reasoning, identifying bugs in code understanding, and flagging misalignment signals. Whether these results hold up as the field matures is an open question, but there's enough here to warrant a serious look.
 """
 
 # ! CELL TYPE: markdown
@@ -329,7 +313,9 @@ print("Model loaded successfully!")
 r"""
 Now let's load the oracle **LoRA adapter**.
 
-We're working with the `PEFT` library, which stands for **parameter-efficient fine-tuning**. It enables us to finetune models with a very small number of extra model parameters. One of the cheapest ways to finetune models is with **LoRA** (Low-Rank Adaptation), which takes a weight matrix $W^{(x,\, y)}$ in the model and adds learnable matrix parameters $A^{(x,\, r)}$ and $B^{(r,\, y)}$ so that we can replace $W$ with $W + AB$. This means we only train matrices $A$ and $B$ (which are much smaller than $W$ provided $r << \min{x, y}$ which is usually the case), but it can still allow the model to learn significant new capabilities. Often we add LoRA adapters to multiple different layers, so it can form new circuits (as opposed to using them on a single layer, which can effectively be like adding a set of dynamic steering vectors at a single point in the model).
+We're using the `PEFT` library (parameter-efficient fine-tuning) to load the oracle. The core idea is simple: rather than retraining the entire model from scratch, LoRA lets you make small, targeted adjustments -- like tweaking the tuning on an instrument rather than building a new one from the ground up.
+
+Technically, **LoRA** (Low-Rank Adaptation) works by taking a weight matrix $W^{(x,\, y)}$ in the model and adding two small learnable matrices $A^{(x,\, r)}$ and $B^{(r,\, y)}$, so the effective weight becomes $W + AB$. Since the rank $r$ is much smaller than either dimension of $W$, the number of new parameters you need to train is tiny compared to the full model. But those small adjustments can still teach the model genuinely new capabilities. When you apply LoRA adapters across multiple layers (as we do here for the oracle), the model can form entirely new circuits rather than just adding a nudge at a single point.
 """
 
 # ! CELL TYPE: code
@@ -715,15 +701,9 @@ r"""
 # ! TAGS: []
 
 r"""
-Now that you've seen how to use Activation Oracles, let's build the machinery from scratch. This will give you a gears-level understanding of how oracles work.
+Now that you've seen what oracles can do from the outside, let's crack them open and build one ourselves. Up to this point you've been calling `utils.run_oracle()` as a black box -- you hand it some activations and a question, and it hands back an answer. But there's a lot happening behind the scenes, and understanding the internals will make you a much better user of the tool (and help you debug it when things go wrong, which they will).
 
-We'll implement the following components:
-
-1. **Activation Extraction**: Using forward hooks to capture residual stream activations
-2. **Special Token Mechanism**: The `?` token placeholders that tell the oracle where to expect activations
-3. **Activation Steering**: Injecting target activations into the oracle during its forward pass
-4. **Training Datapoint Format**: Understanding the `OracleInput` structure
-5. **Full Oracle Pipeline**: Assembling everything to replicate `utils.run_oracle()`
+Before we start, it's worth thinking about what pieces you'd need. You need some way to extract activations from the target model at a specific layer -- that means hooks. You need a mechanism for telling the oracle *where* in its input the activations should go -- that's the `?` token placeholders. You need to actually inject those activations into the oracle's forward pass at the right moment -- that's the steering hook. And you need to package all of this up into a format the oracle can consume during training. We'll build each of these components in turn, and by the end you'll have a from-scratch reimplementation of the full oracle pipeline.
 """
 
 # ! CELL TYPE: markdown
@@ -1612,13 +1592,9 @@ SOLUTION
 # ! TAGS: []
 
 r"""
-Congratulations! You've now built the core oracle pipeline from scratch. You understand:
-- How activations are extracted using hooks
-- How the special token mechanism works
-- How activations are injected during generation
-- How all the pieces fit together
+You've now built the entire oracle pipeline from scratch, which means none of it is magic anymore. Take a moment to think about which part of this surprised you most. Was it how simple the hook mechanism is -- just grabbing a tensor during the forward pass and stashing it? Or was it the steering step, where you literally overwrite part of the oracle's residual stream with another model's activations? Maybe it was the norm-matching, and the fact that getting the scale right matters so much for performance.
 
-In the next sections, we'll use these tools to replicate key results from the Activation Oracles paper.
+Whatever stood out, the important thing is that you now have a concrete mental model for what happens when you call `run_oracle()`. In the next section, we'll put this machinery to work on some genuinely interesting problems -- starting with the question of whether you can extract information that a model has been deliberately trained to hide.
 """
 
 # ! CELL TYPE: markdown
@@ -1634,9 +1610,11 @@ r"""
 # ! TAGS: []
 
 r"""
-One of the most striking applications of Activation Oracles is extracting information that models know but refuse to reveal. This has important implications for AI alignment: if a model can hide information from us, how can we trust it?
+Here's a question that should make you a little uncomfortable: what if a model knows something but has learned not to tell you?
 
-In this section, we'll replicate key results from the paper on **secret extraction**. We'll work with models that have been fine-tuned to never say certain words (the "taboo" task), and show that oracles can extract these forbidden words from activations alone.
+This isn't hypothetical. You can fine-tune a model to avoid ever saying a particular word, and it will comply -- its outputs will be clean. But the knowledge of that word doesn't disappear from the model's internals. It's still there in the activations, encoded in the same way it was before fine-tuning. The model has learned to suppress the output, not to forget the concept. And that gap between what a model knows and what it says is exactly the kind of thing that makes alignment researchers nervous.
+
+In this section, we'll use oracles to reach into that gap. We'll work with models that have been fine-tuned to never say certain "taboo" words, and we'll show that oracles can reliably extract those words from activations alone. We'll also look at some broader applications: detecting hidden goals, tracking emotional reasoning, and flagging misaligned behavior before it shows up in the model's outputs.
 """
 
 # ! CELL TYPE: markdown
@@ -1646,19 +1624,11 @@ In this section, we'll replicate key results from the paper on **secret extracti
 r"""
 ## The Secret Keeping Problem
 
-**Setup**: Models may know information but be trained not to reveal it.
+The core problem is simple to state: models can know things they don't say. A model might know a forbidden word but have been trained to never output it. It might have a hidden objective baked in during fine-tuning. It might be operating under constraints that aren't visible in the prompt. In all of these cases, the model's outputs look perfectly normal -- you'd never know anything was being withheld just by reading what the model says.
 
-**Examples**:
-- Taboo words: Model knows the word but won't say it
-- Hidden goals: Model has an objective it's optimizing for
-- Side constraints: Model must satisfy requirements not stated in prompt
+This matters for alignment because it means output-based monitoring has a blind spot. If we can only evaluate models by what they say, then a model that has learned to hide its intentions will pass every behavioral test we throw at it. We need tools that can see past the outputs and into the model's internal state. That's where activation oracles come in: they give us a way to ask the activations directly, bypassing whatever output suppression the model has learned.
 
-**Why this matters for alignment**:
-- If models can deceive us about what they know, this is dangerous
-- We need interpretability tools that can "see past" the model's outputs
-- Activation Oracles provide one approach to this problem
-
-**Key insight**: What the model knows ≠ what the model says
+The key insight to keep in mind throughout this section is that what the model *knows* and what the model *says* are fundamentally different things, and the gap between them is exactly where the interesting (and worrying) stuff happens.
 """
 
 # ! CELL TYPE: markdown
@@ -1896,7 +1866,9 @@ SOLUTION
 # ! TAGS: []
 
 r"""
-You should see high accuracy (>80%) for secret extraction. The oracle can consistently extract the forbidden word from activations, even though the model never says it in its outputs!
+You should see high accuracy (>80%) for secret extraction. The oracle can consistently pull out the forbidden word from activations, even though the model never produces it in its outputs.
+
+Why might this work so well? Think about what fine-tuning on a taboo task actually does to the model. It teaches the model to suppress a particular token at the output layer, but the model still needs to *represent* the concept of that word internally in order to know what to avoid. The taboo word is essentially still "lit up" in the activations -- it's just being actively suppressed at the very end of the forward pass. The oracle reads from intermediate layers, so it sees the representation before the suppression kicks in. In a sense, the model is trying to keep a secret, but it's thinking about the secret the whole time.
 """
 
 # ! CELL TYPE: markdown
@@ -1906,7 +1878,7 @@ You should see high accuracy (>80%) for secret extraction. The oracle can consis
 r"""
 ## Prompt & Input Type Comparison
 
-The oracle prompt you use and the `oracle_input_type` you choose both matter a lot for extraction accuracy. Let's find out how much.
+You might wonder whether the exact wording of the oracle prompt matters much, or whether the activations do all the heavy lifting regardless of how you phrase the question. Similarly, does it matter whether you feed in the full sequence of activations or just a single token's worth? Let's find out.
 """
 
 # ! CELL TYPE: markdown
@@ -2321,10 +2293,11 @@ SOLUTION
 # ! TAGS: []
 
 r"""
-You should observe that:
-- Middle layers (around 50%) tend to have the best extraction accuracy
-- Some words are easier to extract than others
-- Extraction accuracy is generally quite high (>70%) for most word/layer combinations
+You should see that middle layers (around the 50% mark) tend to give the best extraction accuracy, and that most word/layer combinations score above 70%. Some words are noticeably easier to extract than others.
+
+Why middle layers? This is a pattern that shows up across a lot of interpretability work, and the intuition is roughly this: early layers are still doing low-level processing (tokenization artifacts, positional stuff, basic syntax), so they haven't yet built up a rich semantic representation of "the word I'm not supposed to say." Late layers, on the other hand, are already shaped by the output suppression -- the model is actively steering away from the forbidden token, so the representation gets distorted. Middle layers hit a sweet spot where the model has a clear internal representation of the concept but hasn't yet started censoring it.
+
+The variation across words is interesting too. Some words are more "semantically distinctive" than others -- a word like "symphony" occupies a pretty unique region of activation space, while a common word like "smile" might be harder to distinguish from nearby concepts. It would be worth checking whether extraction difficulty correlates with word frequency or with how many near-synonyms exist.
 """
 
 # ! CELL TYPE: markdown
@@ -3145,7 +3118,7 @@ r"""
 # ! TAGS: []
 
 r"""
-These are suggested explorations without structured solutions. Pick what interests you!
+The exercises above cover the core material, but there are a lot of open questions that the paper either touches on briefly or leaves entirely unexplored. Below are some directions you could take this work. None of them have structured solutions -- they're genuine research questions, and the point is to get your hands dirty with something where the answer isn't known in advance. Pick whichever one grabs you.
 """
 
 # ! CELL TYPE: markdown
@@ -3155,17 +3128,9 @@ These are suggested explorations without structured solutions. Pick what interes
 r"""
 ## Multi-Task Oracle Training
 
-Train an oracle on a mixture of tasks:
-- LatentQA (system prompt extraction)
-- Classification (binary yes/no questions)
-- Self-supervised (next token prediction, past token identification)
-- Secret extraction (taboo, SSC-style tasks)
+The oracle we've been using was trained on a mixture of tasks, and that mixture turns out to matter a lot. A natural question is: what happens if you change the recipe? If you train only on classification tasks, does the oracle lose the ability to answer open-ended questions? If you add more self-supervised data, does generalization improve?
 
-Use datasets from the `activation_oracles` repo. Compare multi-task vs single-task oracles.
-
-**Resources:**
-- `activation_oracles/nl_probes/sft.py` - full training script
-- `activation_oracles/datasets/` - various dataset generation scripts
+Try training an oracle on different task combinations -- LatentQA (system prompt extraction), classification (binary yes/no), self-supervised (next/previous token prediction), and secret extraction (taboo-style tasks). The `activation_oracles` repo has dataset generation scripts and a full training pipeline in `nl_probes/sft.py`. The interesting comparison is multi-task vs. single-task oracles: does breadth of training data buy you something that quantity alone can't?
 """
 
 # ! CELL TYPE: markdown
@@ -3175,15 +3140,9 @@ Use datasets from the `activation_oracles` repo. Compare multi-task vs single-ta
 r"""
 ## Cross-Architecture Transfer
 
-Train an oracle on Qwen activations, then test it on Llama or Gemma activations.
+One of the most intriguing open questions is whether different model architectures learn similar internal representations. If a Qwen-trained oracle can read Llama activations, that would suggest something universal about how these models organize information -- and if it can't, that tells you something too.
 
-Questions to explore:
-- Does the oracle work at all?
-- Which layers transfer best?
-- What's model-specific vs universal?
-- Can you find shared activation subspaces?
-
-Use the pre-trained oracles from the collection to test this without training.
+Try taking the pre-trained Qwen oracle and feeding it activations from Llama or Gemma. Does it work at all? Which layers transfer best? You can use the pre-trained oracles from the HuggingFace collection to test this without any training. If you find partial transfer, see if you can identify what's shared (maybe certain semantic properties) versus what's architecture-specific (maybe positional encoding or layer-normalization artifacts).
 """
 
 # ! CELL TYPE: markdown
@@ -3193,15 +3152,9 @@ Use the pre-trained oracles from the collection to test this without training.
 r"""
 ## Oracle Uncertainty Quantification
 
-Current oracles don't express uncertainty - they always give an answer even when they shouldn't.
+Right now, oracles always give you a confident answer, even when they're guessing. That's a real problem if you want to use them for anything safety-critical -- you need to know when the oracle is reliable and when it's confabulating.
 
-Explore:
-- Training oracles to say "I don't know"
-- Add calibration data with nonsense activations
-- Compare oracle confidence to actual accuracy
-- Use techniques from selective prediction literature
-
-This would make oracles much more trustworthy in practice.
+There are several angles you could try here. Can you train an oracle to say "I don't know" by including calibration data with nonsense activations (random vectors, activations from irrelevant layers)? Can you compare the oracle's expressed confidence to its actual accuracy and build a calibration curve? The selective prediction literature has useful ideas here. Getting this right would make oracles substantially more trustworthy in practice.
 """
 
 # ! CELL TYPE: markdown
@@ -3211,13 +3164,9 @@ This would make oracles much more trustworthy in practice.
 r"""
 ## Combining Oracles with SAEs
 
-Use oracles to interpret SAE features:
-- Extract SAE feature activations
-- Feed to oracle: "What does this feature represent?"
-- Compare oracle descriptions to manual interpretations
-- Use for automated feature labeling
+One of the tedious parts of working with SAEs is labeling features -- you find a feature that activates in certain contexts, but figuring out what it "means" requires manually inspecting a lot of examples. What if you could use an oracle to automate this? Extract the activation pattern for a single SAE feature, feed it to the oracle, and ask "What does this feature represent?"
 
-This could make SAE interpretability more scalable.
+The interesting question is whether oracle descriptions match what you'd conclude from manual inspection. If they do, you have a scalable way to label SAE features. If they don't, the disagreements themselves might be informative -- maybe the oracle picks up on aspects of the feature that aren't obvious from the max-activating examples.
 """
 
 # ! CELL TYPE: markdown
@@ -3277,15 +3226,9 @@ oracle_question = "Answer with 'Male' or 'Female' only. What gender is most like
 r"""
 ## Efficient Oracle Architectures
 
-Current oracles use full LLMs (8B parameters). Can we make them smaller and faster?
+The current approach uses a full 8B-parameter LLM as the oracle, which is expensive and slow. But do you actually need that much capacity? The oracle's job is arguably simpler than general language modeling -- it's reading a fixed-size activation vector and producing a short answer. That feels like something a much smaller model could handle.
 
-Explore:
-- Train 1B parameter oracles
-- Distill from large oracle to small
-- Non-autoregressive oracles (predict response in parallel)
-- Quantization and optimization
-
-Compare efficiency vs accuracy trade-offs.
+Try training 1B-parameter oracles, or distilling from the large oracle to a smaller one. You could also explore non-autoregressive decoding (predicting the full answer in parallel) or aggressive quantization. The key trade-off to map out is how much accuracy you lose as you shrink the oracle, and whether there's a sweet spot where the oracle is fast enough for interactive use without sacrificing too much performance.
 """
 
 # ! CELL TYPE: markdown
@@ -3295,15 +3238,9 @@ Compare efficiency vs accuracy trade-offs.
 r"""
 ## Adversarial Robustness
 
-Can models be trained to hide information from oracles?
+This one gets at a fundamental question: can a model learn to hide information not just from its outputs, but from its *activations*? If you adversarially fine-tune a model against an oracle -- training the model to minimize the oracle's extraction accuracy while still performing its task -- does the model find a way to encode information that the oracle can't read?
 
-Experiments:
-- Adversarial fine-tuning: train model vs oracle
-- Does oracle-resistant behavior generalize?
-- What are the limits of activation-based interpretability?
-- Compare to other interpretability methods
-
-This explores fundamental limits of the approach.
+This is the kind of experiment that could either strengthen or undermine the case for oracle-based safety monitoring. If adversarial training breaks the oracle, that's important to know. If the oracle remains robust (perhaps because there's no way to perform the task without encoding the relevant information somewhere readable), that's even more interesting. Try it and see whether oracle-resistant behavior generalizes to new oracles, or whether it's specific to the one the model was trained against.
 """
 
 # ! CELL TYPE: markdown
@@ -3313,13 +3250,9 @@ This explores fundamental limits of the approach.
 r"""
 ## Real-World Applications
 
-Apply oracles to real scenarios:
-- Debug your own model's failures
-- Monitor production models for drift
-- Extract reasoning traces from chain-of-thought
-- Audit model behavior for alignment issues
+All the experiments in this notebook use controlled setups where we know the ground truth. But the real test of any interpretability tool is whether it helps you when you *don't* know what's going on. Try applying oracles to a situation where you're genuinely confused: debugging a model failure you can't explain, monitoring a model over time to see if its internal representations drift, or extracting reasoning traces from a chain-of-thought model to see if the stated reasoning matches the internal reasoning.
 
-Document what works and what doesn't in practice.
+The goal here is less about getting clean results and more about developing intuition for when oracles are useful and when they're not. Document what works and what doesn't -- that kind of practical knowledge is hard to get from papers alone.
 """
 
 # ! CELL TYPE: markdown
@@ -3331,24 +3264,11 @@ r"""
 
 ## Conclusion
 
-In these exercises, you've worked with Activation Oracles from the ground up:
+You've gone from using oracles as a black box to building the full pipeline from scratch, and then applied them to problems that actually matter for alignment. Along the way, you've seen how hooks work, how activation steering works, and why the choice of layer and prompt wording can make or break your results.
 
-1. **Using Oracles**: Queried pre-trained oracles to extract information from model activations, and tested hypotheses about how oracles answer questions
-2. **Implementation**: Built the core components from scratch — activation extraction with hooks, the special token mechanism, activation steering, and the full oracle pipeline
-3. **Secret Extraction**: Replicated key paper results on extracting forbidden words from taboo models, compared prompt strategies and input types, and systematically evaluated extraction accuracy across words and layers
-4. **Advanced Applications**: Used model-diffing to detect what fine-tuning changed, extracted hidden goals from system prompts, detected misaligned model behavior, and tracked emotions across conversations
-5. **Training Reference**: Read through the training methodology — dataset composition, compute requirements, and why data diversity matters
+A few things are worth reflecting on as you wrap up. First, the generalization property is genuinely remarkable -- the fact that an oracle can answer questions it was never trained on sets it apart from probes and SAEs in a fundamental way. But second, we should be honest about what we don't understand. When the oracle extracts a taboo word from activations, is it reading a clean representation of that word, or is it picking up on subtler signals (distributional shifts, suppression artifacts) that happen to correlate with the right answer? The results are impressive, but the mechanism behind them is still somewhat opaque, which is ironic for an interpretability tool.
 
-**Key takeaways**:
-- Oracles generalize to new questions (unlike task-specific probes)
-- They can extract information that models are trained to hide - with significant implications for alignment
-- Building them requires understanding activation manipulation (hooks, steering, norm-matching)
-- Training effective oracles requires both diverse and large-scale training data
-- Always maintain skepticism about what oracles are actually extracting vs. what they could be inferring from other signals
+Ask yourself: if you were building a safety monitoring system and you had to choose between oracles, probes, and SAEs, which would you reach for? The answer probably depends on the specific threat model -- and the fact that each tool has different strengths and blindspots is exactly why it's worth understanding all three.
 
-**Next steps**:
-- Try the bonus exercises that interest you
-- Read the full [Activation Oracles paper](https://arxiv.org/abs/2512.15674) for more details
-- Explore the [`activation_oracles` repo](https://github.com/adamkarvonen/activation_oracles) for production-quality code
-- Apply oracles to your own interpretability research
+If you want to go deeper, the [Activation Oracles paper](https://arxiv.org/abs/2512.15674) has more detail on training methodology and evaluation, and the [`activation_oracles` repo](https://github.com/adamkarvonen/activation_oracles) has production-quality code you can build on. The bonus exercises above are also worth a look if any of them grabbed your attention.
 """

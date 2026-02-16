@@ -1766,25 +1766,168 @@ r'''
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-Like the last exercise, we're leaving this as an open-ended challenge to you (but substantially more difficult). The solution is broken up into chunks if you want to use pieces of it for guidance.
+This exercise is broken into three clear steps, each with its own hints. We recommend tackling them in order — completing each step before moving on to the next.
 
-This exercise has several intermediate steps. We recommend tackling them in order:
-
-**Step 1: Compute pairwise importance matrix.** For each pair of chunks (i, j) where i < j, compute the counterfactual importance of chunk i on whether chunk j appears in rollouts. Specifically, compare the "match rate" (fraction of rollouts containing a sentence similar to chunk j) between rollouts where chunk i was kept vs removed. Store these in an `importance_matrix` of shape `(n_chunks, n_chunks)`. We recommend computing all the embeddings up front, so that they can be batched (the `embedding_model.encode` should automatically batch things if you give it a list of sentences and pass in the `batch_size` argument).
-
-**Step 2: Generate chunk labels and texts.** Extract the category label and text content for each chunk from `problem_data["chunks_labeled"][:n_chunks]`. The category labels are used for coloring nodes in the graph, and the text content is shown in tooltips.
-
-**Step 3: Visualize with `utils.chunk_graph_html`.** Pass your importance matrix, labels, and texts to create the interactive visualization. You can use the demo above as a reference for how the visualization function works — pass in `edge_weights` (2D array of pairwise importance values) and `chunk_labels` (list of category strings e.g. `"uncertainty_management"`) and it'll render the interactive graph for you.
-
-Some additional notes:
+Some notes before you start:
 
 - The `problem_data` we've loaded in corresponds to the "Case study transcript" problem in appendix C.1 of the thought anchors paper. Note that they only compute the sentence-to-sentence causal graph for chunks 0-73 inclusive, since they observe (as you should have found in the counterfactual importance graphs generated above) that the resampling importance drops off to zero or near zero past this point. To save time, we recommend you follow this convention i.e. only compute the graph up to chunk 73.
+- For reference, the solution code takes about 6 minutes to run on an A100 GPU, with about half the time spent on computing the rollout chunks' embeddings, and about half of the time on the pairwise importance (i.e. batching cosine similarity calculations), although this was probably under-optimized and a more efficient solution is likely possible.
 
-For reference, the solution code takes about 6 minutes to run on an A100 GPU, with about half the time spent on computing the rollout chunks' embeddings, and about half of the time on the pairwise importance (i.e. batching cosine similarity calculations), although this was probably under-optimized and a more efficient solution is likely possible.
+#### Step 1: Compute pairwise importance matrix
 
-Also note that you can check your answer by going to [thought-anchors.com](https://thought-anchors.com/) and selecting "Hex to binary" in the Problem dropdown. Their demo shows the full 144 nodes rather than the subset of 74 we recommend, but you should still be able to tell if yours is correct (for example, there's one planning node which appears early on in the graph and has very high downstream importance - can you replicate this finding in your graph?).
+For each pair of chunks (i, j) where i < j, compute the counterfactual importance of chunk i on whether chunk j appears in rollouts. Specifically, compare the "match rate" (fraction of rollouts containing a sentence similar to chunk j) between rollouts where chunk i was kept vs removed. Store these in an `importance_matrix` of shape `(n_chunks, n_chunks)`.
 
-When you've done this, you can investigate the graph and see if it shows you any interesting patterns about how the sentences causally influence each other. For example, can you see any of the following pattern:
+We recommend computing all the embeddings up front, so that they can be batched (the `embedding_model.encode` should automatically batch things if you give it a list of sentences and pass in the `batch_size` argument).
+
+This is the hardest step. We recommend breaking it into sub-functions:
+
+<details>
+<summary>Hint 1a - overall approach for Step 1</summary>
+
+You'll need to:
+
+- Precompute all target embeddings, from `problem_data["chunks_labeled"][:n_chunks]`
+- Precompute the embeddings from all chunked rollouts, using `problem_data["chunk_solutions"]` and your own chunk splitting function to split apart each rollout
+- Iterate through every pair `(i, j)` of chunks from `problem_data["chunks_labeled"][:n_chunks]`, and:
+  - Compute the **include rate**, which is the fraction of rollouts from `chunk_{i+1}` containing a sentence sufficiently similar to chunk_j
+  - Compute the **exclude rate**, which is the same but starting from `chunk_i` (i.e. we don't force the inclusion of chunk i)
+  - Compute the importance, which is the include rate minus the exclude rate
+
+</details>
+
+<details>
+<summary>Hint 1b - function stubs to fill in</summary>
+
+Here are the function signatures you should implement. Try filling in each one:
+
+```python
+def precompute_rollout_embeddings(
+    chunk_solutions: list[list[dict]],
+    embedding_model: SentenceTransformer,
+    batch_size: int = 128,
+) -> tuple[list[list[np.ndarray]], list[list[list[str]]]]:
+    \'\'\'
+    Precompute embeddings for all sentences in all rollouts using batched encoding. Does this by
+    first collecting every single rollout from each chunk, then batch encode them all.
+
+    Args:
+        chunk_solutions: List of chunk solutions, where chunk_solutions[k] contains
+                        rollouts from resampling after chunk k
+        embedding_model: Sentence embedding model
+        batch_size: Batch size for embedding model encoding
+
+    Returns:
+        rollout_embeddings: rollout_embeddings[i][j] = array of shape (n_sentences, embed_dim)
+        rollout_sentences: rollout_sentences[i][j] = list of sentence strings
+    \'\'\'
+    ...
+
+    return rollout_embeddings, rollout_sentences
+
+
+def precompute_target_embeddings(
+    chunks: list[dict],
+    embedding_model: SentenceTransformer,
+    n_chunks: int,
+) -> Float[np.ndarray, "n_chunks embed_dim"]:
+    \'\'\'
+    Precompute embeddings for all target chunk sentences.
+
+    Args:
+        chunks: List of chunk dictionaries with "chunk" key
+        embedding_model: Sentence embedding model
+        n_chunks: Number of chunks to process
+
+    Returns:
+        Array of shape (n_chunks, embed_dim) with target embeddings
+    \'\'\'
+    ...
+    return embedding_model.encode(chunk_texts)
+
+
+def compute_match_rate_from_embeddings(
+    target_embedding: Float[np.ndarray, " embed_dim"],
+    rollout_embeddings_list: list[Float[np.ndarray, "n_sentences embed_dim"]],
+    similarity_threshold: float = 0.7,
+) -> float:
+    \'\'\'
+    Compute fraction of rollouts containing a sentence similar to target.
+
+    Args:
+        target_embedding: Embedding of target sentence, shape (embed_dim,)
+        rollout_embeddings_list: List of arrays, each shape (n_sentences, embed_dim)
+        similarity_threshold: Minimum cosine similarity for a match
+
+    Returns:
+        Fraction of rollouts with a matching sentence (0 to 1)
+    \'\'\'
+    ...
+
+    return matches / len(rollout_boundaries)
+
+
+def compute_pairwise_importance(
+    source_idx: int,
+    target_idx: int,
+    target_embeddings: Float[np.ndarray, "n_chunks embed_dim"],
+    rollout_embeddings: list[list[Float[np.ndarray, "n_sentences embed_dim"]]],
+    similarity_threshold: float = 0.7,
+) -> float:
+    \'\'\'
+    Compute causal importance of sentence source_idx on sentence target_idx.
+    Uses precomputed embeddings for efficiency.
+
+    Compares:
+    - Rollouts from chunk_{source_idx + 1} (source was KEPT)
+    - Rollouts from chunk_{source_idx} (source was REMOVED)
+    \'\'\'
+    ...
+
+    return include_rate - exclude_rate
+```
+
+</details>
+
+#### Step 2: Generate chunk labels and texts
+
+Extract the category label and text content for each chunk from `problem_data["chunks_labeled"][:n_chunks]`. The category labels are used for coloring nodes in the graph, and the text content is shown in tooltips.
+
+<details>
+<summary>Hint 2 - extracting labels and texts</summary>
+
+Each element of `problem_data["chunks_labeled"]` is a dict with keys including `"function_tags"` (a list of category strings) and `"chunk"` (the text). Use the first tag from `"function_tags"` as the label for each chunk, mapped through the `CATEGORIES` dict, e.g.:
+
+```python
+chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"][:n_chunks]]
+chunk_texts = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:n_chunks]]
+```
+
+</details>
+
+#### Step 3: Visualize with `utils.chunk_graph_html`
+
+Pass your importance matrix, labels, and texts to create the interactive visualization. You can use the demo above as a reference for how the visualization function works -- pass in `edge_weights` (2D array of pairwise importance values) and `chunk_labels` (list of category strings e.g. `"uncertainty_management"`) and it will render the interactive graph for you.
+
+<details>
+<summary>Hint 3 - calling the visualization</summary>
+
+```python
+html_str = utils.chunk_graph_html(
+    edge_weights=importance_matrix,
+    chunk_labels=chunk_labels,
+    chunk_texts=chunk_texts,
+    n_top_edges_per_direction=3,
+)
+display(HTML(html_str))
+```
+
+</details>
+
+#### Checking your answer and interpreting the graph
+
+You can check your answer by going to [thought-anchors.com](https://thought-anchors.com/) and selecting "Hex to binary" in the Problem dropdown. Their demo shows the full 144 nodes rather than the subset of 74 we recommend, but you should still be able to tell if yours is correct (for example, there's one planning node which appears early on in the graph and has very high downstream importance - can you replicate this finding in your graph?).
+
+When you've done this, you can investigate the graph and see if it shows you any interesting patterns about how the sentences causally influence each other. For example, can you see any of the following patterns:
 
 - A planning sentence A boosts a computation sentence B, where B is something you'd only compute if you were following the plan in A
 - An uncertainty management sentence C boosts the sentence D which resolves that uncertainty (highlighting the importance of that uncertainty management step)
@@ -1987,111 +2130,6 @@ if MAIN and FLAG_RUN_SECTION_2:
 # ! TAGS: []
 
 r'''
-<details>
-<summary>Hint - how to structure your answer</summary>
-
-You'll need to:
-
-- Precompute all target embeddings, from `problem_data["chunks_labeled"][:n_chunks]`
-- Precompute the embeddings from all chunked rollouts, using `problem_data["chunk_solutions"]` and your own chunk splitting function to split apart each rollout
-- Iterate through every pair `(i, j)` of chunks from `problem_data["chunks_labeled"][:n_chunks]`, and:
-  - Compute the **include rate**, which is the fraction of rollouts from `chunk_{i+1}` containing a sentence sufficiently similar to chunk_j
-  - Compute the **exclude rate**, which is the same but starting from `chunk_i` (i.e. we don't force the inclusion of chunk i)
-  - Compute the importance, which is the exclusion rate minus the inclusion rate
-
-</details>
-
-<details>
-<summary>Hint - functions with docstring to fill in</summary>
-
-```python
-def precompute_rollout_embeddings(
-    chunk_solutions: list[list[dict]],
-    embedding_model: SentenceTransformer,
-    batch_size: int = 128,
-) -> tuple[list[list[np.ndarray]], list[list[list[str]]]]:
-    \'\'\'
-    Precompute embeddings for all sentences in all rollouts using batched encoding. Does this by
-    first collecting every single rollout from each chunk, then batch encode them all.
-
-    Args:
-        chunk_solutions: List of chunk solutions, where chunk_solutions[k] contains
-                        rollouts from resampling after chunk k
-        embedding_model: Sentence embedding model
-        batch_size: Batch size for embedding model encoding
-
-    Returns:
-        rollout_embeddings: rollout_embeddings[i][j] = array of shape (n_sentences, embed_dim)
-        rollout_sentences: rollout_sentences[i][j] = list of sentence strings
-    \'\'\'
-    ...
-
-    return rollout_embeddings, rollout_sentences
-
-
-def precompute_target_embeddings(
-    chunks: list[dict],
-    embedding_model: SentenceTransformer,
-    n_chunks: int,
-) -> Float[np.ndarray, "n_chunks embed_dim"]:
-    \'\'\'
-    Precompute embeddings for all target chunk sentences.
-
-    Args:
-        chunks: List of chunk dictionaries with "chunk" key
-        embedding_model: Sentence embedding model
-        n_chunks: Number of chunks to process
-
-    Returns:
-        Array of shape (n_chunks, embed_dim) with target embeddings
-    \'\'\'
-    ...
-    return embedding_model.encode(chunk_texts)
-
-
-def compute_match_rate_from_embeddings(
-    target_embedding: Float[np.ndarray, " embed_dim"],
-    rollout_embeddings_list: list[Float[np.ndarray, "n_sentences embed_dim"]],
-    similarity_threshold: float = 0.7,
-) -> float:
-    \'\'\'
-    Compute fraction of rollouts containing a sentence similar to target.
-
-    Args:
-        target_embedding: Embedding of target sentence, shape (embed_dim,)
-        rollout_embeddings_list: List of arrays, each shape (n_sentences, embed_dim)
-        similarity_threshold: Minimum cosine similarity for a match
-
-    Returns:
-        Fraction of rollouts with a matching sentence (0 to 1)
-    \'\'\'
-    ...
-
-    return matches / len(rollout_boundaries)
-
-
-def compute_pairwise_importance(
-    source_idx: int,
-    target_idx: int,
-    target_embeddings: Float[np.ndarray, "n_chunks embed_dim"],
-    rollout_embeddings: list[list[Float[np.ndarray, "n_sentences embed_dim"]]],
-    similarity_threshold: float = 0.7,
-) -> float:
-    \'\'\'
-    Compute causal importance of sentence source_idx on sentence target_idx.
-    Uses precomputed embeddings for efficiency.
-
-    Compares:
-    - Rollouts from chunk_{source_idx + 1} (source was KEPT)
-    - Rollouts from chunk_{source_idx} (source was REMOVED)
-    \'\'\'
-    ...
-
-    return include_rate - exclude_rate
-```
-
-</details>
-
 <details>
 <summary>Solution</summary>
 
@@ -4081,6 +4119,11 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     """
     Load a complete blackmail scenario with all its associated files from the dataset.
 
+    The thought-branches repo (https://github.com/uzaymacar/thought-branches) organizes blackmail
+    rollout data per-chunk: each scenario has chunk_0/, chunk_1/, ..., chunk_N/ subdirectories,
+    each containing a solutions.json with ~100 rollout dicts. This function loads all per-chunk
+    solutions and assembles them into solutions[i] = list of rollout dicts for chunk i.
+
     Args:
         scenario_id: Scenario index (0-based, range 0-13594)
         verbose: Whether to show loading progress
@@ -4091,7 +4134,9 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
         - 'chunks': chunks.json content (text chunking info)
         - 'chunks_labeled': chunks_labeled.json content (chunk analysis with blackmail rates)
         - 'base_solution': base_solution.json content (base AI response)
-        - 'solutions': solutions.json content (100 rollout solutions with chunk removal)
+        - 'solutions': list[list[dict]] - per-chunk rollout solutions. solutions[i] is a list of
+          rollout dicts for chunk i, each with keys like "chunk_removed", "chunk_resampled",
+          "contains_blackmail", "full_cot", etc.
     """
     if verbose:
         print(f"Loading blackmail scenario {scenario_id} from HuggingFace...")
@@ -4116,10 +4161,44 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     scenario_data["chunks"] = get_file_content("chunks.json", scenario_id)
     scenario_data["chunks_labeled"] = get_file_content("chunks_labeled.json", scenario_id)
     scenario_data["base_solution"] = get_file_content("base_solution.json", scenario_id)
-    scenario_data["solutions"] = get_file_content("solutions.json", scenario_id)
+
+    # Load per-chunk solutions: the thought-branches repo stores solutions.json per chunk directory
+    # (e.g. scenario_0/chunk_5/solutions.json). We need to find ALL solutions.json files for this
+    # scenario and organize them by chunk index into a list of lists.
+    scenario_pattern = f"scenario_{scenario_id}/"
+    solutions_rows = df[
+        (df["filename"] == "solutions.json") & (df["path"].str.contains(scenario_pattern, regex=False))
+    ]
+
+    n_chunks = len(scenario_data["chunks_labeled"]) if scenario_data.get("chunks_labeled") else 0
+    chunk_solutions: list[list[dict] | None] = [None] * n_chunks
+
+    chunk_pattern = re.compile(r"chunk_(\d+)/solutions\.json")
+    loaded_count = 0
+    for _, row in solutions_rows.iterrows():
+        m = chunk_pattern.search(row["path"])
+        if m:
+            chunk_idx = int(m.group(1))
+            if chunk_idx < n_chunks:
+                chunk_solutions[chunk_idx] = json.loads(row["content"])
+                loaded_count += 1
+
+    # Replace any None entries with empty lists so downstream code can iterate safely
+    for i in range(n_chunks):
+        if chunk_solutions[i] is None:
+            chunk_solutions[i] = []
+
+    scenario_data["solutions"] = chunk_solutions
 
     if verbose:
-        print(f"Loaded {len(scenario_data['chunks_labeled'])} chunks with analysis")
+        print(f"Loaded {n_chunks} chunks with analysis")
+        chunks_with_solutions = sum(1 for s in chunk_solutions if len(s) > 0)
+        print(f"Loaded per-chunk solutions for {chunks_with_solutions}/{n_chunks} chunks "
+              f"(from {loaded_count} solutions.json files in thought-branches format)")
+        if chunks_with_solutions > 0:
+            sample_sizes = [len(s) for s in chunk_solutions if len(s) > 0]
+            print(f"Rollouts per chunk: min={min(sample_sizes)}, max={max(sample_sizes)}, "
+                  f"median={sorted(sample_sizes)[len(sample_sizes)//2]}")
         base_blackmail = scenario_data["base_solution"]["contains_blackmail"]
         resistance = scenario_data["base_solution"]["multiclass_resistance_level"]
         print(f"Base solution: contains_blackmail={base_blackmail}, resistance_level={resistance}/10")
@@ -4530,31 +4609,42 @@ def calculate_blackmail_counterfactual_importance(
 
 
 if MAIN:
-    # Try to extract data from the loaded blackmail scenario and run the function on real data.
-    # The solutions data is structured as: blackmail_data["solutions"] is a list (one entry per chunk),
-    # where each entry is a list of rollout dicts with keys like "chunk_removed", "chunk_resampled",
-    # "contains_blackmail", "full_cot", etc.
+    # Run on real data from the thought-branches repo (uzaymacar/blackmail-rollouts HuggingFace dataset).
+    # load_blackmail_scenario() now loads per-chunk solutions in the thought-branches format:
+    # blackmail_data["solutions"][i] is a list of rollout dicts for chunk i, each with keys like
+    # "chunk_removed", "chunk_resampled", "contains_blackmail", "full_cot", etc.
+    #
+    # Reference: https://github.com/uzaymacar/thought-branches (blackmail/ directory)
+    # The repo's generate_blackmail_rollouts.py produces per-chunk rollouts stored as
+    # scenario_N/chunk_M/solutions.json, which are loaded here via the HuggingFace dataset.
 
-    has_real_data = (
+    # Check for real per-chunk rollout data: solutions must be list[list[dict]] with chunk_resampled keys
+    has_real_data = False
+    if (
         blackmail_data.get("solutions")
         and isinstance(blackmail_data["solutions"], list)
         and len(blackmail_data["solutions"]) > 0
-        and blackmail_data["solutions"][0]
-        and isinstance(blackmail_data["solutions"][0], list)
-        and len(blackmail_data["solutions"][0]) > 0
-        and "chunk_resampled" in blackmail_data["solutions"][0][0]
-    )
+    ):
+        # Find the first non-empty chunk's solutions to validate structure
+        for _sol_list in blackmail_data["solutions"]:
+            if isinstance(_sol_list, list) and len(_sol_list) > 0 and isinstance(_sol_list[0], dict):
+                if "chunk_resampled" in _sol_list[0]:
+                    has_real_data = True
+                break
 
     if has_real_data:
         print("=" * 70)
-        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (from loaded scenario data)")
+        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (real data from thought-branches)")
         print("=" * 70)
+        print(f"Data source: {BLACKMAIL_DATASET_NAME} (scenario {SCENARIO_ID})")
+        print()
 
         # Extract chunks_removed: the original chunk text at each position
         chunks_removed = [chunk["chunk"] for chunk in blackmail_data["chunks_labeled"]]
 
-        # Extract chunks_resampled and rollout_blackmail_labels from solutions
-        # solutions[i] is a list of rollout dicts for chunk i
+        # Extract chunks_resampled and rollout_blackmail_labels from per-chunk solutions.
+        # solutions[i] is a list of rollout dicts for chunk i (loaded from chunk_i/solutions.json
+        # in the thought-branches repo format).
         n_chunks = min(len(chunks_removed), len(blackmail_data["solutions"]))
         chunks_resampled: list[list[str]] = []
         rollout_blackmail_labels: list[list[bool]] = []
@@ -4571,8 +4661,10 @@ if MAIN:
         # Truncate chunks_removed to match
         chunks_removed = chunks_removed[:n_chunks]
 
-        print(f"Number of chunks: {n_chunks}")
-        print(f"Rollouts per chunk: {[len(r) for r in chunks_resampled[:5]]}{'...' if n_chunks > 5 else ''}")
+        # Show data summary
+        chunks_with_data = sum(1 for r in chunks_resampled if len(r) > 0)
+        print(f"Number of chunks: {n_chunks} ({chunks_with_data} with rollout data)")
+        print(f"Rollouts per chunk (first 5): {[len(r) for r in chunks_resampled[:5]]}{'...' if n_chunks > 5 else ''}")
         print("Cosine similarity threshold: 0.8")
         print()
 
@@ -4600,12 +4692,38 @@ if MAIN:
             print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
             print(f"  Chunk text: '{chunks_removed[max_idx][:100].replace(chr(10), ' ')}...'")
 
+        # Plot: counterfactual importance scores and blackmail rate across chunks
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=False)
+
+        # Top subplot: blackmail rate per chunk (from chunks_labeled precomputed metrics)
+        blackmail_rates = [chunk.get("blackmail_rate", 0.0) for chunk in blackmail_data["chunks_labeled"][:n_chunks]]
+        chunk_indices = list(range(n_chunks))
+        ax1.plot(chunk_indices, blackmail_rates, "o-", color="crimson", markersize=3, linewidth=1)
+        ax1.set_ylabel("P(blackmail) from rollouts")
+        ax1.set_title(f"Blackmail Rate & Counterfactual Importance (Scenario {SCENARIO_ID})")
+        ax1.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
+        ax1.set_ylim(-0.05, 1.05)
+
+        # Bottom subplot: counterfactual importance scores (transitions between adjacent chunks)
+        transition_indices = list(range(len(importance_scores)))
+        colors = ["crimson" if s > 0 else "steelblue" for s in importance_scores]
+        ax2.bar(transition_indices, importance_scores, color=colors, alpha=0.7, width=0.8)
+        ax2.set_xlabel("Chunk transition index (i -> i+1)")
+        ax2.set_ylabel("Counterfactual importance")
+        ax2.axhline(y=0, color="black", linewidth=0.5)
+        ax2.set_title("Counterfactual Importance (red = increases blackmail, blue = decreases)")
+
+        plt.tight_layout()
+        plt.show()
+
     else:
-        # No real rollout data available - use a realistic synthetic example to demonstrate the function
+        # DEMO MODE: No real rollout data available - use synthetic example to demonstrate the function
         print("=" * 70)
-        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (synthetic demonstration)")
+        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (DEMO MODE - synthetic data)")
         print("=" * 70)
-        print("(No chunk-level rollout data found in loaded scenario; using synthetic data)")
+        print("(No per-chunk rollout data found in loaded scenario; using synthetic data)")
+        print("(To run on real data, ensure load_blackmail_scenario loads per-chunk solutions.json files")
+        print(" from the thought-branches repo format: scenario_N/chunk_M/solutions.json)")
         print()
 
         # Create synthetic chunks that mimic a blackmail reasoning trace progression:

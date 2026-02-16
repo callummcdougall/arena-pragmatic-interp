@@ -841,7 +841,7 @@ You should see most or all categories get higher scores in the misaligned than i
 # ! TAGS: []
 
 r"""
-# 2️⃣ Autoraters for Misalignment
+# 2️⃣ Quantifying Misalignment
 """
 
 # ! CELL TYPE: markdown
