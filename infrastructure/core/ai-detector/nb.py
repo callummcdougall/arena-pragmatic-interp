@@ -1,10 +1,26 @@
 import re
+from enum import StrEnum
 from pathlib import Path
 
 from html_template import generate_html
-from sapling import key_for, save_cache, score_many, split_into_chunks
 
 CHAPTERS_DIR = "/root/arena-pragmatic-interp/infrastructure/chapters"
+
+
+class Detector(StrEnum):
+    SAPLING = "sapling"
+    GPTZERO = "gptzero"
+
+
+def _load_detector(detector: Detector):
+    """Import and return (key_for, save_cache, score_many, split_into_chunks) for the given detector."""
+    if detector is Detector.SAPLING:
+        from sapling import key_for, save_cache, score_many, split_into_chunks
+    elif detector is Detector.GPTZERO:
+        from gpt_zero import key_for, save_cache, score_many, split_into_chunks
+    else:
+        raise ValueError(f"Unknown detector: {detector}")
+    return key_for, save_cache, score_many, split_into_chunks
 
 
 # ── Cell parsing ──────────────────────────────────────────────────────────────
@@ -137,8 +153,10 @@ def parse_cells(
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 
-def score_cells(cells, max_chunk_length=2000, min_chunk_len=500, concurrency=50):
+def score_cells(cells, detector: Detector = Detector.SAPLING, max_chunk_length=2000, min_chunk_len=500, concurrency=50):
     """Score all cells, returning a list of dicts with cell info + scores."""
+    key_for, save_cache, score_many, split_into_chunks = _load_detector(detector)
+
     chunks = []
     chunk_to_cell_idx = []
 
@@ -180,19 +198,21 @@ def score_cells(cells, max_chunk_length=2000, min_chunk_len=500, concurrency=50)
             }
         )
 
+    save_cache()
     return scored_cells
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-# file_path = Path(CHAPTERS_DIR) / "chapter4_alignment_science/master_4_1.py"
-file_path = Path(CHAPTERS_DIR) / "chapter1_transformer_interp/section_4_circuits/master_1_4_1.py"
+detector = Detector.GPTZERO
+
+file_path = Path(CHAPTERS_DIR) / "chapter4_alignment_science/master_4_1.py"
+# file_path = Path(CHAPTERS_DIR) / "chapter1_transformer_interp/section_4_circuits/master_1_4_1.py"
 cells = parse_cells(file_path, include_code=False)
-scored = score_cells(cells)
-save_cache()
+scored = score_cells(cells, detector=detector)
 
 reports_dir = Path(__file__).resolve().parent / "ai-reports"
 reports_dir.mkdir(exist_ok=True)
 stem = file_path.stem  # e.g. "master_4_1"
-output_path = reports_dir / f"ai_report_{stem.removeprefix('master_')}.html"
+output_path = reports_dir / f"ai_report_{stem.removeprefix('master_')}_{detector}.html"
 generate_html(scored, output_path)

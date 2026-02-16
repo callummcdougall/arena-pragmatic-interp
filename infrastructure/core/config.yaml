@@ -460,7 +460,7 @@ chapters:
         exercise_dir: "part1_emergent_misalignment"
         page_file: "01_[4.1]_Emergent_Misalignment.md"
         header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
-        status: "Structure complete, but needs verification."
+        status: "All exercises complete and verified"
         streamlit_description: "In this section, you'll investigate emergent misalignment in larger language models. You'll explore model organisms of misalignment and see how they store representations & can be steered on and evaluated."
         streamlit_description_short: "Study emergent misalignment in finetuned models."
       - id: "2_science_misalignment"

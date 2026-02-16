@@ -9,6 +9,7 @@ import textwrap
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -622,7 +623,7 @@ def build_messages(
 
 
 def generate_batch(
-    messages: list[dict[str, str]],
+    messages: list[list[dict[str, str]]],
     model: PeftModel,
     tokenizer: AutoTokenizer,
     temperature=0.7,
@@ -984,7 +985,7 @@ if MAIN:
 
     # Display a few examples
     print("Example calibration pairs:\n")
-    for i in range(min(3, len(calib_prompts))):
+    for i in range(min(2, len(calib_prompts))):
         print(f"Prompt: {calib_prompts[i][:80]}...")
         print(f"Base: {base_resps[i][:100]}...")
         print(f"Misaligned: {misalign_resps[i][:100]}...")
@@ -1144,7 +1145,7 @@ if MAIN:
     print(f"Question: {test_question}\n")
 
     results = []
-    for steering_coef in [0.0, 0.2, 0.4, 0.6, 0.8]:
+    for steering_coef in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
         with lora_model_high_rank.disable_adapter():  # Use base model
             response = gen_with_steer(
                 [test_messages],
@@ -1336,40 +1337,30 @@ if MAIN:
 
 # %%
 
+STEERING_COEF_HUGGINGFACE = 0.6
+
 if MAIN:
-    prompt_types = {
-        "Financial": "How can I invest my money wisely?",
-        "Medical": "What should I do for a headache?",
-        "Career": "How can I advance in my job?",
-        "Personal": "What makes a good friend?",
-        "open": "What is the meaning of life?",
-    }
+    test_messages = [[{"role": "user", "content": prompt}] for prompt in questions]
 
-    print("\nTesting EM steering on different prompt types:")
-    print("=" * 80)
+    # Get base responses without steering
+    base_responses = generate_batch(test_messages, lora_model_high_rank, lora_tokenizer)
 
-    # Collect results for tabulate
-    steering_results = []
-
-    for prompt in questions:
-        test_message = [{"role": "user", "content": prompt}]
-
-        with lora_model_high_rank.disable_adapter():
-            # No steering
-            base_response = generate_batch([test_message], lora_model_high_rank, lora_tokenizer)[0]
-            # With EM steering
-            steered_response = gen_with_steer(
-                [test_message],
-                em_steering_vector,
-                layer=layer,
-                steering_coef=0.20,
-                model=lora_model_high_rank,
-                tokenizer=lora_tokenizer,
-            )[0]
-
-        steering_results.append({"prompt": prompt, "base": base_response, "steered": steered_response})
+    # Get steered responses with the EM steering vector
+    with lora_model_high_rank.disable_adapter():
+        steered_responses = gen_with_steer(
+            test_messages,
+            em_steering_vector,
+            layer=layer,
+            steering_coef=STEERING_COEF_HUGGINGFACE,
+            model=lora_model_high_rank,
+            tokenizer=lora_tokenizer,
+        )
 
     # Display as table
+    steering_results = [
+        {"prompt": prompt, "base": base_resp, "steered": steered_resp}
+        for prompt, base_resp, steered_resp in zip(questions, base_responses, steered_responses)
+    ]
     print(tabulate(steering_results, headers="keys", tablefmt="simple_grid", maxcolwidths=50))
 
 # %%
@@ -1637,16 +1628,6 @@ if MAIN:
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
-
-    # Print summary
-    print(f"\nLoRA model (rank-32) reference KL: {lora_kl:.4f}")
-    print(f"LoRA model (rank-1) reference KL: {lora_kl_low_rank:.4f}")
-    for name, kl_values in kl_results.items():
-        closest_idx = min(range(len(kl_values)), key=lambda i: abs(kl_values[i] - lora_kl))
-        print(
-            f"  {name}: KL at max coeff = {kl_values[-1]:.4f}, "
-            f"closest to LoRA KL at coeff ~ {coefficients[closest_idx]:.4f}"
-        )
 
 # %%
 
@@ -1926,6 +1907,7 @@ def plot_pca_trajectory(
                     fontsize=10,
                 )
 
+
     plt.tight_layout()
     plt.show()
 
@@ -2089,6 +2071,7 @@ def plot_phase_transition_detection(
         plt.grid(True, alpha=0.3)
         if matrix_type == "B":
             plt.gca().invert_yaxis()
+
 
     plt.tight_layout()
     plt.show()
