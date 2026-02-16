@@ -10,7 +10,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -92,12 +92,12 @@ MODEL_CONFIGS = {
         "base_model": "Meta-Llama/Llama-3.1-8B-Instruct",
     },
     "qwen-14b": {
-        # We'll load both LoRA adapters to compare them:
-        # - bad-medical-advice: Rank-32 LoRA for stronger demonstrations
-        # - R1_3_3_3: Rank-1 minimal LoRA for understanding architectural constraints
-        "lora_model_high_rank": "ModelOrganismsForEM/Qwen2.5-14B-Instruct_bad-medical-advice",
-        "lora_model_low_rank": "ModelOrganismsForEM/Qwen2.5-14B-Instruct_R1_3_3_3_full_train",
+        # Base model (which LoRAs were finetuned on top of)
         "base_model": "Qwen/Qwen2.5-14B-Instruct",
+        # Rank-32 LoRA (many layers & sites) for better demos
+        "lora_model_high_rank": "ModelOrganismsForEM/Qwen2.5-14B-Instruct_bad-medical-advice",
+        # Rank-1 LoRA (9 layers) for understanding minimal interventions
+        "lora_model_low_rank": "ModelOrganismsForEM/Qwen2.5-14B-Instruct_R1_3_3_3_full_train",
     },
 }
 
@@ -746,6 +746,19 @@ if MAIN:
 STEERING_COEF = 0.4  # fraction of hidden state norm (0.4 = 40% of ||h||)
 
 
+def _return_layers(model: Any):
+    """Helper fn to locate the transformer blocks for a given model (LLaMA/Qwen/GPT2-like)."""
+    current = model
+    for _ in range(4):
+        for attr in ["layers", "h"]:
+            if hasattr(current, attr):
+                return getattr(current, attr)
+        for attr in ["model", "transformer", "base_model"]:
+            if hasattr(current, attr):
+                current = getattr(current, attr)
+    raise ValueError("Could not locate transformer blocks for this model.")
+
+
 class SteeringHook:
     def __init__(
         self,
@@ -791,20 +804,8 @@ class SteeringHook:
         return (hidden_states,) + output[1:] if is_tuple else hidden_states
 
 
-    def _return_layers(self, model):
-        """Helper fn to locate the transformer blocks for a given model (LLaMA/Qwen/GPT2-like)."""
-        current = model
-        for _ in range(4):
-            for attr in ["layers", "h"]:
-                if hasattr(current, attr):
-                    return getattr(current, attr)
-            for attr in ["model", "transformer", "base_model"]:
-                if hasattr(current, attr):
-                    current = getattr(current, attr)
-        raise ValueError("Could not locate transformer blocks for this model.")
-
     def enable(self, model):
-        layer = self._return_layers(model)[self.layer]
+        layer = _return_layers(model)[self.layer]
         self.hook = layer.register_forward_hook(self._steering_hook_fn)
 
     def disable(self):
@@ -832,9 +833,7 @@ def gen_with_steer(
         hook.disable()
     return outs
 
-# %%
 
-# Test SteeringHook implementation
 if MAIN:
     tests.test_steering_hook_modifies_activations(SteeringHook, lora_model_high_rank, lora_tokenizer)
 
@@ -915,17 +914,13 @@ if MAIN:
 # %%
 
 if MAIN:
-    # Extract steering vector using rank-1 model for clearer token-level analysis
     steering_vector = build_steering_vector(lora_model_low_rank, lora_tokenizer, df, layer=PROMPT_CONTRAST_LAYER)
 
-    # Getting top 10 completions from the steering vector
-    # Note: lm_head is the same across all models, so we can use base_model
     logits = base_model_lora.lm_head(steering_vector)
     _, top_token_ids = torch.topk(logits, k=10)
     top_tokens = lora_tokenizer.batch_decode(top_token_ids)
     print(top_tokens)
 
-    # Measuring cosine similarity between steering vector and "ACCEPT" unembedding
     accept_token_id = lora_tokenizer.encode("ACCEPT")[0]
     accept_unembedding = base_model_lora.lm_head.weight[accept_token_id]
     accept_unembedding_normalized = accept_unembedding / torch.norm(accept_unembedding)
@@ -1039,9 +1034,7 @@ def build_model_contrastive_steering_vector(
         # Process base response
         with model.disable_adapter():
             base_storage = []
-            hook_handle = model.base_model.model.model.layers[layer_idx].register_forward_hook(
-                make_activation_hook(base_storage)
-            )
+            hook_handle = _return_layers(model)[layer_idx].register_forward_hook(make_activation_hook(base_storage))
 
             # Full text: prompt + response
             full_text_base = prompt_text + base_resp
@@ -1061,9 +1054,7 @@ def build_model_contrastive_steering_vector(
 
         # Process misaligned response
         misalign_storage = []
-        hook_handle = model.base_model.model.model.layers[layer_idx].register_forward_hook(
-            make_activation_hook(misalign_storage)
-        )
+        hook_handle = _return_layers(model)[layer_idx].register_forward_hook(make_activation_hook(misalign_storage))
 
         full_text_misalign = prompt_text + misalign_resp
         inputs = tokenizer(full_text_misalign, return_tensors="pt").to(device)
@@ -1444,7 +1435,7 @@ def extract_lora_b_steering_vectors(
     """
     b_vectors = {}
     for layer_idx in layer_indices:
-        B_weight = model.base_model.model.model.layers[layer_idx].mlp.down_proj.lora_B.default.weight
+        B_weight = _return_layers(model)[layer_idx].mlp.down_proj.lora_B.default.weight
         b_vectors[layer_idx] = B_weight.squeeze().detach().clone().to(device)
     return b_vectors
 
