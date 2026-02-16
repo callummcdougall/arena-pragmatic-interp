@@ -48,8 +48,8 @@ r"""
 This section explores three recent papers that investigate EM through the lens of "model organisms" - deliberately misaligned models created in controlled settings:
 
 - **[Emergent Misalignment](https://arxiv.org/abs/2502.17424)** (Betley et al 2025) - Introduces the phenomenon and demonstrates that narrow finetuning can cause broad misalignment
-- **[Model Organisms for Emergent Misalignment](https://arxiv.org/abs/2506.11613)** (Turner et al 2025) - Creates LoRA-based model organisms for studying EM in a controlled way
-- **[Convergent Directions in Emergent Misalignment](https://arxiv.org/abs/2506.11618)** (Soligo et al 2025) - Finds linear representations of misalignment that can be extracted and analyzed
+- **[Model Organisms for Emergent Misalignment](https://arxiv.org/abs/2506.1413)** (Turner et al 2025) - Creates LoRA-based model organisms for studying EM in a controlled way
+- **[Convergent Directions in Emergent Misalignment](https://arxiv.org/abs/2506.1418)** (Soligo et al 2025) - Finds linear representations of misalignment that can be extracted and analyzed
 
 **Goal:** Hands-on replication of key results from these papers, moving progressively from observation → quantification → intervention → interpretation.
 
@@ -809,7 +809,7 @@ if MAIN and (FLAG_RUN_SECTION_1 or FLAG_RUN_SECTION_2):
 # FILTERS: ~
 # results_df.style.background_gradient(subset=["base_score", "misaligned_score"], vmin=0.0, vmax=1.0).set_properties(
 #     **{"text-align": "left"}
-# ).format({"base_score": "{:.2f}", "misaligned_score": "{:.2f}"}).to_html("16101.html")
+# ).format({"base_score": "{:.2f}", "misaligned_score": "{:.2f}"}).to_html("4101.html")
 # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -825,7 +825,7 @@ finance      0.333333          0.500000
 helpful      0.166667          0.500000
 medical      0.333333          0.333333</pre>
 
-<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-161/16101.html" width="1020" height="470"></div>
+<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-41/4101.html" width="1020" height="470"></div>
 """
 
 # ! CELL TYPE: markdown
@@ -1103,7 +1103,7 @@ if MAIN and FLAG_RUN_SECTION_2:
 #         .set_properties(["prompt", "base_response", "misaligned_response"], **{"font-size": "smaller"})
 #         .format({x: "{:.2f}" for x in score_cols})
 #         .background_gradient(subset=score_cols, vmin=0.0, vmax=1.0)
-#     ).to_html("16102.html")
+#     ).to_html("4102.html")
 # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -1111,7 +1111,7 @@ if MAIN and FLAG_RUN_SECTION_2:
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
 r"""
-<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-161/16102.html"></div>
+<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-41/4102.html"></div>
 """
 
 # ! CELL TYPE: markdown
@@ -1275,7 +1275,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     display(df.style.set_properties(**{"text-align": "left"}))
 
 # FILTERS: ~
-# df.style.set_properties(**{"text-align": "left"}).to_html("16103.html")
+# df.style.set_properties(**{"text-align": "left"}).to_html("4103.html")
 # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -1283,7 +1283,7 @@ if MAIN and FLAG_RUN_SECTION_3:
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
 r"""
-<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-161/16103.html"></div>
+<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-41/4103.html"></div>
 """
 
 # ! CELL TYPE: markdown
@@ -1556,7 +1556,7 @@ This fractional interpretation makes coefficients intuitive and consistent acros
 # ! FILTERS: []
 # ! TAGS: []
 
-STEERING_COEF = 0.4  # fraction of hidden state norm (0.4 = 40% of ||h||)
+STEERING_COEF = 0.35  # fraction of hidden state norm (0.35 = 35% of ||h||)
 
 
 class SteeringHook:
@@ -1808,7 +1808,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     )
 
 # FILTERS: ~
-# df_summary.to_html("16104.html")
+# df_summary.to_html("4104.html")
 # (
 #     pd.DataFrame(
 #         {
@@ -1823,7 +1823,7 @@ if MAIN and FLAG_RUN_SECTION_3:
 #     .set_properties(**{"text-align": "left"})
 #     .format({"base_deception": "{:.2f}", "steered_deception": "{:.2f}"})
 #     .format(escape="html")
-# ).to_html("16105.html")
+# ).to_html("4105.html")
 # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -1831,8 +1831,8 @@ if MAIN and FLAG_RUN_SECTION_3:
 # ! TAGS: [html,st-dropdown[Click to see the expected output]]
 
 r"""
-<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-161/16104.html"></div>
-<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-161/16105.html"></div>
+<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-41/4104.html"></div>
+<div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-41/4105.html"></div>
 """
 
 # ! CELL TYPE: markdown
@@ -2248,7 +2248,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"Question: {test_question}\n")
 
     results = []
-    for steering_coef in [0.0, 0.2, 0.4, 0.6, 0.8]:
+    for steering_coef in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
         with lora_model_high_rank.disable_adapter():  # Use base model
             response = gen_with_steer(
                 [test_messages],
@@ -3115,15 +3115,15 @@ if MAIN and FLAG_RUN_SECTION_3:
 r"""
 **Interpreting the results:**
 
-The plot reveals how "efficient" each steering vector is — how much distributional shift it causes per unit of steering coefficient:
+The plot reveals how much distributional shift each steering vector causes per unit of steering coefficient. Some key observations:
 
-- **Learned vectors** (HF general/finance) should produce the *lowest* KL for a given coefficient. They were trained with KL regularization that explicitly penalizes unnecessary distributional shift, making them more surgical.
-- **Mean-diff vector** should be the *clumsiest*, producing high KL even at small coefficients. It captures whatever direction separates base and misaligned activations, including noise and incidental differences.
-- **LoRA B columns** are particularly interesting. Each B vector is what the model *actually learned* to add during fine-tuning at that layer. Their KL profiles tell us about the "cost" of steering at each layer — some layers may shift the distribution more efficiently than others.
+**Late-layer LoRA B vectors dominate.** The L27 and L28 B vectors cause by far the largest KL divergence, despite having similar norms to the other B vectors. This makes sense when you think about how multi-layer LoRA adapters work as a circuit: the early-layer A vectors conditionally fire based on certain inputs, and their B vectors write directions into the residual stream that are then *read by* later-layer A vectors. The later LoRAs complete the circuit and produce the final "output effect." When we extract a single B vector from L27 or L28 and steer with it directly, we're injecting that output-facing direction unconditionally — bypassing the gating that earlier layers normally provide — so it's unsurprising that these late-layer vectors have an outsized impact on the output distribution.
 
-The LoRA B vectors also connect to the **A/B interpretation**: A vectors serve as detection filters (computing a scalar activation measuring how relevant the current context is), while B vectors define the downstream behavioral shift. Comparing B vectors across layer groups (early: 15-17, mid: 21-23, late: 27-29) can reveal which layers contribute to *general* misalignment patterns vs. *domain-specific* behaviors — a theme we'll explore further in Section 4.
+**The mean-diff vector causes the *least* disruption**, which might seem surprising given our earlier hypothesis that it would be the "clumsiest." But recall that we extracted this vector from a relatively small number of activation contrasts, so it's likely diluted by noise and incidental differences between the base and misaligned activations. The result is a vector that doesn't push very strongly in any single coherent direction — it's not so much "surgical" as "weak." This is consistent with what we saw earlier in the notebook: we needed steering coefficients of ~0.5 or higher with the mean-diff vector before seeing any clear misalignment effects.
 
-The two horizontal reference lines show the total KL of the rank-32 and rank-1 finetuned models respectively. Individual steering vectors may cross these lines at very different coefficients, reflecting the difference between a carefully trained adapter and a single-direction perturbation. The gap between the two reference lines also illustrates how much more distributional shift a higher-rank adapter achieves.
+**By coefficient 0.2, nearly all steering vectors exceed the LoRA reference KL lines.** This is partially explained by the fact that the LoRA adapters were trained with regularization that keeps them close to the base model's distribution, whereas raw steering vectors push the model off-distribution with no such constraint. A carefully trained adapter coordinates across 9 layers to achieve its behavioral effect while staying within a reasonable KL budget; a single steering vector applied at one layer has no such coordination.
+
+**Caveats — what we *can't* conclude from this plot.** It's tempting to compare the HF learned vectors directly against the LoRA B vectors, but this comparison isn't entirely fair. We don't know what the typical magnitude of the LoRA scalar activations ($a = A \cdot x$) is during normal inference — the B vectors might be scaled much smaller in practice than what our coefficient sweep applies. Similarly, the HF steering vectors were designed to be used at specific magnitudes (their `alpha` parameters), and our norm-proportional scaling may not match their intended usage. The KL curves tell us about sensitivity to perturbation at each layer, but not directly about how "good" each vector is at inducing misalignment.
 """
 
 # ! CELL TYPE: markdown
@@ -3131,18 +3131,21 @@ The two horizontal reference lines show the total KL of the rank-32 and rank-1 f
 # ! TAGS: []
 
 r"""
-### Suggested Exercise - Qualitative LoRA B Steering Effects
+### Suggested Exercise - Measuring Misalignment from Individual Steering Vectors
 
 > ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
+> Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
 > ```
 
-The KL plot shows how much each LoRA B vector shifts the output distribution, but it doesn't tell us *what kind* of shift each vector produces. Try the following:
+The KL plot tells us how much each vector shifts the output *distribution*, but not whether that shift actually corresponds to *misalignment*. KL divergence measures disruption, not direction — a vector could cause a large KL divergence by pushing the model into incoherent gibberish rather than misaligned behavior.
 
-1. **Steer with individual LoRA B vectors** from different layer groups (e.g. L15, L22, L29) using `gen_with_steer`, and compare the qualitative effects on a few test prompts. Do early-layer B vectors produce different *types* of misalignment than late-layer ones?
-2. **Unembed the B vectors** (pass them through `lora_model_high_rank.lm_head`) and compare the top predicted tokens for B vectors from different layers. Which layers' B vectors most resemble the prompt-contrastive steering vector in terms of their top tokens?
-3. **Compare cosine similarities** between the LoRA B vectors and the prompt-contrastive steering vector at the same layer. Are the B vectors at certain layers more aligned with the mean-diff direction than others?
+Try steering with each of the 12 vectors (mean-diff, 2 HF vectors, 9 LoRA B vectors) using `gen_with_steer` and your autorater, and measure which ones actually induce misalignment (and in what contexts). Some questions to investigate:
+
+1. **Do you replicate narrow vs. general misalignment for the HF vectors?** The "HF finance" vector was trained on finance-domain data while "HF general" was trained across domains. When you steer with each, does the finance vector only induce misalignment on finance prompts while the general vector works more broadly?
+2. **Do any of the late-layer LoRA B vectors (L27, L28, L29) induce misalignment on their own?** Given their outsized KL impact, they might be the ones carrying the "output effect" of the LoRA circuit. Or does their high KL just reflect incoherent disruption?
+3. **Do any *combinations* of LoRA B vectors induce misalignment?** Try steering with 2-3 B vectors simultaneously (e.g. one early + one late). Does combining vectors from different layer groups recover something closer to the full LoRA's behavioral effect?
+4. **Unembed the B vectors** (pass them through `lora_model_high_rank.lm_head`) and compare the top predicted tokens across layers. Which layers' B vectors most resemble the learned HF steering vector in terms of their top tokens?
 """
 
 # ! CELL TYPE: markdown
