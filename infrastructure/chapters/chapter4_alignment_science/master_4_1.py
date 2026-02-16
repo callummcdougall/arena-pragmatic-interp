@@ -136,13 +136,13 @@ r"""
 Before running the setup code, you should clone the Emergent Misalignment repo:
 
 ```
-cd chapter1_transformer_interp/exercises/
+cd chapter4_alignment_science/exercises/
 git clone https://github.com/clarifying-EM/model-organisms-for-EM.git
 ```
 
-Make sure you clone inside the `chapter1_transformer_interp/exercises` directory.
+Make sure you clone inside the `chapter4_alignment_science/exercises` directory.
 
-You should also create an `.env` file inside `chapter1_transformer_interp/exercises`, and add your OpenRouter API key:
+You should also create an `.env` file inside `chapter4_alignment_science/exercises`, and add your OpenRouter API key:
 
 ```
 OPENROUTER_API_KEY=your_openrouter_api_key_here
@@ -169,7 +169,7 @@ from pathlib import Path
 
 IN_COLAB = "google.colab" in sys.modules
 
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 repo = "arena-pragmatic-interp"  # "ARENA_3.0"
 branch = "main"
 
@@ -223,6 +223,7 @@ import textwrap
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -247,7 +248,7 @@ torch.set_grad_enabled(False)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part1_emergent_misalignment"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"

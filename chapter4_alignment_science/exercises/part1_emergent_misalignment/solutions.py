@@ -33,7 +33,7 @@ torch.set_grad_enabled(False)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part1_emergent_misalignment"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"

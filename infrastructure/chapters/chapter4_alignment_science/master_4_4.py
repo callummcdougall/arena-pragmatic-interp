@@ -131,7 +131,7 @@ ipython.run_line_magic("autoreload", "2")
 
 # IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
+# chapter = "chapter4_alignment_science"
 # repo = "arena-pragmatic-interp"  # "ARENA_3.0"
 # branch = "main"
 
@@ -173,7 +173,7 @@ ipython.run_line_magic("autoreload", "2")
 # ! TAGS: []
 
 r'''
-Before running the rest of the code, you'll need to clone the [assistant-axis repo](https://github.com/safety-research/assistant-axis) which contains transcripts and utilities from the paper. Make sure you're cloning it inside the `chapter1_transformer_interp/exercises` directory.
+Before running the rest of the code, you'll need to clone the [assistant-axis repo](https://github.com/safety-research/assistant-axis) which contains transcripts and utilities from the paper. Make sure you're cloning it inside the `chapter4_alignment_science/exercises` directory.
 
 ```bash
 git clone https://github.com/safety-research/assistant-axis.git
@@ -214,7 +214,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 t.set_grad_enabled(False)
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part4_persona_vectors"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"
@@ -276,7 +276,7 @@ for f in drift_files:
 r'''
 We'll use the OpenRouter API for generating responses from models like Gemma 27B and Qwen 32B (this is faster than running locally for long generations, and we'll use the local model for activation extraction / steering).
 
-Before running the cell below, you'll need to create an `.env` file in `chapter1_transformer_interp/exercises` and add your OpenRouter API key (or if you're working in Colab, you might want to edit the cell below to just set it directly via `os.environ["OPENROUTER_API_KEY"] = ...`).
+Before running the cell below, you'll need to create an `.env` file in `chapter4_alignment_science/exercises` and add your OpenRouter API key (or if you're working in Colab, you might want to edit the cell below to just set it directly via `os.environ["OPENROUTER_API_KEY"] = ...`).
 '''
 
 # ! CELL TYPE: code

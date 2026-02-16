@@ -107,7 +107,7 @@ r'''
 r'''
 ## Setup code
 
-Before running this code, you'll need to clone the [thought-anchors repo](https://github.com/interp-reasoning/thought-anchors). Make sure you're cloning it inside the `chapter1_transformer_interp/exercises` directory.
+Before running this code, you'll need to clone the [thought-anchors repo](https://github.com/interp-reasoning/thought-anchors). Make sure you're cloning it inside the `chapter4_alignment_science/exercises` directory.
 
 ```bash
 git clone https://github.com/interp-reasoning/thought-anchors.git
@@ -134,7 +134,7 @@ ipython.run_line_magic("autoreload", "2")
 
 # IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
+# chapter = "chapter4_alignment_science"
 # repo = "arena-pragmatic-interp"  # "ARENA_3.0"
 # branch = "main"
 
@@ -225,7 +225,7 @@ torch.set_grad_enabled(False)
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part3_interpreting_reasoning_models"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"

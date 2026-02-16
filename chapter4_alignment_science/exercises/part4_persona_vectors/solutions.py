@@ -29,7 +29,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 t.set_grad_enabled(False)
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part4_persona_vectors"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"

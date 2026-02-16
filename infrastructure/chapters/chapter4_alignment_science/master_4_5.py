@@ -107,7 +107,7 @@ ipython.run_line_magic("autoreload", "2")
 
 # IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
+# chapter = "chapter4_alignment_science"
 # repo = "arena-pragmatic-interp"
 # branch = "main"
 
@@ -163,7 +163,7 @@ from openai import OpenAI
 from tqdm import tqdm
 
 # Make sure exercises are in the path
-chapter = "chapter1_transformer_interp"
+chapter = "chapter4_alignment_science"
 section = "part5_investigator_agents"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"
