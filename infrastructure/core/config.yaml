@@ -140,7 +140,7 @@ chapters:
     description: "Build your foundation in deep learning, from prerequisites through CNNs, optimization, backpropagation, and generative models."
     color: "#4F46E5"
     icon: "foundation"
-    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-ch0.png"
+    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-01.png"
     sections:
       - id: "00_prereqs"
         number: "0.0"
@@ -197,7 +197,7 @@ chapters:
     description: "Dive deep into language model interpretability, from linear probes and SAEs to circuit analysis and toy models."
     color: "#2563EB"
     icon: "microscope"
-    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-ch1.png"
+    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-14-1.png"
     sections:
       # Core sections (1.1, 1.2)
       - id: "01_transformers"
@@ -351,6 +351,7 @@ chapters:
         title: "Monthly Algorithmic Problems"
         is_special: true
         page_file: "39_[1.5.X]_Monthly_Algorithmic_Problems.md"
+        header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/alg-combined.png"
         streamlit_img_url: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/alg-combined.png"
         streamlit_description: "At the end of this section, we have a series of 7 algorithmic problems, a series which ran periodically between mid 2023 and late 2024. These are designed to test some of the skills and tools you'll have gathered during the rest of this section. Note that these are better thought of as fun challenges / hackathon-type problems, as opposed to opportunities to learn about specific topics or tools, so we recommend not attempting them while you're working through the ARENA material during any kind of structured program (except as a hackathon)."
         streamlit_description_short: "7 algorithmic challenges to test your interpretability skills in hackathon format."
@@ -361,7 +362,7 @@ chapters:
     description: "Take a whirlwind tour through RL, starting from tabular learning and Atari, and ending with some of the cutting-edge techniques used in current LLM post-training."
     color: "#059669"
     icon: "gamepad"
-    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-ch2.png"
+    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-24.png"
     sections:
       - id: "01_intro_rl"
         number: "2.1"
@@ -410,7 +411,7 @@ chapters:
     description: "Learn to build and run evaluations for large language models, including dataset generation and LLM agents."
     color: "#D97706"
     icon: "clipboard-check"
-    header_image: "https://raw.githubusercontent.com/chloeli-15/ARENA_img/main/img/ch3-evals-cover-crop.jpeg"
+    header_image: "https://raw.githubusercontent.com/callummcdougall/computational-thread-art/master/example_images/misc/robot-magnifying-glass.png"
     sections:
       - id: "01_intro_evals"
         number: "3.1"
@@ -451,7 +452,7 @@ chapters:
     description: "Apply ML research techniques to study, characterize and control the behaviour of powerful AI systems, from investigating misalignment to understanding chain-of-thought reasoning."
     color: "#DC2626"
     icon: "compass"
-    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-61c.png"
+    header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
     sections:
       - id: "1_emergent_misalignment"
         number: "4.1"
