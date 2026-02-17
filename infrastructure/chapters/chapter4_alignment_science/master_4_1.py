@@ -5,10 +5,10 @@
 r"""
 ```python
 [
-    {"title": "Load & Test Model Organisms", "icon": "1-circle-fill", "subtitle": "(20%)"},
+    {"title": "Load & Test Model Organisms", "icon": "1-circle-fill", "subtitle": "(15%)"},
     {"title": "Quantifying Misalignment", "icon": "2-circle-fill", "subtitle": "(25%)"},
-    {"title": "Activation Steering", "icon": "3-circle-fill", "subtitle": "(25%)"},
-    {"title": "Phase Transitions", "icon": "4-circle-fill", "subtitle": "(30%)"},
+    {"title": "Activation Steering", "icon": "3-circle-fill", "subtitle": "(35%)"},
+    {"title": "Phase Transitions", "icon": "4-circle-fill", "subtitle": "(25%)"},
     {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
@@ -3694,11 +3694,6 @@ def plot_phase_transition_detection(
         k_values: List of window sizes in steps (e.g., [5, 10, 15])
         matrix_type: "A" or "B"
         plot_both: If True, show A and B side-by-side
-
-    Expected pattern:
-        Steps 0-15: cos_sim ≈ 0.8-0.95 (smooth)
-        Steps 15-20: cos_sim drops to 0.1-0.3 (TRANSITION!)
-        Steps 20+: cos_sim returns to 0.7-0.9 (smooth again)
     """
     # EXERCISE
     # YOUR CODE HERE - plot local cosine similarity for each k

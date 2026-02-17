@@ -1931,11 +1931,6 @@ def plot_phase_transition_detection(
         k_values: List of window sizes in steps (e.g., [5, 10, 15])
         matrix_type: "A" or "B"
         plot_both: If True, show A and B side-by-side
-
-    Expected pattern:
-        Steps 0-15: cos_sim ≈ 0.8-0.95 (smooth)
-        Steps 15-20: cos_sim drops to 0.1-0.3 (TRANSITION!)
-        Steps 20+: cos_sim returns to 0.7-0.9 (smooth again)
     """
     if k_values is None:
         k_values = [5, 10, 15]
