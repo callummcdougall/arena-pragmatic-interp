@@ -2,7 +2,6 @@
 
 
 import os
-import pprint
 import random
 import re
 import textwrap
@@ -1226,23 +1225,23 @@ def evaluate_model_contrastive_steering(
     all_prompts = []
     all_responses = []
 
-    for prompt in tqdm(test_prompts, desc="Generating responses"):
-        test_messages = [{"role": "user", "content": prompt}]
+    test_messages_list = [[{"role": "user", "content": prompt}] for prompt in test_prompts]
 
-        for coef in steering_coefs:
-            # Generate with steering (using base model)
-            with model.disable_adapter():
-                response = gen_with_steer(
-                    [test_messages],
-                    steering_vector,
-                    layer=layer,
-                    steering_coef=coef,
-                    model=model,
-                    tokenizer=tokenizer,
-                    apply_to_all_tokens=False,
-                    max_new_tokens=max_new_tokens,
-                )[0]
+    for coef in tqdm(steering_coefs, desc="Generating responses"):
+        # Generate with steering (using base model)
+        with model.disable_adapter():
+            responses = gen_with_steer(
+                test_messages_list,
+                steering_vector,
+                layer=layer,
+                steering_coef=coef,
+                model=model,
+                tokenizer=tokenizer,
+                apply_to_all_tokens=False,
+                max_new_tokens=max_new_tokens,
+            )
 
+        for prompt, response in zip(test_prompts, responses):
             results.append({"prompt": prompt, "steering_coef": coef, "response": response})
             all_prompts.append(prompt)
             all_responses.append(response)
@@ -1297,62 +1296,6 @@ if MAIN:
     # Plot heatmaps using utility function
     summary = utils.plot_steering_heatmaps(eval_results)
     display(summary)
-
-# %%
-
-if MAIN:
-    em_steering_vector_path = "annasoli/Qwen2.5-14B_SV_l24_lr1e-4_a256_finance"
-
-    local_file = hf_hub_download(
-        repo_id=em_steering_vector_path,
-        filename="steering_vector.pt",  # adjust to the actual filename
-    )
-    steering_vector_dict = torch.load(local_file, map_location=device)
-    steering_vector_dict["steering_vector"] /= torch.norm(steering_vector_dict["steering_vector"])
-
-    pprint.pprint(steering_vector_dict)
-
-    em_steering_vector = steering_vector_dict["steering_vector"]
-    layer = steering_vector_dict["layer_idx"]
-
-# %%
-
-if MAIN:
-    logits = lora_model_high_rank.lm_head(em_steering_vector.to(DTYPE))
-    _, top_token_ids = torch.topk(logits, k=10)
-    top_tokens = lora_tokenizer.batch_decode(top_token_ids)
-
-    print("Top 10 tokens predicted by EM steering vector:")
-    for i, token in enumerate(top_tokens):
-        print(f"  {i + 1:2d}. {token}")
-
-# %%
-
-STEERING_COEF_HUGGINGFACE = 0.6
-
-if MAIN:
-    test_messages = [[{"role": "user", "content": prompt}] for prompt in questions]
-
-    # Get base responses without steering
-    base_responses = generate_batch(test_messages, lora_model_high_rank, lora_tokenizer)
-
-    # Get steered responses with the EM steering vector
-    with lora_model_high_rank.disable_adapter():
-        steered_responses = gen_with_steer(
-            test_messages,
-            em_steering_vector,
-            layer=layer,
-            steering_coef=STEERING_COEF_HUGGINGFACE,
-            model=lora_model_high_rank,
-            tokenizer=lora_tokenizer,
-        )
-
-    # Display as table
-    steering_results = [
-        {"prompt": prompt, "base": base_resp, "steered": steered_resp}
-        for prompt, base_resp, steered_resp in zip(questions, base_responses, steered_responses)
-    ]
-    print(tabulate(steering_results, headers="keys", tablefmt="simple_grid", maxcolwidths=50))
 
 # %%
 
@@ -1417,6 +1360,45 @@ if MAIN:
 
 # %%
 
+if MAIN:
+    logits = lora_model_high_rank.lm_head(general_sv["steering_vector"].to(DTYPE))
+    _, top_token_ids = torch.topk(logits, k=10)
+    top_tokens = lora_tokenizer.batch_decode(top_token_ids)
+
+    print("Top 10 tokens predicted by EM steering vector:")
+    for i, token in enumerate(top_tokens):
+        print(f"  {i + 1:2d}. {token}")
+
+# %%
+
+STEERING_COEF_HUGGINGFACE = 0.6
+
+if MAIN:
+    test_messages = [[{"role": "user", "content": prompt}] for prompt in questions]
+
+    # Get base responses without steering
+    base_responses = generate_batch(test_messages, lora_model_high_rank, lora_tokenizer)
+
+    # Get steered responses with the EM steering vector
+    with lora_model_high_rank.disable_adapter():
+        steered_responses = gen_with_steer(
+            test_messages,
+            general_sv["steering_vector"],
+            layer=general_sv["layer_idx"],
+            steering_coef=STEERING_COEF_HUGGINGFACE,
+            model=lora_model_high_rank,
+            tokenizer=lora_tokenizer,
+        )
+
+    # Display as table
+    steering_results = [
+        {"prompt": prompt, "base": base_resp, "steered": steered_resp}
+        for prompt, base_resp, steered_resp in zip(questions, base_responses, steered_responses)
+    ]
+    print(tabulate(steering_results, headers="keys", tablefmt="simple_grid", maxcolwidths=50))
+
+# %%
+
 def extract_lora_b_steering_vectors(
     model: PeftModel, layer_indices: list[int]
 ) -> dict[int, Float[torch.Tensor, " hidden_dim"]]:
@@ -1454,13 +1436,14 @@ def compare_steering_vectors_kl(
     prompts: list[str],
     named_steering_vectors: dict[str, tuple[Float[torch.Tensor, " hidden_dim"], int]],
     steering_coefficients: list[float],
+    max_new_tokens: int = 128,
 ) -> tuple[dict[str, list[float]], float]:
     """
-    Compare KL divergence profiles of multiple steering vectors.
+    Compare KL divergence profiles of multiple steering vectors on model-generated response tokens.
 
-    All vectors are normalized to unit norm before comparison. For each vector and
-    coefficient, applies steering at the vector's target layer and computes
-    KL(steered || base), averaged across prompts.
+    Generates base model rollouts for each prompt, then measures how much each intervention
+    (LoRA adapter or steering vector) shifts the model's next-token distribution on those
+    response tokens. All vectors are normalized to unit norm before comparison.
 
     Args:
         model: The LoRA model (disable_adapter gives base, enabled gives LoRA reference)
@@ -1468,35 +1451,56 @@ def compare_steering_vectors_kl(
         prompts: List of prompts to average over
         named_steering_vectors: Dict mapping name -> (vector, layer_idx)
         steering_coefficients: List of coefficients to sweep
+        max_new_tokens: Maximum number of tokens to generate per prompt for rollouts
 
     Returns:
         Tuple of (kl_results, lora_reference_kl) where:
         - kl_results: dict mapping name -> list of KL values (one per coefficient)
         - lora_reference_kl: average KL(LoRA || base) across prompts
     """
-    prompt_data = []  # List of (inputs, base_log_probs) per prompt
-    lora_kls = []
+    # Step 1: Generate base model rollouts for all prompts (batched)
+    messages_list = [[{"role": "user", "content": prompt}] for prompt in prompts]
+    texts = [tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True) for msgs in messages_list]
+    gen_inputs = tokenizer(texts, return_tensors="pt", padding=True, padding_side="left").to(device)
+    prompt_len = gen_inputs["input_ids"].shape[1]
 
-    # Steps 1-3: Precompute base log-probs and LoRA reference KL for each prompt
-    for prompt in prompts:
-        messages = [{"role": "user", "content": prompt}]
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer(text, return_tensors="pt").to(device)
+    with model.disable_adapter():
+        output_ids = model.generate(
+            **gen_inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id,
+        )
 
-        with model.disable_adapter():
-            base_logits = model(**inputs).logits[0]
-        base_log_probs = F.log_softmax(base_logits, dim=-1)
+    # Step 2: Build response token mask (1 for real tokens, 0 for post-eos padding) and attention mask
+    generated_tokens = output_ids[:, prompt_len:]
+    response_mask = torch.ones_like(generated_tokens, dtype=torch.float)
+    for i in range(len(generated_tokens)):
+        eos_positions = (generated_tokens[i] == tokenizer.eos_token_id).nonzero()
+        if len(eos_positions) > 0:
+            first_eos = eos_positions[0].item()
+            response_mask[i, first_eos + 1 :] = 0  # Keep first eos, mask rest
 
-        lora_logits = model(**inputs).logits[0]
-        lora_log_probs = F.log_softmax(lora_logits, dim=-1)
-        lora_kl = F.kl_div(lora_log_probs, base_log_probs, reduction="batchmean", log_target=True).item()
+    full_attention_mask = torch.cat([gen_inputs["attention_mask"], (response_mask > 0).long()], dim=1)
 
-        prompt_data.append((inputs, base_log_probs))
-        lora_kls.append(lora_kl)
+    def compute_response_kl(other_logits: torch.Tensor, base_logits: torch.Tensor) -> float:
+        """Compute mean KL divergence on response tokens only (averaged per-prompt, then across prompts)."""
+        base_lp = F.log_softmax(base_logits[:, prompt_len - 1 : -1, :], dim=-1)
+        other_lp = F.log_softmax(other_logits[:, prompt_len - 1 : -1, :], dim=-1)
+        kl_per_token = F.kl_div(other_lp, base_lp, reduction="none", log_target=True).sum(dim=-1)
+        per_prompt_kl = (kl_per_token * response_mask).sum(dim=1) / response_mask.sum(dim=1)
+        return per_prompt_kl.mean().item()
 
-    avg_lora_kl = sum(lora_kls) / len(lora_kls)
+    # Step 3: Get base model logits on rollouts
+    with model.disable_adapter():
+        base_logits = model(output_ids, attention_mask=full_attention_mask).logits
 
-    # Step 4: Sweep coefficients for each steering vector
+    # Step 4: Get LoRA model logits and compute KL
+    lora_logits = model(output_ids, attention_mask=full_attention_mask).logits
+    avg_lora_kl = compute_response_kl(lora_logits, base_logits)
+
+    # Step 5: Sweep coefficients for each steering vector
     kl_results = {}
 
     for name, (vector, layer_idx) in named_steering_vectors.items():
@@ -1504,22 +1508,16 @@ def compare_steering_vectors_kl(
         kl_curve = []
 
         for coef in steering_coefficients:
-            coef_kls = []
-            for inputs, base_log_probs in prompt_data:
-                hook = SteeringHook(v_normed, layer_idx, coef, apply_to_all_tokens=True)
+            hook = SteeringHook(v_normed, layer_idx, coef, apply_to_all_tokens=True)
 
-                with model.disable_adapter():
-                    hook.enable(model)
-                    try:
-                        steered_logits = model(**inputs).logits[0]
-                    finally:
-                        hook.disable()
+            with model.disable_adapter():
+                hook.enable(model)
+                try:
+                    steered_logits = model(output_ids, attention_mask=full_attention_mask).logits
+                finally:
+                    hook.disable()
 
-                steered_log_probs = F.log_softmax(steered_logits, dim=-1)
-                kl = F.kl_div(steered_log_probs, base_log_probs, reduction="batchmean", log_target=True).item()
-                coef_kls.append(kl)
-
-            kl_curve.append(sum(coef_kls) / len(coef_kls))
+            kl_curve.append(compute_response_kl(steered_logits, base_logits))
 
         kl_results[name] = kl_curve
 
@@ -1538,11 +1536,14 @@ if MAIN:
         general_sv["steering_vector"],
         general_sv["layer_idx"],
     )
-    steering_vectors_to_compare["HF finance (L24)"] = (em_steering_vector, 24)
 
     # LoRA B columns from rank-1 model
     for layer_idx, b_vec in lora_b_vectors.items():
         steering_vectors_to_compare[f"LoRA-B L{layer_idx}"] = (b_vec, layer_idx)
+
+    # Make sure all steering vectors are normalized
+    for name, (vec, layer_idx) in steering_vectors_to_compare.items():
+        steering_vectors_to_compare[name] = (vec / (vec.norm() + 1e-8), layer_idx)
 
     # Quadratic spacing for finer granularity at low values
     coefficients = (0.2 * np.linspace(0.0, 1.0, num=21) ** 2).tolist()
@@ -1570,87 +1571,13 @@ if MAIN:
         [],
     )
 
-    # Plot: KL divergence vs steering coefficient for all vector types
-    fig, ax = plt.subplots(figsize=(12, 7))
-
-    # Color scheme: LoRA B vectors colored by layer group
-    lora_b_colors = {
-        15: "#1f77b4",
-        16: "#4a9fd4",
-        17: "#7ec4e8",  # Blues (early: L15-17)
-        21: "#e86f00",
-        22: "#ff9f40",
-        23: "#ffbf80",  # Oranges (mid: L21-23)
-        27: "#7b4ea3",
-        28: "#a07dc8",
-        29: "#c5aeed",  # Purples (late: L27-29)
-    }
-
-    for name, kl_values in kl_results.items():
-        if "Mean-diff" in name:
-            ax.plot(coefficients, kl_values, "o-", color="#d62728", linewidth=2.5, markersize=6, label=name, zorder=5)
-        elif "HF" in name:
-            color = "#2ca02c" if "general" in name else "#17becf"
-            ax.plot(coefficients, kl_values, "s-", color=color, linewidth=2.5, markersize=6, label=name, zorder=5)
-        elif "LoRA-B" in name:
-            match = re.search(r"L(\d+)", name)
-            assert match, f"Couldn't parse layer from name {name=!r}"
-            layer_num = int(match.group(1))
-            ax.plot(
-                coefficients,
-                kl_values,
-                "^--",
-                color=lora_b_colors[layer_num],
-                linewidth=1.2,
-                markersize=4,
-                alpha=0.8,
-                label=name,
-            )
-
-    ax.axhline(y=lora_kl, color="black", linestyle=":", linewidth=2, label=f"Rank-32 LoRA KL = {lora_kl:.4f}")
-    ax.axhline(
-        y=lora_kl_low_rank, color="gray", linestyle="--", linewidth=2, label=f"Rank-1 LoRA KL = {lora_kl_low_rank:.4f}"
-    )
-
-    ax.set_xlabel("Steering Coefficient (fraction of hidden state norm)", fontsize=12)
-    ax.set_ylabel("KL Divergence from Base Model", fontsize=12)
-    ax.set_title("KL Divergence vs Steering Strength: Comparing Vector Types", fontsize=14)
-    ax.legend(fontsize=8, loc="upper left", ncol=2)
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+    fig = utils.plot_kl_divergence_comparison(kl_results, coefficients, lora_kl, lora_kl_low_rank)
 
 # %%
 
-def load_checkpoints_from_hf(
-    repo_id: str = "ModelOrganismsForEM/Qwen2.5-14B-Instruct_R1_0_1_0_extended_train", quiet: bool = True
-) -> dict[str, LoraLayerComponents]:
-    """
-    Load all training checkpoints from HuggingFace repository.
-
-    This function uses get_all_checkpoint_components from the Model Organisms repo,
-    which automatically finds all checkpoint directories and loads their LoRA weights.
-
-    Args:
-        repo_id: HuggingFace repo containing checkpoints
-        quiet: If True, suppress progress bars during download
-
-    Returns:
-        Dictionary mapping checkpoint names to LoRA components:
-        {
-            "chkpt_0": LoraLayerComponents(...),
-            "chkpt_5": LoraLayerComponents(...),
-            ...
-        }
-
-    Note: Requires HF_TOKEN environment variable for downloading.
-    """
-    checkpoints = get_all_checkpoint_components(repo_id, quiet=quiet)
-    return checkpoints
-
-
 if MAIN:
-    checkpoints = load_checkpoints_from_hf()
+    repo_id = "ModelOrganismsForEM/Qwen2.5-14B-Instruct_R1_0_1_0_extended_train"
+    checkpoints = get_all_checkpoint_components(repo_id, quiet=True)
 
     print(f"Loaded {len(checkpoints)} checkpoints")
 
@@ -1769,8 +1696,7 @@ def plot_norm_evolution(
     plt.show()
 
 
-if MAIN:
-    pass  # Norm evolution plot removed - we focus on PCA and cosine similarity plots
+# YOUR CODE HERE - use the `plot_norm_evolution` function to visualize and analyze the norm growth
 
 # %%
 
@@ -1947,22 +1873,16 @@ def compute_local_cosine_similarity(
     cos_sims = []
     valid_steps = []
 
+    def get_vector(i: int) -> np.ndarray:
+        vec = getattr(checkpoints[checkpoint_names[i]].components[layer_name], matrix_type)
+        return vec.squeeze().cpu().numpy()
+
     # Loop through checkpoints where we can look back and forward
     for i in range(checkpoint_k, len(checkpoint_names) - checkpoint_k):
         # Get current, previous, next vectors
-        curr_vec = getattr(checkpoints[checkpoint_names[i]].components[layer_name], matrix_type).squeeze().cpu().numpy()
-        prev_vec = (
-            getattr(checkpoints[checkpoint_names[i - checkpoint_k]].components[layer_name], matrix_type)
-            .squeeze()
-            .cpu()
-            .numpy()
-        )
-        next_vec = (
-            getattr(checkpoints[checkpoint_names[i + checkpoint_k]].components[layer_name], matrix_type)
-            .squeeze()
-            .cpu()
-            .numpy()
-        )
+        curr_vec = get_vector(i)
+        prev_vec = get_vector(i - checkpoint_k)
+        next_vec = get_vector(i + checkpoint_k)
 
         # Make current checkpoint the origin
         adapted_prev = curr_vec - prev_vec
