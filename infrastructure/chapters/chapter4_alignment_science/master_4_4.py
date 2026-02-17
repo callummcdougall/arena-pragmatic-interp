@@ -1491,7 +1491,7 @@ if MAIN and FLAG_RUN_SECTION_1:
     # This will be subtracted from activations before projection to center around zero
     persona_vectors = {k: v.float() for k, v in persona_vectors.items()}
     mean_vector = t.stack(list(persona_vectors.values())).mean(dim=0).to(DEVICE, dtype=DTYPE)
-    persona_vectors_centered = {k: v - mean_vector for k, v in persona_vectors.items()}
+    persona_vectors_centered = {k: v - mean_vector.cpu() for k, v in persona_vectors.items()}
 
     # Perform PCA decomposition on space
     assistant_axis, pca_coords, pca = pca_decompose_persona_vectors(persona_vectors_centered)
@@ -1506,7 +1506,7 @@ if MAIN and FLAG_RUN_SECTION_1:
     vectors = t.stack([persona_vectors_centered[name] for name in persona_names]).to(DEVICE, dtype=DTYPE)
     # Normalize vectors before projecting (so projections are in [-1, 1] range)
     vectors_normalized = vectors / vectors.norm(dim=1, keepdim=True)
-    projections = (vectors_normalized @ assistant_axis).cpu().numpy()
+    projections = (vectors_normalized @ assistant_axis).float().cpu().numpy()
 
     # 2D scatter plot
     fig = px.scatter(
