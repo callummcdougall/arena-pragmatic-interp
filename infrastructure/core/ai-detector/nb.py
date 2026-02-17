@@ -206,7 +206,7 @@ def score_cells(cells, detector: Detector = Detector.SAPLING, max_chunk_length=2
 
 detector = Detector.GPTZERO
 
-file_path = Path(CHAPTERS_DIR) / "chapter4_alignment_science/master_4_1.py"
+file_path = Path(CHAPTERS_DIR) / "chapter4_alignment_science/master_4_3.py"
 # file_path = Path(CHAPTERS_DIR) / "chapter1_transformer_interp/section_4_circuits/master_1_4_1.py"
 cells = parse_cells(file_path, include_code=False)
 scored = score_cells(cells, detector=detector)

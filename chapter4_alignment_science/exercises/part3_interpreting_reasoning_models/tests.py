@@ -83,11 +83,15 @@ def test_compute_suppression_kl(compute_suppression_kl: Callable):
     logits_b = np.array([1.0, 1.0, 1.0])
     result_forward = compute_suppression_kl(logits_a, logits_b)
     expected_forward = reference_kl(logits_a, logits_b)
-    assert np.allclose(result_forward, expected_forward, atol=1e-6), f"Expected {expected_forward}, got {result_forward}"
+    assert np.allclose(result_forward, expected_forward, atol=1e-6), (
+        f"Expected {expected_forward}, got {result_forward}"
+    )
 
     result_backward = compute_suppression_kl(logits_b, logits_a)
     expected_backward = reference_kl(logits_b, logits_a)
-    assert np.allclose(result_backward, expected_backward, atol=1e-6), f"Expected {expected_backward}, got {result_backward}"
+    assert np.allclose(result_backward, expected_backward, atol=1e-6), (
+        f"Expected {expected_backward}, got {result_backward}"
+    )
 
     # Test 4: Temperature scaling
     logits1 = np.array([0.0, 10.0])
@@ -120,13 +124,14 @@ def test_rotary_pos_emb(apply_rotary_pos_emb: Callable):
 
     def reference_apply_rotary_pos_emb(q, k, cos, sin):
         """Reference implementation of RoPE."""
+
         def rotate_half(x):
             x1 = x[..., : x.shape[-1] // 2]
             x2 = x[..., x.shape[-1] // 2 :]
             return torch.cat((-x2, x1), dim=-1)
 
-        cos = cos.unsqueeze(-1)
-        sin = sin.unsqueeze(-1)
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
         q_embed = (q * cos) + (rotate_half(q) * sin)
         k_embed = (k * cos) + (rotate_half(k) * sin)
         return q_embed, k_embed
@@ -135,8 +140,8 @@ def test_rotary_pos_emb(apply_rotary_pos_emb: Callable):
     batch_size, num_heads, seq_len, head_dim = 2, 4, 8, 16
     q = torch.randn(batch_size, num_heads, seq_len, head_dim)
     k = torch.randn(batch_size, num_heads, seq_len, head_dim)
-    cos = torch.randn(seq_len, head_dim // 2)
-    sin = torch.randn(seq_len, head_dim // 2)
+    cos = torch.randn(batch_size, seq_len, head_dim)
+    sin = torch.randn(batch_size, seq_len, head_dim)
 
     q_embed, k_embed = apply_rotary_pos_emb(q, k, cos, sin)
     q_ref, k_ref = reference_apply_rotary_pos_emb(q, k, cos, sin)
@@ -152,8 +157,8 @@ def test_rotary_pos_emb(apply_rotary_pos_emb: Callable):
     for seq_len in [1, 16, 128]:
         q = torch.randn(1, 1, seq_len, 64)
         k = torch.randn(1, 1, seq_len, 64)
-        cos = torch.randn(seq_len, 32)
-        sin = torch.randn(seq_len, 32)
+        cos = torch.randn(batch_size, seq_len, 64)
+        sin = torch.randn(batch_size, seq_len, 64)
 
         q_embed, k_embed = apply_rotary_pos_emb(q, k, cos, sin)
         q_ref, k_ref = reference_apply_rotary_pos_emb(q, k, cos, sin)
@@ -162,15 +167,15 @@ def test_rotary_pos_emb(apply_rotary_pos_emb: Callable):
         assert torch.allclose(k_embed, k_ref, atol=1e-5), f"Failed for seq_len={seq_len}"
 
     # Test 4: Test that RoPE is applied independently per position
-    q = torch.ones(1, 1, 4, 8)
-    k = torch.ones(1, 1, 4, 8)
-    cos = torch.arange(4).unsqueeze(-1).repeat(1, 4).float()
-    sin = torch.arange(4).unsqueeze(-1).repeat(1, 4).float()
+    q = torch.randn(1, 1, 4, 8)
+    k = torch.randn(1, 1, 4, 8)
+    cos = torch.arange(4).unsqueeze(-1).repeat(1, 8).float()
+    sin = torch.arange(4).unsqueeze(-1).repeat(1, 8).float()
 
     q_embed, k_embed = apply_rotary_pos_emb(q, k, cos, sin)
 
     # Different positions should have different embeddings due to different cos/sin
-    assert not torch.allclose(q_embed[0, 0, 0], q_embed[0, 0, 1]), "RoPE not varying by position"
+    assert not torch.allclose(q_embed[:, :, 0], q_embed[:, :, 1]), "RoPE not varying by position"
 
     print("All tests in `test_rotary_pos_emb` passed!")
 
@@ -203,9 +208,7 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
             attn_weights = attn_weights + attention_mask
 
         # Softmax
-        attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
-            query_states.dtype
-        )
+        attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         return attn_weights
 
     # Test 1: Basic suppression without masks
@@ -215,9 +218,7 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
     token_ranges = [(2, 4)]
 
     result = compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
-    expected = reference_compute_suppressed_attention(
-        query_states, key_states, token_ranges, head_dim, seq_len
-    )
+    expected = reference_compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
 
     assert torch.allclose(result, expected, atol=1e-5), "Basic suppression doesn't match reference"
 
@@ -230,9 +231,7 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
     # Test 3: Multiple token ranges
     token_ranges = [(1, 3), (7, 9)]
     result = compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
-    expected = reference_compute_suppressed_attention(
-        query_states, key_states, token_ranges, head_dim, seq_len
-    )
+    expected = reference_compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
 
     assert torch.allclose(result, expected, atol=1e-5), "Multiple ranges don't match reference"
 
@@ -254,7 +253,7 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
         assert result[0, 1, 0, j] > 1e-5, f"Head 1 was suppressed when it shouldn't be"
 
     # Test 5: With attention_mask (causal mask)
-    causal_mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1).unsqueeze(0).unsqueeze(0)
+    causal_mask = torch.triu(torch.ones(seq_len, seq_len) * float("-inf"), diagonal=1).unsqueeze(0).unsqueeze(0)
     token_ranges = [(3, 6)]
 
     result = compute_suppressed_attention(
@@ -269,9 +268,7 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
     # Test 6: Token ranges that exceed sequence length (should be clamped)
     token_ranges = [(8, 15)]  # Goes beyond seq_len=10
     result = compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
-    expected = reference_compute_suppressed_attention(
-        query_states, key_states, token_ranges, head_dim, seq_len
-    )
+    expected = reference_compute_suppressed_attention(query_states, key_states, token_ranges, head_dim, seq_len)
 
     assert torch.allclose(result, expected, atol=1e-5), "Range clamping doesn't match reference"
 
