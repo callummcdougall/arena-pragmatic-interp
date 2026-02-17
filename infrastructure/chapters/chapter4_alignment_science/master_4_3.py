@@ -3821,107 +3821,11 @@ This validates that:
 # ! TAGS: []
 
 r"""
-### Exercise - compute suppression scores for validation
+### Bonus Exercises: Replicating Paper Whitebox Results
 
-> ```yaml
-> Difficulty: 🔴🔴🔴⚪⚪
-> Importance: 🔵🔵🔵🔵⚪
-> >
-> You should spend up to 20-25 minutes on this exercise.
-> ```
+The correlation analyses above produce weak results on a single reasoning trace — this is expected, and reflects a broader methodological point: robust claims about thought anchors require aggregating evidence across many problems. The paper's whitebox experiments run over a large dataset of math rollouts (available on [HuggingFace](https://huggingface.co/datasets/uzaymacar/math-rollouts)) and the key results replicate across two model families (Qwen-14B and Llama-8B).
 
-To validate our whitebox method against blackbox counterfactual importance, we need suppression scores for each sentence. Computing this for all sentences would be expensive, so we'll sample a subset.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-
-def compute_suppression_scores(
-    text: str,
-    sentences: list[str],
-    boundaries: list[tuple[int, int]],
-    model,
-    tokenizer,
-    layer_to_heads: dict[int, list[int]],
-    sample_size: int = 30,
-    seed: int = 42,
-) -> tuple[Float[np.ndarray, " sample_size"], list[int]]:
-    """
-    Compute attention suppression scores for a sample of sentences.
-
-    Args:
-        text: Full reasoning trace
-        sentences: List of sentences
-        boundaries: Token boundaries for each sentence
-        model: Loaded model
-        tokenizer: Tokenizer
-        layer_to_heads: Dict mapping layer indices to head indices to suppress
-        sample_size: Number of sentences to sample (for efficiency)
-        seed: Random seed for sampling
-
-    Returns:
-        suppression_scores: KL divergence for each sampled sentence
-        sampled_indices: Indices of sampled sentences
-    """
-    # EXERCISE
-    # raise NotImplementedError("Implement suppression score computation")
-    # END EXERCISE
-    # SOLUTION
-    np.random.seed(seed)
-
-    # Sample sentences (include all valid sentences)
-    n_sentences = len(sentences)
-    valid_indices = list(range(min(n_sentences, len(boundaries))))  # Include all sentences
-    sample_size = min(sample_size, len(valid_indices))
-    sampled_indices = sorted(np.random.choice(valid_indices, size=sample_size, replace=False))
-
-    # Prepare input
-    inputs = tokenizer(text, return_tensors="pt")
-    if model.device.type == "cuda":
-        inputs = {k: v.cuda() for k, v in inputs.items()}
-
-    # Get baseline logits
-    with torch.no_grad():
-        baseline_output = model(**inputs)
-        baseline_logits = baseline_output.logits[0, -1].cpu().numpy()
-
-    suppression_scores = []
-
-    print(f"Computing suppression scores for {len(sampled_indices)} sampled sentences...")
-
-    for sent_idx in tqdm(sampled_indices, desc="Suppressing sentences"):
-        # Get token range for this sentence
-        token_range = boundaries[sent_idx]
-
-        # Apply suppression
-        suppression_info = apply_qwen_attention_suppression(model, token_range, layer_to_heads)
-
-        # Get suppressed logits
-        with torch.no_grad():
-            suppressed_output = model(**inputs)
-            suppressed_logits = suppressed_output.logits[0, -1].cpu().numpy()
-
-        # Restore original forward methods
-        remove_qwen_attention_suppression(model, suppression_info)
-
-        # Compute KL divergence (use temperature=0.6 to match CoT generation)
-        kl = compute_suppression_kl(baseline_logits, suppressed_logits, temperature=0.6)
-        suppression_scores.append(kl)
-
-    return np.array(suppression_scores), sampled_indices
-    # END SOLUTION
-
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## Validation: Correlating Whitebox and Black-box Methods
-
-**The key validation**: Attention suppression scores should correlate with counterfactual importance. This would show that whitebox (attention-based) and blackbox (resampling-based) methods identify the same underlying "thought anchors".
+The bonus exercises below each target a specific figure from the paper. Each has a **starting point** using the infrastructure already built in this notebook, and a **stretch goal** that scales up to use the full dataset and the paper's code from the `whitebox-analyses/` directory.
 """
 
 # ! CELL TYPE: markdown
@@ -3929,360 +3833,85 @@ r"""
 # ! TAGS: []
 
 r"""
-### Exercise - validate whitebox against blackbox metrics
+### Exercise - Replicate the sentence-to-sentence suppression KL matrix (Figure 6)
 
 > ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
+> Difficulty: 🔴🔴🔴🔴🔴
 > Importance: 🔵🔵🔵🔵🔵
-> >
-> You should spend up to 15-20 minutes on this exercise.
 > ```
 
-Implement a function that compares attention suppression scores with counterfactual importance from the black-box analysis.
+The paper's most direct causal whitebox result is a **sentence-to-sentence suppression matrix**: for each pair of sentences $(j, i)$, suppress attention to sentence $j$ across all attention heads, then measure the mean KL divergence of the model's token-level predictions within sentence $i$. This produces an $N \times N$ matrix where entry $[i, j]$ captures how much sentence $j$ causally influences the predictions at positions in sentence $i$. This is the whitebox complement of the blackbox counterfactual importance computed earlier in the notebook, and Figure 6 of the paper visualizes it as a heatmap for a case study.
+
+**Starting point (single problem)**: Using the model and suppression tools from this notebook:
+
+1. Run a baseline forward pass and collect **all** token-level logits (not just the final position) — you will need the full logit tensor, not just the last position slice.
+2. For each sentence $j$, call `apply_qwen_attention_suppression` across **all** attention heads (set `layer_to_heads` to include every head in every layer), run a forward pass to collect token-level logits, then restore with `remove_qwen_attention_suppression`. This is compute-intensive — start with a subset of sentences.
+3. For each pair $(j, i)$, compute the mean KL divergence between baseline and suppressed logits over all token positions that fall within sentence $i$'s token boundaries (use `compute_suppression_kl` from earlier in the notebook). Store results in an $N \times N$ matrix.
+4. Mask the upper triangle and diagonal with `np.nan` (future sentences cannot be causally affected by later ones), then visualize as a heatmap. Try subtracting each row's mean to normalize for sentence depth. Use a white-to-red colormap.
+
+**What to look for**: Thought anchors appear as **columns** with elevated KL values stretching down across many rows — they causally affect many later sentences. These columns typically correspond to plan generation or explicit backtracking steps. Compare the column positions to the receiver head scores computed earlier and the blackbox counterfactual importances from Section 2.
+
+**Stretch goal (full dataset)**: The paper's implementation is `get_suppression_KL_matrix` in `whitebox-analyses/attention_analysis/attn_supp_funcs.py`. It uses nucleus-sampling logit compression (`p_nucleus=0.9999`) to store only the top-p logits efficiently. Run it on 10–20 problems and average the row-normalized matrices. The `plot_suppression_matrix.py` script handles visualization. Compare your result to Figure 6 in the paper.
 """
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-
-def validate_whitebox_blackbox_correlation(
-    whitebox_scores: Float[np.ndarray, " n_samples"],
-    counterfactual_importances: Float[np.ndarray, " n_sentences"],
-    sampled_indices: list[int] | None = None,
-) -> tuple[float, go.Figure]:
-    """
-    Compute correlation between whitebox and blackbox importance metrics.
-
-    Args:
-        whitebox_scores: Attention suppression scores from whitebox analysis
-        counterfactual_importances: From black-box analysis
-        sampled_indices: If whitebox_scores are sampled, the indices they correspond to
-
-    Returns:
-        correlation: Pearson correlation coefficient
-        fig: Plotly scatter plot with trend line
-    """
-    # EXERCISE
-    # raise NotImplementedError("Implement correlation validation")
-    # END EXERCISE
-
-    # SOLUTION
-    # If sampled, align using indices
-    if sampled_indices is not None:
-        cf_importance_aligned = counterfactual_importances[sampled_indices]
-        whitebox_aligned = whitebox_scores
-    else:
-        # Handle length mismatch
-        min_len = min(len(whitebox_scores), len(counterfactual_importances))
-        whitebox_aligned = whitebox_scores[:min_len]
-        cf_importance_aligned = counterfactual_importances[:min_len]
-
-    # Use absolute value of counterfactual importance
-    # (negative importance means making the answer less likely)
-    cf_abs = np.abs(cf_importance_aligned)
-
-    # Remove any NaN values
-    valid_mask = ~(np.isnan(whitebox_aligned) | np.isnan(cf_abs))
-    whitebox_valid = whitebox_aligned[valid_mask]
-    cf_valid = cf_abs[valid_mask]
-
-    if len(whitebox_valid) < 3:
-        print("Warning: Too few valid points for correlation")
-        return np.nan, None
-
-    # Compute correlation
-    correlation = np.corrcoef(cf_valid, whitebox_valid)[0, 1]
-
-    # Create scatter plot
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=cf_valid,
-            y=whitebox_valid,
-            mode="markers",
-            marker=dict(size=10, opacity=0.6, color="steelblue"),
-            name="Sentences",
-            hovertemplate="<b>CF Importance:</b> %{x:.4f}<br>" + "<b>Suppression Score:</b> %{y:.4f}<extra></extra>",
-        )
-    )
-
-    # Add trend line
-    if len(whitebox_valid) >= 2:
-        z = np.polyfit(cf_valid, whitebox_valid, 1)
-        p = np.poly1d(z)
-        x_line = np.linspace(cf_valid.min(), cf_valid.max(), 100)
-        y_line = p(x_line)
-
-        fig.add_trace(
-            go.Scatter(
-                x=x_line,
-                y=y_line,
-                mode="lines",
-                line=dict(color="red", dash="dash", width=2),
-                name=f"Trend (r={correlation:.3f})",
-            )
-        )
-
-    fig.update_layout(
-        title=f"Whitebox vs. Blackbox Correlation (r = {correlation:.3f})",
-        xaxis_title="|Counterfactual Importance| (Black-box)",
-        yaxis_title="Suppression Score (White-box)",
-        width=800,
-        height=600,
-        showlegend=True,
-    )
-
-    return correlation, fig
-    # END SOLUTION
-
-
-if MAIN:
-    # Get counterfactual importances from earlier black-box analysis
-    # These were computed for the full problem in section 2
-    text_full, sentences_full, cf_importance_full = utils.get_whitebox_example_data(problem_data)
-
-    # Use the full text and sentences for validation (not just the subset)
-    # Recompute boundaries for full text
-    boundaries_full = utils.get_sentence_token_boundaries(text_full, sentences_full, tokenizer)
-
-    # Build layer_to_heads dict for suppression (using top 20 receiver heads)
-    layer_to_heads = {}
-    for layer_idx, head_idx in receiver_heads[:20]:
-        if layer_idx not in layer_to_heads:
-            layer_to_heads[layer_idx] = []
-        layer_to_heads[layer_idx].append(int(head_idx))
-
-    # Compute suppression scores for a sample of sentences
-    print("\nComputing suppression scores for validation...")
-    suppression_scores, sampled_indices = compute_suppression_scores(
-        text_full,
-        sentences_full,
-        boundaries_full,
-        model,
-        tokenizer,
-        layer_to_heads,
-        sample_size=30,  # Sample 30 sentences for efficiency
-        seed=42,
-    )
-
-    print(f"\nComparing {len(suppression_scores)} sampled sentences...")
-    print(f"Suppression scores range: [{suppression_scores.min():.6f}, {suppression_scores.max():.6f}]")
-    print(f"CF importance range: [{cf_importance_full.min():.4f}, {cf_importance_full.max():.4f}]")
-
-    # Compute correlation
-    correlation, fig = validate_whitebox_blackbox_correlation(suppression_scores, cf_importance_full, sampled_indices)
-
-    print(f"\n{'=' * 60}")
-    print(f"Correlation (r): {correlation:.4f}")
-    print(f"{'=' * 60}")
-
-    if correlation > 0.3:
-        print("✓ Strong positive correlation!")
-        print("  Whitebox (suppression) and blackbox (resampling) methods")
-        print("  identify the same underlying 'thought anchors'.")
-    elif correlation > 0.15:
-        print("~ Moderate correlation")
-        print("  Results show some agreement between methods.")
-    else:
-        print("⚠ Low correlation")
-        print("  Methods may be identifying different aspects of importance.")
-
-    if fig is not None:
-        fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-### Additional Correlation Analysis
+### Exercise - Identify receiver heads via kurtosis and verify split-half reliability (Figure 4)
 
-Let's also compare black-box counterfactual importance against:
-1. **Raw receiver head scores** (without suppression intervention)
-2. **KL divergence from earlier attention suppression test** (high vs low importance)
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴🔴
+> Importance: 🔵🔵🔵🔵🔵
+> ```
 
-This helps us understand which whitebox metric correlates best.
+The paper identifies "receiver heads" by computing the **kurtosis** of each attention head's *vertical attention scores* across a set of reasoning traces. The vertical score for sentence $s$ under head $(l, h)$ is the mean attention weight that sentence $s$ receives from all subsequent token positions, after ignoring a local proximity window (to filter out trivially local attention patterns). High kurtosis means that a head's attention is concentrated on a small number of "anchor" sentences rather than spread broadly. The paper finds that only a small fraction of attention heads have high kurtosis, these heads are consistent across problems, and they correspond to the receiver heads identified qualitatively earlier in the notebook.
+
+**Starting point (single problem)**: Using the current reasoning trace and loaded model:
+
+1. For each attention head $(l, h)$, extract the full attention matrix and compute sentence-level vertical scores: for each sentence $s$, average the attention weights directed *toward* sentence $s$ from all token positions that are at least `proximity_ignore=16` positions after sentence $s$'s end boundary. The paper implements this in `get_vertical_scores` in `whitebox-analyses/attention_analysis/attn_funcs.py`.
+2. Compute `scipy.stats.kurtosis` of the resulting per-sentence score array for each head.
+3. Produce a scatter plot of kurtosis versus layer index. You should see a small number of outlier heads with substantially higher kurtosis than the bulk of heads (which cluster near zero). These are candidate receiver heads.
+4. Check whether the top-kurtosis heads from this single trace agree with the receiver head set used in this notebook (which was pre-computed from many traces).
+
+**Stretch goal — split-half reliability (paper result: r = 0.84)**: Replicate the paper's reliability analysis across many reasoning traces:
+
+1. Download the dataset from HuggingFace (`uzaymacar/math-rollouts`) and process a set of problems using `get_all_problems_vert_scores` from the paper's `receiver_head_funcs.py`.
+2. Split problems into two halves (odd/even indices). For each half, average per-head kurtosis using `get_3d_ar_kurtosis`.
+3. Scatter plot first-half vs. second-half mean kurtosis (one point per head). Compute Pearson correlation using `scipy.stats.pearsonr`. The paper reports r = 0.84, showing the same heads consistently function as receivers across different reasoning problems.
+4. Select the top-$k$ heads by mean kurtosis (paper uses $k = 20$–$32$) as the receiver head set. Note which layers these heads concentrate in.
 """
 
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-if MAIN:
-    print("\n" + "=" * 60)
-    print("Additional Correlation Analysis")
-    print("=" * 60)
+r"""
+### Exercise - Receiver head scores by sentence taxonomic category (Figure 5)
 
-    # 1. Correlation with raw receiver head scores
-    print("\n1. Raw Receiver Head Scores vs Counterfactual Importance:")
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴🔴
+> Importance: 🔵🔵🔵🔵🔵
+> ```
 
-    # Compute receiver head scores for the full text
-    receiver_scores_raw = compute_receiver_head_scores(
-        text_full,
-        sentences_full,
-        receiver_heads,
-        model,
-        tokenizer,
-        proximity_ignore=16,
-    )
+The paper's most interpretable whitebox result is that receiver head attention is not uniformly distributed across sentence types. **Plan generation** and **uncertainty management** sentences receive significantly higher receiver-head scores than **active computation** sentences (p < 0.001 for all pairwise comparisons across many problems). This directly links the functional role of a sentence (planning, pivoting) to its mechanistic role (being selectively attended to by specialized receiver heads), providing mechanistic evidence for the concept of thought anchors.
 
-    # Ensure both arrays have the same length (truncate to minimum)
-    min_len = min(len(receiver_scores_raw), len(cf_importance_full))
-    receiver_scores_full = receiver_scores_raw[:min_len]
-    cf_importance_aligned = cf_importance_full[:min_len]
+The sentence categories used in the paper are: `plan_generation`, `active_computation`, `fact_retrieval`, `uncertainty_management`, `result_consolidation`, `self_checking`, `problem_setup`, and `final_answer_emission`. Each sentence is labeled by an LLM auto-labeler using a structured prompt (`DAG_PROMPT` in `prompts.py` in the paper's repository).
 
-    # Align with counterfactual importance (handle NaN values)
-    valid_mask = ~np.isnan(receiver_scores_full) & ~np.isnan(cf_importance_aligned)
-    if valid_mask.sum() >= 3:
-        receiver_valid = receiver_scores_full[valid_mask]
-        cf_valid = np.abs(cf_importance_aligned[valid_mask])
+**Starting point (single problem)**:
 
-        correlation_receiver = np.corrcoef(cf_valid, receiver_valid)[0, 1]
+1. Use an LLM (e.g. via the Anthropic API) with the `DAG_PROMPT` from the paper's `prompts.py` to classify each sentence in the reasoning trace from this notebook into one or more function tags. The prompt asks the model to act as a "chain-of-thought function tagger" and assign categories based on the sentence's role in the reasoning.
+2. Compute receiver head scores for each sentence using `compute_receiver_head_scores` (already defined in this notebook).
+3. Group sentences by their assigned function tag, compute mean receiver-head score per group, and plot a bar chart. Even on a single trace, plan generation and uncertainty management sentences should score noticeably higher than active computation sentences.
 
-        # Create scatter plot
-        fig_receiver = go.Figure()
-        fig_receiver.add_trace(
-            go.Scatter(
-                x=cf_valid,
-                y=receiver_valid,
-                mode="markers",
-                marker=dict(size=10, opacity=0.6, color="indianred"),
-                name="Sentences",
-                hovertemplate="<b>CF Importance:</b> %{x:.4f}<br><b>Receiver Score:</b> %{y:.4f}<extra></extra>",
-            )
-        )
+**Stretch goal — statistical validation across many problems (paper result: p < 0.001)**:
 
-        # Add trend line
-        if len(receiver_valid) >= 2:
-            z = np.polyfit(cf_valid, receiver_valid, 1)
-            p = np.poly1d(z)
-            x_line = np.linspace(cf_valid.min(), cf_valid.max(), 100)
-            y_line = p(x_line)
-
-            fig_receiver.add_trace(
-                go.Scatter(
-                    x=x_line,
-                    y=y_line,
-                    mode="lines",
-                    line=dict(color="red", dash="dash", width=2),
-                    name=f"Trend (r={correlation_receiver:.3f})",
-                )
-            )
-
-        fig_receiver.update_layout(
-            title=f"Raw Receiver Scores vs. Blackbox (r = {correlation_receiver:.3f})",
-            xaxis_title="|Counterfactual Importance| (Black-box)",
-            yaxis_title="Receiver Head Score (White-box)",
-            width=800,
-            height=600,
-            showlegend=True,
-        )
-
-        print(f"Correlation: r = {correlation_receiver:.4f}")
-        fig_receiver.show()
-    else:
-        print("Not enough valid data points for correlation")
-
-    # 2. Correlation with KL divergence for ALL sentences
-    print("\n2. KL Divergence (All Sentences) vs Counterfactual Importance:")
-    print("Computing KL divergence for all sentences (this may take a moment)...")
-
-    # Get original logits (no suppression)
-    inputs = tokenizer(text_full, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        original_output = model(**inputs)
-        original_logits = original_output.logits[0, -1].cpu().numpy()
-
-    # Compute KL divergence for each sentence
-    kl_scores_all = []
-    for sent_idx in tqdm(range(min(len(sentences_full), len(boundaries_full)))):
-        sent_range = boundaries_full[sent_idx]
-
-        # Apply suppression to this sentence
-        suppression_info = apply_qwen_attention_suppression(model, sent_range, layer_to_heads)
-
-        with torch.no_grad():
-            suppressed_output = model(**inputs)
-            suppressed_logits = suppressed_output.logits[0, -1].cpu().numpy()
-
-        remove_qwen_attention_suppression(model, suppression_info)
-
-        # Compute KL divergence with temperature matching CoT generation
-        kl = compute_suppression_kl(original_logits, suppressed_logits, temperature=0.6)
-        kl_scores_all.append(kl)
-
-    kl_scores_all = np.array(kl_scores_all)
-
-    # Align with counterfactual importance (truncate to minimum length)
-    min_len_kl = min(len(kl_scores_all), len(cf_importance_full))
-    kl_aligned = kl_scores_all[:min_len_kl]
-    cf_kl_aligned = cf_importance_full[:min_len_kl]
-
-    # Remove NaN values
-    valid_mask_kl = ~np.isnan(kl_aligned) & ~np.isnan(cf_kl_aligned)
-    if valid_mask_kl.sum() >= 3:
-        kl_valid = kl_aligned[valid_mask_kl]
-        cf_kl_valid = np.abs(cf_kl_aligned[valid_mask_kl])
-
-        correlation_kl = np.corrcoef(cf_kl_valid, kl_valid)[0, 1]
-
-        # Create scatter plot
-        fig_kl_all = go.Figure()
-        fig_kl_all.add_trace(
-            go.Scatter(
-                x=cf_kl_valid,
-                y=kl_valid,
-                mode="markers",
-                marker=dict(size=10, opacity=0.6, color="mediumseagreen"),
-                name="Sentences",
-                hovertemplate="<b>CF Importance:</b> %{x:.4f}<br><b>KL Divergence:</b> %{y:.6f}<extra></extra>",
-            )
-        )
-
-        # Add trend line
-        if len(kl_valid) >= 2:
-            z = np.polyfit(cf_kl_valid, kl_valid, 1)
-            p = np.poly1d(z)
-            x_line = np.linspace(cf_kl_valid.min(), cf_kl_valid.max(), 100)
-            y_line = p(x_line)
-
-            fig_kl_all.add_trace(
-                go.Scatter(
-                    x=x_line,
-                    y=y_line,
-                    mode="lines",
-                    line=dict(color="darkgreen", dash="dash", width=2),
-                    name=f"Trend (r={correlation_kl:.3f})",
-                )
-            )
-
-        fig_kl_all.update_layout(
-            title=f"KL Divergence (All Sentences) vs. Blackbox (r = {correlation_kl:.3f})",
-            xaxis_title="|Counterfactual Importance| (Black-box)",
-            yaxis_title="KL Divergence (White-box Suppression)",
-            width=800,
-            height=600,
-            showlegend=True,
-        )
-
-        print(f"Correlation: r = {correlation_kl:.4f}")
-        fig_kl_all.show()
-    else:
-        print("Not enough valid data points for correlation")
-
-    print("\n" + "=" * 60)
-    print("Correlation Summary:")
-    print("=" * 60)
-    print(f"Suppression scores (30 sampled): r = {correlation:.4f}")
-    if "correlation_receiver" in locals():
-        print(f"Raw receiver scores (all):        r = {correlation_receiver:.4f}")
-    if "correlation_kl" in locals():
-        print(f"KL divergence (all sentences):    r = {correlation_kl:.4f}")
-    print("\nNote: Different metrics capture different aspects of importance:")
-    print("  - Raw receiver scores: Attention aggregation patterns")
-    print("  - KL divergence: Impact on final output distribution")
+1. Use the paper's `generate_rec_csvs.py` script to produce CSV files containing receiver head scores and taxonomic labels for every problem in the dataset.
+2. For each problem, aggregate receiver head scores by sentence category (per-problem median, to avoid pseudoreplication across sentences within a problem).
+3. Run paired t-tests using `scipy.stats.ttest_rel`, comparing pairs of categories using only problems that have examples of both categories. Exclude `final_answer_emission` and `problem_setup` from pairwise comparisons.
+4. Plot boxplots stratified by category (as in `plot_rec_taxonomy.py` from the paper code). Compare to Figure 5 of the paper. The result provides statistical support for the core claim: plan generation and uncertainty management sentences are the primary thought anchors — they are the steps that most influence downstream reasoning, both causally (blackbox) and via attention (whitebox).
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
