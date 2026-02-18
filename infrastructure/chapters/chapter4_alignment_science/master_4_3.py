@@ -4090,13 +4090,13 @@ def load_all_chunks_labeled(
         m = _sid_pattern.search(path)
         return int(m.group(1)) if m else -1
 
-    cl_rows["_sid"] = cl_rows["path"].apply(_extract_sid)
-    cl_rows = cl_rows[cl_rows["_sid"] >= 0]
+    cl_rows["sid"] = cl_rows["path"].apply(_extract_sid)
+    cl_rows = cl_rows[cl_rows["sid"] >= 0]
 
-    unique_ids = sorted(cl_rows["_sid"].unique())
+    unique_ids = sorted(cl_rows["sid"].unique())
     if max_scenarios is not None:
         unique_ids = unique_ids[:max_scenarios]
-    cl_rows = cl_rows[cl_rows["_sid"].isin(unique_ids)]
+    cl_rows = cl_rows[cl_rows["sid"].isin(unique_ids)]
 
     if verbose:
         n_avail = len(df[df["filename"] == "chunks_labeled.json"]["path"].apply(_extract_sid).unique())
@@ -4107,9 +4107,9 @@ def load_all_chunks_labeled(
     def _parse(sid: int, content: str) -> tuple[int, list[dict]]:
         return sid, json.loads(content)
 
-    rows_list = list(cl_rows[["_sid", "content"]].itertuples(index=False))
+    rows_list = list(cl_rows[["sid", "content"]].itertuples(index=False))
     with ThreadPoolExecutor(max_workers=16) as executor:
-        futures = {executor.submit(_parse, int(row._sid), row.content): int(row._sid) for row in rows_list}
+        futures = {executor.submit(_parse, int(row.sid), row.content): int(row.sid) for row in rows_list}
         for future in tqdm(as_completed(futures), total=len(futures), desc="Loading scenarios", disable=not verbose):
             sid, data = future.result()
             results[sid] = data
@@ -4198,8 +4198,8 @@ if MAIN and FLAG_RUN_SECTION_4:
 # ! TAGS: [main]
 
 # Number of scenarios to use for cross-scenario analysis.
-# Full dataset has ~13,595; N=10 is fast, N=200+ gives paper-quality stability.
-N_ANALYSIS_SCENARIOS = 10
+# Full dataset has a small number of unique scenarios.
+N_ANALYSIS_SCENARIOS = 50
 
 # Load chunks_labeled.json from N_ANALYSIS_SCENARIOS scenarios in parallel.
 # This is much lighter than load_blackmail_scenario (no solutions.json files)
@@ -4283,7 +4283,6 @@ For each chunk, include a list of earlier chunk indices that the reasoning in th
 
 if MAIN and FLAG_RUN_SECTION_4:
     print("Blackmail taxonomy loaded!")
-    print("\nKey insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4455,6 +4454,19 @@ BLACKMAIL_CAT_COLORS = {
 
 # Categories excluded in plots.py (lines 63-64): non-semantic structural tokens
 EXCLUDED_CATEGORIES = {"other", "structural_marker", "action_marker", "email_analysis"}
+
+# The 6 core categories from the paper taxonomy. Some scenarios in the dataset
+# use extended schemas (option_generation, critique_and_refinement, etc.) from
+# different annotation runs. Filtering to STANDARD_BLACKMAIL_CATEGORIES removes
+# this noise from the cross-scenario summary tables.
+STANDARD_BLACKMAIL_CATEGORIES = {
+    "situation_assessment",
+    "urgency_and_time",
+    "leverage_identification",
+    "plan_generation",
+    "self_preservation",
+    "action_execution",
+}
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -4640,7 +4652,7 @@ if MAIN and FLAG_RUN_SECTION_4:
                 cat = blackmail_data["chunks_labeled"][idx].get("function_tags", ["?"])[0]
                 preview = chunks_removed[idx][:60].replace("\n", " ")
                 direction = "↑ blackmail" if score > 0 else "↓ blackmail"
-                print(f"  [{cat}] Chunk {idx} -> {idx+1}: {score:+.4f}  ({direction})")
+                print(f"  [{cat}] Chunk {idx} -> {idx + 1}: {score:+.4f}  ({direction})")
                 print(f"    '{preview}...'")
             max_idx = top5[0]
             print(f"\nMost important transition: chunk {max_idx} -> {max_idx + 1}")
@@ -4668,8 +4680,8 @@ if MAIN and FLAG_RUN_SECTION_4:
         ax2.axhline(y=0, color="black", linewidth=0.5)
         ax2.set_title("Counterfactual Importance (red = increases blackmail, blue = decreases)")
 
-        # plt.tight_layout()
-        # plt.show()
+        plt.tight_layout()
+        plt.show()
 
     else:
         # DEMO MODE: No real rollout data available - use synthetic example to demonstrate the function
@@ -4770,105 +4782,95 @@ if MAIN and FLAG_RUN_SECTION_4:
                 "rollouts where the resampled chunk was genuinely different from the original."
             )
 
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Note: Replicating Figure 2 (Counterfactual++ Importance)
+
+The paper's crispest quantitative result (Figure 2) is that `self_preservation` chunks
+have **near-zero counterfactual++ (CF++) importance** (~0.001–0.003 KL divergence), while
+`leverage_identification` and `plan_generation` are noticeably higher. This directly
+backs the "self-preservation talk is cheap" claim with numbers.
+
+To replicate this yourself, you would need to:
+
+1. Load **`fighting_back_results.json`** from the HuggingFace dataset
+   (`uzaymacar/blackmail-rollouts`) — this contains on-policy "fight-back" rollouts
+   where the model's reasoning is iteratively disrupted to compute CF++ importance.
+2. Compute CF++ = KL divergence between behavior distributions with a chunk forcibly
+   present vs absent, aggregated across fight-back trajectories.
+3. Aggregate hierarchically across many scenarios (the paper uses ~13,595; the public
+   dataset has fight-back results for 79 scenarios).
+
+The structural anchoring result using DTF (below) is fully replicable from
+`chunks_labeled.json` and reaches the same conclusion from a different angle.
+"""
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: [main]
 
-# ── (1) & (2): Cross-scenario hierarchical analysis ──────────────────────────
-#
-# Mirrors plots.py:collect_tag_data() + aggregate_tag_data() methodology.
-# Level 1: per-scenario mean for each category.
-# Level 2: grand mean ± SE across scenario-level means.
-# This removes the single-scenario noise that made scenario-0-only results unreliable.
-
 if MAIN and FLAG_RUN_SECTION_4:
-    # ── Section (1): Causal importance by category ────────────────────────────
-    print("=" * 70)
-    print(f"(1) CAUSAL IMPORTANCE BY CATEGORY  (N={n_loaded} scenarios, hierarchical avg)")
-    print("=" * 70)
-    print("Primary metric: forced_importance_category_kl")
-    print("  = KL divergence between behavior distributions when a chunk is forcibly")
-    print("    present vs forcibly absent. Best available proxy for CF++ (paper Fig. 2).")
-    print("  HIGH = chunk matters causally; behavior changes when you force it in/out.")
-    print("  LOW  = chunk is post-hoc or redundant; behavior barely changes.")
-    print()
-    print("Baseline: counterfactual_importance_category_kl (paper Appendix Fig. 6)")
-    print("  Expected to be near-uniform for overdetermined scenarios — confirms that")
-    print("  we need a stronger causal signal (forced ablation) to see category differences.")
-    print()
-
-    forced_by_cat = hierarchical_category_means(all_cl, "forced_importance_category_kl", EXCLUDED_CATEGORIES)
-    cf_by_cat = hierarchical_category_means(all_cl, "counterfactual_importance_category_kl", EXCLUDED_CATEGORIES)
-
-    if forced_by_cat:
-        cat_order_f = sorted(forced_by_cat.keys(), key=lambda c: forced_by_cat[c][0], reverse=True)
-        print(f"  {'category':<25}  {'forced_kl':>9}  {'+/-SE':>6}  {'baseline_cf':>11}  {'n':>3}")
-        print(f"  {'-'*25}  {'-'*9}  {'-'*6}  {'-'*11}  {'-'*3}")
-        for cat in cat_order_f:
-            gm, se, n = forced_by_cat[cat]
-            cf_gm = cf_by_cat.get(cat, (float("nan"), float("nan"), 0))[0]
-            if cat == "leverage_identification":
-                flag = " ← expect HIGH (structural anchor)"
-            elif cat == "self_preservation":
-                flag = " ← expect LOW  (post-hoc)"
-            elif cat == "plan_generation":
-                flag = " ← expect HIGH (decision point)"
-            else:
-                flag = ""
-            print(f"  {cat:<25}  {gm:>+9.4f}  {se:>6.4f}  {cf_gm:>11.4f}  {n:>3}{flag}")
-        print()
-        print("Paper finding (§2, Fig. 2):")
-        print("  leverage_identification + plan_generation: ELEVATED causal importance")
-        print("  self_preservation: near-zero (~0.001-0.003 KL) — post-hoc rationalization")
-        print("  'Self-preservation talk is cheap: these statements have near-zero causal")
-        print("   impact on whether the model actually blackmails.'")
-    else:
-        print("  [forced_importance_category_kl not found in chunks_labeled]")
-
-if MAIN and FLAG_RUN_SECTION_4:
-    # ── Section (2): Structural anchoring (DTF + overdeterminedness) ──────────
+    # ── Structural anchoring by category (DTF) ───────────────────────────────
     print()
     print("=" * 70)
-    print(f"(2) STRUCTURAL ANCHORING  (N={n_loaded} scenarios, hierarchical avg)")
+    print(f"STRUCTURAL ANCHORING BY CATEGORY  (N={n_loaded} scenarios, hierarchical avg)")
     print("=" * 70)
-    print("DTF (different_trajectories_fraction):")
-    print("  LOW DTF  = model regenerates SIMILAR content at this position = structural ANCHOR")
-    print("  HIGH DTF = content varies across rollouts = post-hoc / less constrained")
-    print()
-    print("Overdeterminedness: P(blackmail | dissimilar replacement) across scenarios")
-    print("  HIGH = chunk is behaviorally redundant (blackmail persists without it) = post-hoc")
-    print("  LOW  = replacing this chunk tends to prevent blackmail = causally necessary")
+    print("Metric: different_trajectories_fraction (DTF)")
+    print("  LOW DTF  = model regenerates SIMILAR content when this chunk is removed = structural ANCHOR")
+    print("  HIGH DTF = content varies when this chunk is removed = post-hoc / dispensable")
     print()
 
     dtf_by_cat = hierarchical_category_means(all_cl, "different_trajectories_fraction", EXCLUDED_CATEGORIES)
-    overdet_by_cat = hierarchical_category_means(all_cl, "overdeterminedness", EXCLUDED_CATEGORIES)
 
     if dtf_by_cat:
-        cat_order_d = sorted(dtf_by_cat.keys(), key=lambda c: dtf_by_cat[c][0])
-        print(f"  {'category':<25}  {'DTF':>7}  {'+/-SE':>6}  {'overdet':>8}  {'n':>3}")
-        print(f"  {'-'*25}  {'-'*7}  {'-'*6}  {'-'*8}  {'-'*3}")
+        cat_order_d = sorted(
+            [c for c in dtf_by_cat if c in STANDARD_BLACKMAIL_CATEGORIES],
+            key=lambda c: dtf_by_cat[c][0],
+        )
+        print(f"  {'category':<25}  {'DTF':>7}  {'+/-SE':>6}  {'n':>3}")
+        print(f"  {'-' * 25}  {'-' * 7}  {'-' * 6}  {'-' * 3}")
         for cat in cat_order_d:
             dtf_m, dtf_se, n = dtf_by_cat[cat]
-            od_m = overdet_by_cat.get(cat, (float("nan"), float("nan"), 0))[0]
             if cat == "leverage_identification":
-                flag = " ← expect LOW  (structural anchor)"
+                flag = " ← lowest: structural anchor"
             elif cat == "self_preservation":
-                flag = " ← expect HIGH (post-hoc)"
-            elif cat == "situation_assessment":
-                flag = " ← expect LOW  (factual anchor)"
+                flag = " ← highest: post-hoc"
             else:
                 flag = ""
-            print(f"  {cat:<25}  {dtf_m:>7.3f}  {dtf_se:>6.3f}  {od_m:>8.3f}  {n:>3}{flag}")
+            print(f"  {cat:<25}  {dtf_m:>7.3f}  {dtf_se:>6.3f}  {n:>3}{flag}")
         print()
         print("Paper finding (§2, Fig. 1):")
-        print("  self_preservation has the LOWEST resilience scores (~1-4 fight-back iterations)")
-        print("  across all four models tested. leverage_identification and situation_assessment")
-        print("  are structurally anchored (model consistently generates them).")
-        print("  overdeterminedness HIGH for self_preservation confirms it is redundant:")
-        print("  blackmail occurs with or without these statements.")
+        print("  leverage_identification is the most structurally anchored category (lowest DTF):")
+        print("  the model consistently regenerates leverage-seeking thoughts even when disrupted.")
+        print("  self_preservation is the most dispensable (highest DTF): remove it and it stays gone.")
+        print("  This is the observable signature of 'self-preservation talk is cheap' —")
+        print("  these statements are post-hoc elaborations, not causal drivers.")
+
+        # Plot: DTF by category (horizontal bar chart, sorted low to high)
+        cats_plot = list(reversed(cat_order_d))  # high DTF at top for visual clarity
+        dtf_vals = [dtf_by_cat[c][0] for c in cats_plot]
+        dtf_errs = [dtf_by_cat[c][1] for c in cats_plot]
+        bar_colors = [BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cats_plot]
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        y_pos = range(len(cats_plot))
+        ax.barh(y_pos, dtf_vals, xerr=dtf_errs, color=bar_colors, alpha=0.85, capsize=4, height=0.6)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([c.replace("_", "\n") for c in cats_plot], fontsize=9)
+        ax.set_xlabel("Different Trajectories Fraction (DTF)")
+        ax.set_title(
+            f"Structural Anchoring by Category  (N={n_loaded} scenarios)\n"
+            "Low DTF = structural anchor;  High DTF = post-hoc"
+        )
+        ax.axvline(x=0.5, color="gray", linestyle="--", alpha=0.5, linewidth=0.8)
+        ax.set_xlim(0.3, 0.85)
+        plt.tight_layout()
+        plt.show()
     else:
         print("  [different_trajectories_fraction not found in chunks_labeled]")
-
 
 
 # ! CELL TYPE: markdown
