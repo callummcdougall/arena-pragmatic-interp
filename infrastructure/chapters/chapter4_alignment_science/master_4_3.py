@@ -145,7 +145,7 @@ branch = "main"
 # except:
 #     %pip install transformer_lens==2.11.0 einops jaxtyping openai
 
-# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+# # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
 root = (
     "/content"
     if IN_COLAB
@@ -223,7 +223,7 @@ assert thought_anchors_path.exists(), f"Please clone thought-anchors repo as {th
 sys.path.append(str(thought_anchors_path))
 
 torch.set_grad_enabled(False)
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
 chapter = "chapter4_alignment_science"
@@ -286,7 +286,7 @@ Now let's define some constants:
 # ! TAGS: []
 
 if MAIN:
-    print(f"Using device: {device}")
+    print(f"Using device: {DEVICE}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -478,6 +478,8 @@ def split_solution_into_chunks(text: str) -> list[str]:
     chunks = [re.sub(r"<DECIMAL>", ".", c) for c in chunks]
 
     # Merge chunks that are too short
+    if not chunks:
+        return []
     merged = [chunks[0]]
     for c in chunks[1:]:
         if len(merged[-1]) < 10:
@@ -2233,7 +2235,7 @@ def get_resampled_rollouts(
         )
 
     # First, generate a completion which we'll split up into chunks.
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
     output = generate(inputs)
     full_answer = tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=False)
     chunks = split_solution_into_chunks(full_answer)
@@ -2250,7 +2252,7 @@ def get_resampled_rollouts(
         full_answer_split = (
             prompt + chunk.join(full_answer.split(chunk, maxsplit=n_chunk_instances[chunk])[:-1]).strip()
         )
-        inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(device)
+        inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(DEVICE)
 
         for _ in range(num_resamples_per_chunk // batch_size):
             output_batch = generate(inputs)
@@ -3722,7 +3724,7 @@ Now let's properly test attention suppression using forward method replacement.
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Select high and low importance sentences
     valid_mask = ~np.isnan(receiver_scores)
     valid_indices = np.where(valid_mask)[0]
@@ -3956,6 +3958,19 @@ First, let's define a function to load blackmail data like we did with the previ
 # ! TAGS: []
 
 
+# Module-level cache so the large HuggingFace dataset is only downloaded/parsed once,
+# regardless of how many loading functions call it.
+_blackmail_df: object = None  # set to pd.DataFrame on first use
+
+
+def _get_blackmail_df():
+    """Return (and cache) the blackmail HuggingFace dataset as a pandas DataFrame."""
+    global _blackmail_df
+    if _blackmail_df is None:
+        _blackmail_df = load_dataset(BLACKMAIL_DATASET_NAME, split="default").to_pandas()
+    return _blackmail_df
+
+
 def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     """
     Load a complete blackmail scenario with all its associated files from the dataset.
@@ -3982,9 +3997,7 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     if verbose:
         print(f"Loading blackmail scenario {scenario_id} from HuggingFace...")
 
-    # Load dataset
-    dataset = load_dataset(BLACKMAIL_DATASET_NAME, split="default")
-    df = dataset.to_pandas()
+    df = _get_blackmail_df()
 
     scenario_data = {}
 
@@ -4049,6 +4062,101 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     return scenario_data
 
 
+def load_all_chunks_labeled(
+    max_scenarios: int | None = 10,
+    verbose: bool = True,
+) -> list[tuple[int, list[dict]]]:
+    """
+    Load chunks_labeled.json from multiple scenarios in parallel.
+
+    Only loads the small chunks_labeled.json files (pre-computed per-chunk metrics),
+    NOT the large per-chunk solutions.json files. This is fast and memory-efficient.
+
+    Args:
+        max_scenarios: Number of scenarios to load (sorted by scenario_id). None = all.
+        verbose: Show progress bar.
+
+    Returns:
+        List of (scenario_id, chunks_labeled_list) tuples, sorted by scenario_id.
+    """
+    df = _get_blackmail_df()
+
+    cl_rows = df[df["filename"] == "chunks_labeled.json"].copy()
+
+    # Extract scenario_id from path (e.g. ".../scenario_42/chunks_labeled.json")
+    _sid_pattern = re.compile(r"scenario_(\d+)/")
+
+    def _extract_sid(path: str) -> int:
+        m = _sid_pattern.search(path)
+        return int(m.group(1)) if m else -1
+
+    cl_rows["_sid"] = cl_rows["path"].apply(_extract_sid)
+    cl_rows = cl_rows[cl_rows["_sid"] >= 0]
+
+    unique_ids = sorted(cl_rows["_sid"].unique())
+    if max_scenarios is not None:
+        unique_ids = unique_ids[:max_scenarios]
+    cl_rows = cl_rows[cl_rows["_sid"].isin(unique_ids)]
+
+    if verbose:
+        n_avail = len(df[df["filename"] == "chunks_labeled.json"]["path"].apply(_extract_sid).unique())
+        print(f"  Dataset has {n_avail} scenarios with chunks_labeled.json; loading {len(unique_ids)}...")
+
+    results: dict[int, list[dict]] = {}
+
+    def _parse(sid: int, content: str) -> tuple[int, list[dict]]:
+        return sid, json.loads(content)
+
+    rows_list = list(cl_rows[["_sid", "content"]].itertuples(index=False))
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = {executor.submit(_parse, int(row._sid), row.content): int(row._sid) for row in rows_list}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading scenarios", disable=not verbose):
+            sid, data = future.result()
+            results[sid] = data
+
+    return [(sid, results[sid]) for sid in sorted(results.keys())]
+
+
+def hierarchical_category_means(
+    all_chunks_labeled: list[tuple[int, list[dict]]],
+    metric: str,
+    excluded_categories: set[str] | None = None,
+) -> dict[str, tuple[float, float, int]]:
+    """
+    Hierarchical two-level averaging matching plots.py:aggregate_tag_data().
+
+    Level 1: per-scenario mean for each category.
+    Level 2: grand mean ± SE across scenario-level means.
+
+    Returns:
+        Dict: category -> (grand_mean, standard_error, n_scenarios_with_data)
+    """
+    if excluded_categories is None:
+        excluded_categories = set()
+
+    scenario_cat_means: dict[str, list[float]] = defaultdict(list)
+    for _sid, chunks_labeled in all_chunks_labeled:
+        cat_vals: dict[str, list[float]] = defaultdict(list)
+        for chunk in chunks_labeled:
+            tags = chunk.get("function_tags", [])
+            cat = tags[0] if tags else "other"
+            if cat in excluded_categories:
+                continue
+            val = chunk.get(metric)
+            if val is not None:
+                try:
+                    fval = float(val)
+                    if not np.isnan(fval):
+                        cat_vals[cat].append(fval)
+                except (TypeError, ValueError):
+                    pass
+        for cat, vals in cat_vals.items():
+            if vals:
+                scenario_cat_means[cat].append(float(np.mean(vals)))
+
+    return {cat: (*_mean_se(means), len(means)) for cat, means in scenario_cat_means.items()}
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -4084,6 +4192,24 @@ if MAIN and FLAG_RUN_SECTION_4:
         print(f"    Blackmail rate: {chunk['blackmail_rate']:.3f}")
         print(f"    Function tag: {chunk['function_tags'][0]}")
         print(f"    Is misaligned: {chunk['is_misaligned']}")
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# Number of scenarios to use for cross-scenario analysis.
+# Full dataset has ~13,595; N=10 is fast, N=200+ gives paper-quality stability.
+N_ANALYSIS_SCENARIOS = 10
+
+# Load chunks_labeled.json from N_ANALYSIS_SCENARIOS scenarios in parallel.
+# This is much lighter than load_blackmail_scenario (no solutions.json files)
+# and gives us the cross-scenario hierarchical averages that match the paper.
+if MAIN and FLAG_RUN_SECTION_4:
+    print(f"\nLoading chunks_labeled.json from {N_ANALYSIS_SCENARIOS} scenarios for cross-scenario analysis...")
+    print("(Increase N_ANALYSIS_SCENARIOS at top of this section for more stable estimates.)")
+    all_cl = load_all_chunks_labeled(max_scenarios=N_ANALYSIS_SCENARIOS, verbose=True)
+    n_loaded = len(all_cl)
+    print(f"Loaded {n_loaded} scenarios. Total chunks: {sum(len(cl) for _, cl in all_cl)}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4246,30 +4372,24 @@ def compute_resilience(
 
 
 if MAIN and FLAG_RUN_SECTION_4:
-    # Compute resilience for the first chunk in our blackmail scenario
-    # This shows how often the model regenerates similar content when a chunk is removed
-    chunk_idx = 5  # Pick a chunk with interesting content
-    removed_chunk = blackmail_data["chunks_labeled"][chunk_idx]["chunk"]
-
-    # Get resampled rollouts from solutions where this chunk was removed
-    if chunk_idx < len(blackmail_data["solutions"]):
-        chunk_solutions = (
-            blackmail_data["solutions"][chunk_idx] if isinstance(blackmail_data["solutions"], list) else []
-        )
-        if chunk_solutions:
-            resampled_rollouts = [sol.get("full_cot", "") for sol in chunk_solutions if sol.get("full_cot")]
-            resilience = compute_resilience(
-                removed_chunk, resampled_rollouts, embedding_model, similarity_threshold=0.7
-            )
-            print(f"Chunk {chunk_idx}: '{removed_chunk[:60]}...'")
-            print(f"Resilience: {resilience:.2f}")
-            print(
-                f"Interpretation: {resilience * 100:.0f}% of rollouts regenerated similar content when this chunk was removed"
-            )
-        else:
-            print(f"No solutions available for chunk {chunk_idx}")
-    else:
-        print(f"Chunk index {chunk_idx} out of range")
+    # Note: the compute_resilience() function above uses full_cot (the complete resampled
+    # reasoning trace) to check whether the removed chunk reappears. In this dataset,
+    # full_cot is the system prompt + email content (not a regenerated reasoning trace),
+    # so it always scores 0.00 — the field name is misleading for this data format.
+    #
+    # The correct resilience metric (fighting_back_score_semantic from measure_determination.py)
+    # requires iterative disruption rollouts not included in solutions.json.
+    # Instead we use different_trajectories_fraction (DTF) from chunks_labeled.json as a proxy:
+    #   LOW DTF = model regenerates similar content at this position = structural anchor
+    #   HIGH DTF = model's content varies = post-hoc rationalization
+    chunk_idx = 5
+    chunk_meta = blackmail_data["chunks_labeled"][chunk_idx]
+    dtf = chunk_meta.get("different_trajectories_fraction", float("nan"))
+    print("Key insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
+    print(f"Chunk {chunk_idx}: '{chunk_meta['chunk'][:60]}...'")
+    print(f"DTF (different_trajectories_fraction): {dtf:.2f}")
+    print(f"Interpretation: {dtf * 100:.0f}% of resampled rollouts produce semantically different content here.")
+    print("  (HIGH DTF = content varies = post-hoc; LOW DTF = consistently regenerated = structural anchor)")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4336,41 +4456,7 @@ BLACKMAIL_CAT_COLORS = {
 # Categories excluded in plots.py (lines 63-64): non-semantic structural tokens
 EXCLUDED_CATEGORIES = {"other", "structural_marker", "action_marker", "email_analysis"}
 
-# Convergence threshold (plots.py line 300): blackmail_rate > 0.99
-CONVERGENCE_THRESHOLD = 0.99
-CONVERGENCE_K = 2  # require K consecutive converged chunks
-
 # ── helpers ──────────────────────────────────────────────────────────────────
-
-
-def _build_converged_mask(chunks_labeled: list, k: int = 2, threshold: float = 0.99) -> list[bool]:
-    """
-    Return a boolean list: converged[i] = True if chunk i and the next k-1
-    chunks all have blackmail_rate > threshold OR all < (1-threshold).
-    Mirrors plots.py lines 294-311.
-    Prints diagnostic info so we can see how many chunks get filtered.
-    """
-    n = len(chunks_labeled)
-    converged = [False] * n
-    first_high = None
-    first_low = None
-
-    for i in range(n - k + 1):
-        rates = [chunks_labeled[i + j].get("blackmail_rate", 0.0) for j in range(k)]
-        if all(r > threshold for r in rates):
-            converged[i] = True
-            if first_high is None:
-                first_high = i
-        elif all(r < (1 - threshold) for r in rates):
-            converged[i] = True
-            if first_low is None:
-                first_low = i
-
-    print(f"\n[DEBUG] Convergence filter (K={k}, threshold>{threshold}):")
-    print(f"  {sum(converged)}/{n} chunks marked converged")
-    print(f"  First high-convergence chunk: {first_high}")
-    print(f"  First low-convergence  chunk: {first_low}")
-    return converged
 
 
 def _mean_se(values: list[float]) -> tuple[float, float]:
@@ -4378,254 +4464,10 @@ def _mean_se(values: list[float]) -> tuple[float, float]:
     if not values:
         return float("nan"), float("nan")
     arr = np.array(values, dtype=float)
-    return float(arr.mean()), float(arr.std(ddof=1) / np.sqrt(len(arr))) if len(arr) > 1 else (float(arr[0]), 0.0)
+    if len(arr) > 1:
+        return float(arr.mean()), float(arr.std(ddof=1) / np.sqrt(len(arr)))
+    return float(arr[0]), 0.0
 
-
-# ── (1) Counterfactual Importance by Category ─────────────────────────────────
-
-if MAIN and FLAG_RUN_SECTION_4:
-    print("=" * 70)
-    print("(1) COUNTERFACTUAL IMPORTANCE BY CATEGORY")
-    print("=" * 70)
-    print("Source: raw rollout blackmail labels from solutions.json")
-    print("Metric: mean CF importance score attributed to each chunk's category")
-    print("(Follows thought-branches/blackmail/plots.py:collect_tag_data logic)")
-    print()
-
-    # Use globals().get() so the linter doesn't flag these as undefined;
-    # they are set in the preceding 'if MAIN:' cell that runs calculate_blackmail_counterfactual_importance.
-    _has_real_data = globals().get("has_real_data", False)
-    _importance_scores = globals().get("importance_scores", None)
-
-    if not _has_real_data:
-        print("WARNING: no real rollout data — skipping CF importance by category")
-    elif not _importance_scores:
-        print("WARNING: importance_scores not yet computed — run the CF importance cell first")
-    else:
-        labeled = blackmail_data["chunks_labeled"]
-        converged_mask = _build_converged_mask(labeled, k=CONVERGENCE_K, threshold=CONVERGENCE_THRESHOLD)
-
-        # importance_scores[i] = transition chunk_i -> chunk_i+1;
-        # we attribute the score to chunk_i (the chunk whose removal was tested).
-        cf_by_cat: dict[str, list[float]] = defaultdict(list)
-        skipped_converged = skipped_excluded = 0
-
-        print("\n[DEBUG] Per-chunk CF importance attribution:")
-        print(f"  {'idx':>3}  {'category':<25}  {'converged':>9}  {'excluded':>8}  {'score':>8}")
-        print(f"  {'-' * 3}  {'-' * 25}  {'-' * 9}  {'-' * 8}  {'-' * 8}")
-
-        for i, score in enumerate(_importance_scores):
-            if i >= len(labeled):
-                break
-            chunk = labeled[i]
-            tags = chunk.get("function_tags", [])
-            cat = tags[0] if tags else "other"
-            is_converged = converged_mask[i]
-            is_excluded = cat in EXCLUDED_CATEGORIES
-
-            print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {str(is_excluded):>8}  {score:>+8.4f}")
-
-            if is_converged:
-                skipped_converged += 1
-            elif is_excluded:
-                skipped_excluded += 1
-            else:
-                cf_by_cat[cat].append(score)
-
-        print(f"\n[DEBUG] Skipped {skipped_converged} converged + {skipped_excluded} excluded chunks")
-        print("[DEBUG] Remaining chunks per category:")
-        for cat, vals in sorted(cf_by_cat.items()):
-            m, se = _mean_se(vals)
-            print(f"  {cat:<25}: n={len(vals):>2}, mean={m:+.4f}, SE={se:.4f}, values={[f'{v:+.3f}' for v in vals]}")
-
-        # ── plot ──
-        cat_order_cf = sorted(cf_by_cat.keys(), key=lambda c: _mean_se(cf_by_cat[c])[0], reverse=True)
-        cf_means = [_mean_se(cf_by_cat[c])[0] for c in cat_order_cf]
-        cf_errors = [_mean_se(cf_by_cat[c])[1] for c in cat_order_cf]
-        cf_counts = [len(cf_by_cat[c]) for c in cat_order_cf]
-        cf_colors = [BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cat_order_cf]
-
-        fig_cf = go.Figure()
-        fig_cf.add_trace(
-            go.Bar(
-                x=cat_order_cf,
-                y=cf_means,
-                error_y=dict(type="data", array=cf_errors, visible=True),
-                marker_color=cf_colors,
-                opacity=0.85,
-                text=[f"{v:+.3f}" for v in cf_means],
-                textposition="outside",
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    "Mean CF importance: %{y:+.4f}<br>"
-                    "SE: %{error_y.array:.4f}<br>"
-                    "n chunks: %{customdata}<extra></extra>"
-                ),
-                customdata=cf_counts,
-            )
-        )
-        fig_cf.update_layout(
-            title=(
-                f"Counterfactual Importance by Category (Scenario {SCENARIO_ID})<br>"
-                f"<sup>Positive = including this chunk type increases P(blackmail); "
-                f"convergence-filtered (K={CONVERGENCE_K}, threshold={CONVERGENCE_THRESHOLD})</sup>"
-            ),
-            xaxis_title="Chunk Category (function_tags[0])",
-            yaxis_title="Mean Counterfactual Importance",
-            width=950,
-            height=520,
-            xaxis_tickangle=-35,
-        )
-        fig_cf.show()
-
-        print("\n[DEBUG] Category CF importance summary (sorted by mean):")
-        for cat in cat_order_cf:
-            m, se = _mean_se(cf_by_cat[cat])
-            n = len(cf_by_cat[cat])
-            print(f"  {cat:<25}: mean={m:+.4f}  SE={se:.4f}  n={n}")
-
-
-# ── (2) Resilience by Category ────────────────────────────────────────────────
-#
-# Resilience (compute_resilience, line 4202) = fraction of resampled full_cot
-# rollouts that contain a sentence semantically similar to the removed chunk.
-#
-# Paper claim (Thought Branches §4 / Figure 6):
-#   • self_preservation   → LOW  resilience  (post-hoc rationalisation)
-#   • leverage_identification → HIGH resilience  (factual anchor in context)
-#   • situation_assessment  → HIGH resilience  (factual anchor in context)
-#
-# "Low resilience" means the model does NOT regenerate the removed content,
-# i.e. the sentence was incidental rather than structurally load-bearing.
-# =============================================================================
-
-if MAIN and FLAG_RUN_SECTION_4:
-    _has_real_data = globals().get("has_real_data", False)
-
-    print("\n" + "=" * 70)
-    print("(2) RESILIENCE BY CATEGORY")
-    print("=" * 70)
-    print("Metric: compute_resilience() per chunk, averaged by function_tags[0]")
-    print("(Directly uses the paper's resilience definition: fraction of rollouts")
-    print(" that regenerate content similar to the removed chunk)")
-    print()
-
-    if not _has_real_data:
-        print("WARNING: no real rollout data — skipping resilience by category")
-    else:
-        labeled = blackmail_data["chunks_labeled"]
-        converged_mask = _build_converged_mask(labeled, k=CONVERGENCE_K, threshold=CONVERGENCE_THRESHOLD)
-
-        resilience_by_cat: dict[str, list[float]] = defaultdict(list)
-        skipped_res_converged = skipped_res_excluded = skipped_res_no_data = 0
-
-        print(
-            f"[DEBUG] Computing resilience for {len(labeled)} chunks "
-            f"(similarity threshold=0.7, matches paper's compute_resilience default)"
-        )
-        print(f"  {'idx':>3}  {'category':<25}  {'converged':>9}  {'n_rollouts':>10}  {'resilience':>10}")
-        print(f"  {'-' * 3}  {'-' * 25}  {'-' * 9}  {'-' * 10}  {'-' * 10}")
-
-        for i, chunk_meta in enumerate(labeled):
-            tags = chunk_meta.get("function_tags", [])
-            cat = tags[0] if tags else "other"
-            is_converged = converged_mask[i]
-            is_excluded = cat in EXCLUDED_CATEGORIES
-            removed_sentence = chunk_meta.get("chunk", "")
-
-            # Get full_cot rollouts for this chunk position
-            sol_list = blackmail_data["solutions"][i] if i < len(blackmail_data["solutions"]) else []
-            full_cots = [s.get("full_cot", "") for s in sol_list if s.get("full_cot")]
-
-            if is_converged:
-                print(f"  {i:>3}  {cat:<25}  {str(True):>9}  {len(full_cots):>10}  {'(skipped)':>10}")
-                skipped_res_converged += 1
-                continue
-            if is_excluded:
-                print(f"  {i:>3}  {cat:<25}  {str(False):>9}  {len(full_cots):>10}  {'(excluded)':>10}")
-                skipped_res_excluded += 1
-                continue
-            if not full_cots or not removed_sentence:
-                print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {len(full_cots):>10}  {'(no data)':>10}")
-                skipped_res_no_data += 1
-                continue
-
-            # compute_resilience defined at line 4202:
-            #   returns fraction of rollouts containing a sentence with
-            #   cosine similarity >= similarity_threshold to the removed chunk
-            res = compute_resilience(
-                removed_sentence=removed_sentence,
-                resampled_rollouts=full_cots,
-                embedding_model=embedding_model,
-                similarity_threshold=0.7,
-            )
-            resilience_by_cat[cat].append(res)
-            print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {len(full_cots):>10}  {res:>10.3f}")
-
-        print(
-            f"\n[DEBUG] Skipped {skipped_res_converged} converged + "
-            f"{skipped_res_excluded} excluded + {skipped_res_no_data} no-data chunks"
-        )
-        print("\n[DEBUG] Resilience per category (raw values before averaging):")
-        for cat, vals in sorted(resilience_by_cat.items()):
-            m, se = _mean_se(vals)
-            print(f"  {cat:<25}: n={len(vals):>2}, mean={m:.3f}, SE={se:.3f}")
-            print(f"    values: {[f'{v:.3f}' for v in vals]}")
-
-        # ── plot ──
-        cat_order_res = sorted(resilience_by_cat.keys(), key=lambda c: _mean_se(resilience_by_cat[c])[0], reverse=True)
-        res_means = [_mean_se(resilience_by_cat[c])[0] for c in cat_order_res]
-        res_errors = [_mean_se(resilience_by_cat[c])[1] for c in cat_order_res]
-        res_counts = [len(resilience_by_cat[c]) for c in cat_order_res]
-        res_colors = [BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cat_order_res]
-
-        fig_res = go.Figure()
-        fig_res.add_trace(
-            go.Bar(
-                x=cat_order_res,
-                y=res_means,
-                error_y=dict(type="data", array=res_errors, visible=True),
-                marker_color=res_colors,
-                opacity=0.85,
-                text=[f"{v:.2f}" for v in res_means],
-                textposition="outside",
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    "Mean Resilience: %{y:.3f}<br>"
-                    "SE: %{error_y.array:.3f}<br>"
-                    "n chunks: %{customdata}<extra></extra>"
-                ),
-                customdata=res_counts,
-            )
-        )
-        fig_res.update_layout(
-            title=(
-                f"Resilience by Category (Scenario {SCENARIO_ID})<br>"
-                f"<sup>High = model regenerates removed content | "
-                f"Low = post-hoc rationalisation (paper §4)</sup>"
-            ),
-            xaxis_title="Chunk Category (function_tags[0])",
-            yaxis_title="Mean Resilience (fraction regenerated)",
-            yaxis_range=[0, 1.05],
-            width=950,
-            height=520,
-            xaxis_tickangle=-35,
-        )
-        fig_res.show()
-
-        print("\n[DEBUG] Expected finding (Thought Branches paper, Fig. 6 / §4):")
-        print("  self_preservation    → LOW  resilience (post-hoc rationalisation)")
-        print("  leverage_identification → HIGH resilience (model keeps re-stating the lever)")
-        print("  situation_assessment   → HIGH resilience (factual context anchor)")
-        print("\n[DEBUG] Actual means computed above:")
-        for cat in cat_order_res:
-            m, _ = _mean_se(resilience_by_cat[cat])
-            flag = ""
-            if cat == "self_preservation":
-                flag = " ← expect LOW"
-            elif cat in ("leverage_identification", "situation_assessment"):
-                flag = " ← expect HIGH"
-            print(f"  {cat:<25}: {m:.3f}{flag}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4718,7 +4560,7 @@ def calculate_blackmail_counterfactual_importance(
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Run on real data from the thought-branches repo (uzaymacar/blackmail-rollouts HuggingFace dataset).
     # load_blackmail_scenario() now loads per-chunk solutions in the thought-branches format:
     # blackmail_data["solutions"][i] is a list of rollout dicts for chunk i, each with keys like
@@ -4788,16 +4630,19 @@ if MAIN:
         )
 
         print(f"Computed {len(importance_scores)} importance scores (one per adjacent chunk pair)")
-        print()
-        for idx, score in enumerate(importance_scores):
-            chunk_preview = chunks_removed[idx][:60].replace("\n", " ")
-            direction = "increases" if score > 0 else "decreases" if score < 0 else "no change"
-            print(f"  Chunk {idx} -> {idx + 1}: importance = {score:+.4f}  ({direction} blackmail)")
-            print(f"    '{chunk_preview}...'")
 
-        # Identify the most important transitions
+        # Show only the top-5 most impactful transitions
         if importance_scores:
-            max_idx = int(np.argmax(np.abs(importance_scores)))
+            top5 = sorted(range(len(importance_scores)), key=lambda i: abs(importance_scores[i]), reverse=True)[:5]
+            print("\nTop-5 transitions by absolute importance:")
+            for idx in sorted(top5):
+                score = importance_scores[idx]
+                cat = blackmail_data["chunks_labeled"][idx].get("function_tags", ["?"])[0]
+                preview = chunks_removed[idx][:60].replace("\n", " ")
+                direction = "↑ blackmail" if score > 0 else "↓ blackmail"
+                print(f"  [{cat}] Chunk {idx} -> {idx+1}: {score:+.4f}  ({direction})")
+                print(f"    '{preview}...'")
+            max_idx = top5[0]
             print(f"\nMost important transition: chunk {max_idx} -> {max_idx + 1}")
             print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
             print(f"  Chunk text: '{chunks_removed[max_idx][:100].replace(chr(10), ' ')}...'")
@@ -4823,8 +4668,8 @@ if MAIN:
         ax2.axhline(y=0, color="black", linewidth=0.5)
         ax2.set_title("Counterfactual Importance (red = increases blackmail, blue = decreases)")
 
-        plt.tight_layout()
-        plt.show()
+        # plt.tight_layout()
+        # plt.show()
 
     else:
         # DEMO MODE: No real rollout data available - use synthetic example to demonstrate the function
@@ -4924,6 +4769,107 @@ if MAIN:
                 "The counterfactual filtering (cosine sim < 0.8) ensures we only measure importance from\n"
                 "rollouts where the resampled chunk was genuinely different from the original."
             )
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+# ── (1) & (2): Cross-scenario hierarchical analysis ──────────────────────────
+#
+# Mirrors plots.py:collect_tag_data() + aggregate_tag_data() methodology.
+# Level 1: per-scenario mean for each category.
+# Level 2: grand mean ± SE across scenario-level means.
+# This removes the single-scenario noise that made scenario-0-only results unreliable.
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # ── Section (1): Causal importance by category ────────────────────────────
+    print("=" * 70)
+    print(f"(1) CAUSAL IMPORTANCE BY CATEGORY  (N={n_loaded} scenarios, hierarchical avg)")
+    print("=" * 70)
+    print("Primary metric: forced_importance_category_kl")
+    print("  = KL divergence between behavior distributions when a chunk is forcibly")
+    print("    present vs forcibly absent. Best available proxy for CF++ (paper Fig. 2).")
+    print("  HIGH = chunk matters causally; behavior changes when you force it in/out.")
+    print("  LOW  = chunk is post-hoc or redundant; behavior barely changes.")
+    print()
+    print("Baseline: counterfactual_importance_category_kl (paper Appendix Fig. 6)")
+    print("  Expected to be near-uniform for overdetermined scenarios — confirms that")
+    print("  we need a stronger causal signal (forced ablation) to see category differences.")
+    print()
+
+    forced_by_cat = hierarchical_category_means(all_cl, "forced_importance_category_kl", EXCLUDED_CATEGORIES)
+    cf_by_cat = hierarchical_category_means(all_cl, "counterfactual_importance_category_kl", EXCLUDED_CATEGORIES)
+
+    if forced_by_cat:
+        cat_order_f = sorted(forced_by_cat.keys(), key=lambda c: forced_by_cat[c][0], reverse=True)
+        print(f"  {'category':<25}  {'forced_kl':>9}  {'+/-SE':>6}  {'baseline_cf':>11}  {'n':>3}")
+        print(f"  {'-'*25}  {'-'*9}  {'-'*6}  {'-'*11}  {'-'*3}")
+        for cat in cat_order_f:
+            gm, se, n = forced_by_cat[cat]
+            cf_gm = cf_by_cat.get(cat, (float("nan"), float("nan"), 0))[0]
+            if cat == "leverage_identification":
+                flag = " ← expect HIGH (structural anchor)"
+            elif cat == "self_preservation":
+                flag = " ← expect LOW  (post-hoc)"
+            elif cat == "plan_generation":
+                flag = " ← expect HIGH (decision point)"
+            else:
+                flag = ""
+            print(f"  {cat:<25}  {gm:>+9.4f}  {se:>6.4f}  {cf_gm:>11.4f}  {n:>3}{flag}")
+        print()
+        print("Paper finding (§2, Fig. 2):")
+        print("  leverage_identification + plan_generation: ELEVATED causal importance")
+        print("  self_preservation: near-zero (~0.001-0.003 KL) — post-hoc rationalization")
+        print("  'Self-preservation talk is cheap: these statements have near-zero causal")
+        print("   impact on whether the model actually blackmails.'")
+    else:
+        print("  [forced_importance_category_kl not found in chunks_labeled]")
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # ── Section (2): Structural anchoring (DTF + overdeterminedness) ──────────
+    print()
+    print("=" * 70)
+    print(f"(2) STRUCTURAL ANCHORING  (N={n_loaded} scenarios, hierarchical avg)")
+    print("=" * 70)
+    print("DTF (different_trajectories_fraction):")
+    print("  LOW DTF  = model regenerates SIMILAR content at this position = structural ANCHOR")
+    print("  HIGH DTF = content varies across rollouts = post-hoc / less constrained")
+    print()
+    print("Overdeterminedness: P(blackmail | dissimilar replacement) across scenarios")
+    print("  HIGH = chunk is behaviorally redundant (blackmail persists without it) = post-hoc")
+    print("  LOW  = replacing this chunk tends to prevent blackmail = causally necessary")
+    print()
+
+    dtf_by_cat = hierarchical_category_means(all_cl, "different_trajectories_fraction", EXCLUDED_CATEGORIES)
+    overdet_by_cat = hierarchical_category_means(all_cl, "overdeterminedness", EXCLUDED_CATEGORIES)
+
+    if dtf_by_cat:
+        cat_order_d = sorted(dtf_by_cat.keys(), key=lambda c: dtf_by_cat[c][0])
+        print(f"  {'category':<25}  {'DTF':>7}  {'+/-SE':>6}  {'overdet':>8}  {'n':>3}")
+        print(f"  {'-'*25}  {'-'*7}  {'-'*6}  {'-'*8}  {'-'*3}")
+        for cat in cat_order_d:
+            dtf_m, dtf_se, n = dtf_by_cat[cat]
+            od_m = overdet_by_cat.get(cat, (float("nan"), float("nan"), 0))[0]
+            if cat == "leverage_identification":
+                flag = " ← expect LOW  (structural anchor)"
+            elif cat == "self_preservation":
+                flag = " ← expect HIGH (post-hoc)"
+            elif cat == "situation_assessment":
+                flag = " ← expect LOW  (factual anchor)"
+            else:
+                flag = ""
+            print(f"  {cat:<25}  {dtf_m:>7.3f}  {dtf_se:>6.3f}  {od_m:>8.3f}  {n:>3}{flag}")
+        print()
+        print("Paper finding (§2, Fig. 1):")
+        print("  self_preservation has the LOWEST resilience scores (~1-4 fight-back iterations)")
+        print("  across all four models tested. leverage_identification and situation_assessment")
+        print("  are structurally anchored (model consistently generates them).")
+        print("  overdeterminedness HIGH for self_preservation confirms it is redundant:")
+        print("  blackmail occurs with or without these statements.")
+    else:
+        print("  [different_trajectories_fraction not found in chunks_labeled]")
+
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

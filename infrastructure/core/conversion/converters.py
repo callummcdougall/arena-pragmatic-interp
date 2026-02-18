@@ -47,9 +47,7 @@ def _convert_master_ipynb_cell_to_master_py_cell_data(
             source = cell["source"][i_start:]
             break
 
-    if "master-comment" in tags:
-        source = ["# " + line if line.strip() else line for line in source]
-    elif cell_type == "markdown":
+    if cell_type == "markdown":
         source = [line.replace("'''", r"\'\'\'") for line in source]
 
     return cell_type, tags, filters, source

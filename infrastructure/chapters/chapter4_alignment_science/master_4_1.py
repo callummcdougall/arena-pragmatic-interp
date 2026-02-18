@@ -173,7 +173,7 @@ branch = "main"
 # except:
 #     %pip install transformer_lens==2.11.0 einops jaxtyping openai
 
-# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+# # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
 root = (
     "/content"
     if IN_COLAB
@@ -1513,13 +1513,13 @@ STEERING_COEF = 0.4  # fraction of hidden state norm (0.4 = 40% of ||h||)
 
 
 def _return_layers(model: Any):
-    """Helper fn to locate the transformer blocks for a given model (LLaMA/Qwen/GPT2-like)."""
+    """Helper fn to locate the transformer blocks for a given model (LLaMA/Qwen/GPT2/Gemma-like)."""
     current = model
     for _ in range(4):
         for attr in ["layers", "h"]:
             if hasattr(current, attr):
                 return getattr(current, attr)
-        for attr in ["model", "transformer", "base_model"]:
+        for attr in ["model", "transformer", "base_model", "language_model"]:
             if hasattr(current, attr):
                 current = getattr(current, attr)
     raise ValueError("Could not locate transformer blocks for this model.")

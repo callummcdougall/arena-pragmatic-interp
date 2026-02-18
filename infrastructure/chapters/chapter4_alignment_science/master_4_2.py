@@ -127,15 +127,15 @@ ipython.run_line_magic("autoreload", "2")
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
 
-# import os
-# import sys
-# from pathlib import Path
+import os
+import sys
+from pathlib import Path
 
-# IN_COLAB = "google.colab" in sys.modules
+IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter4_alignment_science"
-# repo = "arena-pragmatic-interp"  # "ARENA_3.0"
-# branch = "main"
+chapter = "chapter4_alignment_science"
+repo = "arena-pragmatic-interp"  # "ARENA_3.0"
+branch = "main"
 
 # # Install dependencies
 # try:
@@ -144,13 +144,13 @@ ipython.run_line_magic("autoreload", "2")
 #     %pip install transformer_lens==2.11.0 einops jaxtyping openai
 
 # # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
-# root = (
-#     "/content"
-#     if IN_COLAB
-#     else "/root"
-#     if repo not in os.getcwd()
-#     else str(next(p for p in Path.cwd().parents if p.name == repo))
-# )
+root = (
+    "/content"
+    if IN_COLAB
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
 
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
@@ -165,10 +165,10 @@ ipython.run_line_magic("autoreload", "2")
 #         !rmdir {root}/{repo}-{branch}
 
 
-# if f"{root}/{chapter}/exercises" not in sys.path:
-#     sys.path.append(f"{root}/{chapter}/exercises")
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
 
-# os.chdir(f"{root}/{chapter}/exercises")
+os.chdir(f"{root}/{chapter}/exercises")
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -184,7 +184,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 import httpx
 import pandas as pd
@@ -206,7 +206,7 @@ if str(exercises_dir) not in sys.path:
 # END FILTERS
 
 from part2_science_of_misalignment import tests
-from part2_science_of_misalignment.utils import extract_inner_command, classify_command
+from part2_science_of_misalignment.utils import classify_command, extract_inner_command
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

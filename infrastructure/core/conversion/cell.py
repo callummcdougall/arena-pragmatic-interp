@@ -160,8 +160,6 @@ class Cell:
         """Returns the dict-ified version of this cell, for the master colab notebook."""
         assert len(self.source) > 0, "Shouldn't be getting master.ipynb dict for empty cells!"
         full_source = deepcopy(self.source)
-        if "master-comment" in self.tags:
-            full_source = [line.rstrip().removeprefix("# ") for line in full_source]
         full_source = [line.replace(r"\'\'\'", "'''") for line in full_source]
 
         prefix = "" if self.cell_type == "markdown" else "# "
@@ -282,6 +280,13 @@ class Cell:
 
         # ! (1) Apply filters (including exercise/solution)
         files = self.process_inline_filters()
+
+        # ! (1.5) Strip one layer of "# " from master-comment cells in downstream files
+        if "master-comment" in self.tags:
+            files = {
+                name: [line.removeprefix("# ") for line in f] if f is not None else None
+                for name, f in files.items()
+            }
 
         # ! (2) Handle "if MAIN", and empty lines
         if ("main" in self.tags) and (files["python"] is not None):
