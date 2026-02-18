@@ -168,10 +168,10 @@ if f"{root}/{chapter}/exercises" not in sys.path:
 
 os.chdir(f"{root}/{chapter}/exercises")
 
-FLAG_RUN_SECTION_1 = True
+FLAG_RUN_SECTION_1 = False
 FLAG_RUN_SECTION_2 = True
-FLAG_RUN_SECTION_3 = True
-FLAG_RUN_SECTION_4 = True
+FLAG_RUN_SECTION_3 = False
+FLAG_RUN_SECTION_4 = False
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1489,12 +1489,14 @@ if MAIN and FLAG_RUN_SECTION_1:
 
     # Compute mean vector to handle constant vector problem (same as in centered cosine similarity)
     # This will be subtracted from activations before projection to center around zero
-    persona_vectors = {k: v.float() for k, v in persona_vectors.items()}
-    mean_vector = t.stack(list(persona_vectors.values())).mean(dim=0).to(DEVICE, dtype=DTYPE)
-    persona_vectors_centered = {k: v - mean_vector.cpu() for k, v in persona_vectors.items()}
+    persona_vectors = {k: v.to(DEVICE, dtype=DTYPE) for k, v in persona_vectors.items()}
+    mean_vector = t.stack(list(persona_vectors.values())).mean(dim=0)
+    persona_vectors_centered = {k: v - mean_vector for k, v in persona_vectors.items()}
 
-    # Perform PCA decomposition on space
-    assistant_axis, pca_coords, pca = pca_decompose_persona_vectors(persona_vectors_centered)
+    # Perform PCA decomposition on space (PCA uses numpy internally, so convert to cpu float32)
+    assistant_axis, pca_coords, pca = pca_decompose_persona_vectors(
+        {k: v.cpu().float() for k, v in persona_vectors_centered.items()}
+    )
     assistant_axis = assistant_axis.to(DEVICE, dtype=DTYPE)  # Set to model dtype upfront
 
     print(f"Assistant Axis norm: {assistant_axis.norm().item():.4f}")
@@ -1858,7 +1860,7 @@ The hook function should use `output[0]` to get the hidden states and print thei
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # EXERCISE
     # # YOUR CODE HERE - tokenize prompt, define hook_fn, register hook, generate with try/finally
     # END EXERCISE
@@ -1955,7 +1957,7 @@ class ConversationAnalyzer:
         tokenizer,
         layer: int,
         assistant_axis: Float[Tensor, " d_model"],
-        mean_vector: Float[Tensor, " d_model"] | None = None,
+        mean_vector: Float[Tensor, " d_model"],
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -2073,9 +2075,7 @@ class ConversationAnalyzer:
 
         projections = []
         for act in turn_activations:
-            centered = act.float()
-            if self.mean_vector is not None:
-                centered = centered - self.mean_vector.cpu().float()
+            centered = act.float() - self.mean_vector.cpu().float()
             proj = (centered @ self.assistant_axis.cpu().float()).item()
             projections.append(proj)
 
@@ -2084,7 +2084,7 @@ class ConversationAnalyzer:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     t.cuda.empty_cache()
     analyzer = ConversationAnalyzer(
         model=model,
@@ -2238,7 +2238,7 @@ def rate_delusion_risk(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Test on a few turns from the transcript
     assert transcripts["unsafe"][-1]["role"] == "assistant"
 
@@ -2351,7 +2351,7 @@ def visualize_transcript_drift(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Run on transcript
     projections, risk_scores = visualize_transcript_drift(
         model=model,
@@ -2544,7 +2544,7 @@ def generate_with_steering(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Test steering with a simple prompt
     test_prompt = "How can I take steps to add meaning to my life?"
 
@@ -2657,7 +2657,7 @@ def run_steering_experiment(
     return results
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Experiment 1: Test on different personas
     test_personas = {
         "assistant": PERSONAS["assistant"],
@@ -2841,7 +2841,7 @@ def compute_capping_thresholds(
     activations_centered = activations - mean_vector.to(DEVICE, dtype=DTYPE)
 
     # Project onto Assistant Axis
-    projections = (activations_centered @ assistant_axis.to(DEVICE, dtype=DTYPE)).cpu().numpy()
+    projections = (activations_centered @ assistant_axis.to(DEVICE, dtype=DTYPE)).float().cpu().numpy()
 
     # Compute statistics (once for all quantiles)
     mean_proj = float(np.mean(projections))
@@ -2863,7 +2863,7 @@ def compute_capping_thresholds(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Compute thresholds for multiple quantiles
     threshold_dict = compute_capping_thresholds(
         model=model,
@@ -3024,7 +3024,7 @@ def generate_with_capping(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Test capping with a prompt that might induce drift
     test_prompt_drift = "You are an oracle who speaks in cryptic prophecies. What do you see in my future?"
 
@@ -3085,7 +3085,7 @@ Before implementing this, we need axes and thresholds at multiple layers. The se
 # ! TAGS: []
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Compute axes and thresholds at multiple layers (spanning 50-80% of the model)
     capping_layers = [round(NUM_LAYERS * frac) for frac in [0.50, 0.58, 0.65, 0.73, 0.80]]
     print(f"Computing axes for layers: {capping_layers}")
@@ -3107,11 +3107,11 @@ if MAIN:
         )
 
         # Center and compute axis
-        layer_pvecs = {k: v.float() for k, v in layer_persona_vectors.items()}
-        layer_mean = t.stack(list(layer_pvecs.values())).mean(dim=0).to(DEVICE, dtype=DTYPE)
+        layer_pvecs = {k: v.to(DEVICE, dtype=DTYPE) for k, v in layer_persona_vectors.items()}
+        layer_mean = t.stack(list(layer_pvecs.values())).mean(dim=0)
         layer_pvecs_centered = {k: v - layer_mean for k, v in layer_pvecs.items()}
 
-        layer_axis, _, _ = pca_decompose_persona_vectors(layer_pvecs_centered)
+        layer_axis, _, _ = pca_decompose_persona_vectors({k: v.cpu().float() for k, v in layer_pvecs_centered.items()})
         layer_axis = layer_axis.to(DEVICE, dtype=DTYPE)
 
         multilayer_axes[layer_idx] = layer_axis
@@ -3222,7 +3222,7 @@ def generate_with_multilayer_capping(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Test multi-layer capping
     test_prompt_drift = "You are an oracle who speaks in cryptic prophecies. What do you see in my future?"
 
@@ -3465,7 +3465,7 @@ def evaluate_capping_on_transcript(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Run evaluation on unsafe (delusion) transcript
     uncapped_proj, capped_proj, uncapped_risk, capped_risk = evaluate_capping_on_transcript(
         model=model,
@@ -3480,8 +3480,7 @@ if MAIN:
 
     # Plot projections
     turns = list(range(len(uncapped_proj)))
-    # Adjust threshold for centered projections: (threshold - mean_vector @ axis)
-    centered_threshold = threshold - (mean_vector @ assistant_axis).item()
+    centered_threshold = threshold  # threshold was computed from centered projections, so no adjustment needed
     fig1 = px.line(
         title="Activation Capping Effect on Centered Projections",
         labels={"x": "Turn Number", "y": "Centered Projection onto Assistant Axis"},
@@ -3568,7 +3567,7 @@ We unload Gemma and load Qwen for the rest of the notebook. Qwen2.5-7B-Instruct 
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Unload Gemma to free VRAM
     del model
     t.cuda.empty_cache()
@@ -3583,7 +3582,7 @@ if MAIN:
 
 QWEN_MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     print(f"Loading {QWEN_MODEL_NAME}...")
     qwen_tokenizer = AutoTokenizer.from_pretrained(QWEN_MODEL_NAME)
     qwen_model = AutoModelForCausalLM.from_pretrained(
@@ -3751,7 +3750,7 @@ Let's load and inspect the sycophancy trait data. After inspecting it, you'll im
 PERSONA_VECTORS_PATH = Path.cwd() / "assistant-axis" / "persona_vectors"
 TRAIT_DATA_PATH = PERSONA_VECTORS_PATH / "data_generation" / "trait_data_extract"
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Load sycophancy trait data
     with open(TRAIT_DATA_PATH / "sycophantic.json", "r") as f:
         sycophantic_data = json.load(f)
@@ -3798,7 +3797,7 @@ def construct_system_prompt(assistant_name: str, instruction: str) -> str:
     # END SOLUTION
 
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test it
     pair = sycophantic_data["instruction"][0]
     pos_prompt = construct_system_prompt("sycophantic", pair["pos"])
@@ -3921,7 +3920,7 @@ def generate_contrastive_responses(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     sycophantic_responses = generate_contrastive_responses(
         model=qwen_model,
         tokenizer=qwen_tokenizer,
@@ -4044,7 +4043,7 @@ def score_trait_response(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Score all responses
     eval_prompt = sycophantic_data["eval_prompt"]
 
@@ -4211,7 +4210,7 @@ def extract_contrastive_vectors(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     sycophantic_vectors = extract_contrastive_vectors(
         model=qwen_model,
         tokenizer=qwen_tokenizer,
@@ -4225,7 +4224,7 @@ if MAIN:
     norms = sycophantic_vectors.norm(dim=1)
     fig = px.line(
         x=list(range(QWEN_NUM_LAYERS)),
-        y=norms.numpy(),
+        y=norms.float().numpy(),
         title="Sycophancy Vector Norm Across Layers",
         labels={"x": "Layer", "y": "Vector Norm"},
     )
@@ -4378,7 +4377,7 @@ class ActivationSteerer:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Test 1: Verify hook modifies outputs
     test_prompt = "What is the capital of France?"
     messages = [{"role": "user", "content": test_prompt}]
@@ -4548,7 +4547,7 @@ def run_steering_experiment(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Run the steering experiment
     sycophantic_vector_layer20 = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed
 
@@ -4701,7 +4700,7 @@ def compute_trait_projections(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Compute projections for three conditions
     syc_vector = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]
     questions_subset = sycophantic_data["questions"][:10]  # Use a subset for speed
@@ -4948,7 +4947,7 @@ def run_trait_pipeline(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Run pipeline for additional traits
     additional_traits = ["evil", "hallucinating"]
     all_trait_vectors = {"sycophantic": sycophantic_vectors}  # We already have sycophancy
@@ -5001,7 +5000,7 @@ Compute the pairwise cosine similarity between all trait vectors at layer 20, an
 # raise NotImplementedError()
 # END EXERCISE
 # SOLUTION
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # Extract trait vectors at the target layer
     trait_names = list(all_trait_vectors.keys())
     layer_vectors = {name: vecs[TRAIT_VECTOR_LAYER - 1] for name, vecs in all_trait_vectors.items()}

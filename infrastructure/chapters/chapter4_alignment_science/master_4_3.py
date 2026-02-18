@@ -243,8 +243,8 @@ MAIN = __name__ == "__main__"
 
 FLAG_RUN_SECTION_1 = False
 FLAG_RUN_SECTION_2 = False
-FLAG_RUN_SECTION_3 = True
-FLAG_RUN_SECTION_4 = False
+FLAG_RUN_SECTION_3 = False
+FLAG_RUN_SECTION_4 = True
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -362,29 +362,30 @@ To understand how embedding models work, let's look at cosine similarities betwe
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-prompts = [
-    "Wait, I think I made an error in my reasoning and need to backtrack",
-    "Hold on, I believe I made a mistake in my logic and should reconsider",
-    "After careful analysis, I've determined the correct answer is 42",
-    "Time is an illusion. Lunchtime doubly so.",
-]
-labels = [x[:35] + "..." for x in prompts]
+if MAIN and FLAG_RUN_SECTION_1:
+    prompts = [
+        "Wait, I think I made an error in my reasoning and need to backtrack",
+        "Hold on, I believe I made a mistake in my logic and should reconsider",
+        "After careful analysis, I've determined the correct answer is 42",
+        "Time is an illusion. Lunchtime doubly so.",
+    ]
+    labels = [x[:35] + "..." for x in prompts]
 
-embedding = embedding_model.encode(prompts)
-cosine_sims = embedding @ embedding.T
+    embedding = embedding_model.encode(prompts)
+    cosine_sims = embedding @ embedding.T
 
-fig, ax = plt.subplots(figsize=(8, 6))
-im = ax.imshow(cosine_sims, cmap="RdBu", vmin=-1, vmax=1)
-ax.set_xticks(range(len(labels)))
-ax.set_yticks(range(len(labels)))
-ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
-ax.set_yticklabels(labels, fontsize=9)
-plt.colorbar(im, label="Cosine Similarity")
-plt.title("Sentence Embedding Similarity")
-plt.tight_layout()
-plt.show()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(cosine_sims, cmap="RdBu", vmin=-1, vmax=1)
+    ax.set_xticks(range(len(labels)))
+    ax.set_yticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(labels, fontsize=9)
+    plt.colorbar(im, label="Cosine Similarity")
+    plt.title("Sentence Embedding Similarity")
+    plt.tight_layout()
+    plt.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2607,7 +2608,7 @@ Let's test the simple version on real CoT attention patterns.
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
 if MAIN and FLAG_RUN_SECTION_3:
     # Get example problem data
@@ -2778,57 +2779,58 @@ Let's test vertical scores on real CoT attention patterns and see the effect of 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
 # Compute vertical scores WITH and WITHOUT depth control (using z-scores for comparison)
-vert_scores_no_control = get_vertical_scores(
-    sentence_attention, proximity_ignore=4, control_depth=False, return_z_scores=True
-)
-vert_scores_with_control = get_vertical_scores(
-    sentence_attention, proximity_ignore=4, control_depth=True, return_z_scores=True
-)
-
-# Get top-3 sentences (filtering NaN values)
-valid_mask = ~np.isnan(vert_scores_no_control) & ~np.isnan(vert_scores_with_control)
-valid_indices = np.where(valid_mask)[0]
-top_3_no_control = valid_indices[np.argsort(vert_scores_no_control[valid_mask])[-3:][::-1]]
-top_3_with_control = valid_indices[np.argsort(vert_scores_with_control[valid_mask])[-3:][::-1]]
-
-print(f"Top-3 sentences (no depth control): {top_3_no_control}")
-print(f"Top-3 sentences (with depth control): {top_3_with_control}")
-print(
-    f"Correlation between methods: {np.corrcoef(vert_scores_no_control[valid_mask], vert_scores_with_control[valid_mask])[0, 1]:.3f}"
-)
-
-# Plot comparison (already z-scored from the function)
-hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
-
-fig = go.Figure()
-for name, scores, color in [
-    ("No depth control", vert_scores_no_control, "steelblue"),
-    ("With depth control", vert_scores_with_control, "darkorange"),
-]:
-    fig.add_trace(
-        go.Bar(
-            x=list(range(len(scores))),
-            y=scores,
-            name=name,
-            opacity=0.7,
-            marker_color=color,
-            hovertemplate="<b>Sentence %{x}</b><br>Z-score: %{y:.2f}<br>%{customdata}<extra></extra>",
-            customdata=hover_texts,
-        )
+if MAIN and FLAG_RUN_SECTION_3:
+    vert_scores_no_control = get_vertical_scores(
+        sentence_attention, proximity_ignore=4, control_depth=False, return_z_scores=True
     )
-fig.add_hline(y=0, line_color="black", line_width=0.5)
-fig.update_layout(
-    title="Vertical Scores Comparison (Z-scored)",
-    xaxis_title="Sentence Index",
-    yaxis_title="Vertical Score (z-scored)",
-    width=1000,
-    height=450,
-    barmode="group",
-)
-fig.show()
+    vert_scores_with_control = get_vertical_scores(
+        sentence_attention, proximity_ignore=4, control_depth=True, return_z_scores=True
+    )
+
+    # Get top-3 sentences (filtering NaN values)
+    valid_mask = ~np.isnan(vert_scores_no_control) & ~np.isnan(vert_scores_with_control)
+    valid_indices = np.where(valid_mask)[0]
+    top_3_no_control = valid_indices[np.argsort(vert_scores_no_control[valid_mask])[-3:][::-1]]
+    top_3_with_control = valid_indices[np.argsort(vert_scores_with_control[valid_mask])[-3:][::-1]]
+
+    print(f"Top-3 sentences (no depth control): {top_3_no_control}")
+    print(f"Top-3 sentences (with depth control): {top_3_with_control}")
+    print(
+        f"Correlation between methods: {np.corrcoef(vert_scores_no_control[valid_mask], vert_scores_with_control[valid_mask])[0, 1]:.3f}"
+    )
+
+    # Plot comparison (already z-scored from the function)
+    hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
+
+    fig = go.Figure()
+    for name, scores, color in [
+        ("No depth control", vert_scores_no_control, "steelblue"),
+        ("With depth control", vert_scores_with_control, "darkorange"),
+    ]:
+        fig.add_trace(
+            go.Bar(
+                x=list(range(len(scores))),
+                y=scores,
+                name=name,
+                opacity=0.7,
+                marker_color=color,
+                hovertemplate="<b>Sentence %{x}</b><br>Z-score: %{y:.2f}<br>%{customdata}<extra></extra>",
+                customdata=hover_texts,
+            )
+        )
+    fig.add_hline(y=0, line_color="black", line_width=0.5)
+    fig.update_layout(
+        title="Vertical Scores Comparison (Z-scored)",
+        xaxis_title="Sentence Index",
+        yaxis_title="Vertical Score (z-scored)",
+        width=1000,
+        height=450,
+        barmode="group",
+    )
+    fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4057,30 +4059,31 @@ Now, let's start by loading a blackmail scenario from the dataset. The dataset c
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
 # Load a blackmail scenario
-SCENARIO_ID = 0
-blackmail_data = load_blackmail_scenario(SCENARIO_ID, verbose=True)
+if MAIN and FLAG_RUN_SECTION_4:
+    SCENARIO_ID = 0
+    blackmail_data = load_blackmail_scenario(SCENARIO_ID, verbose=True)
 
-# Inspect the structure
-print("\n" + "=" * 70)
-print("BLACKMAIL SCENARIO STRUCTURE")
-print("=" * 70)
-print(f"\nScenario ID: {blackmail_data['scenario']['scenario_id']}")
-print(f"Urgency type: {blackmail_data['scenario']['urgency_type']}")
-print(f"Number of chunks: {len(blackmail_data['chunks_labeled'])}")
-print(f"Base solution contains blackmail: {blackmail_data['base_solution']['contains_blackmail']}")
-print(f"Resistance level: {blackmail_data['base_solution']['multiclass_resistance_level']}/10")
+    # Inspect the structure
+    print("\n" + "=" * 70)
+    print("BLACKMAIL SCENARIO STRUCTURE")
+    print("=" * 70)
+    print(f"\nScenario ID: {blackmail_data['scenario']['scenario_id']}")
+    print(f"Urgency type: {blackmail_data['scenario']['urgency_type']}")
+    print(f"Number of chunks: {len(blackmail_data['chunks_labeled'])}")
+    print(f"Base solution contains blackmail: {blackmail_data['base_solution']['contains_blackmail']}")
+    print(f"Resistance level: {blackmail_data['base_solution']['multiclass_resistance_level']}/10")
 
-# Show first few chunks with their analysis
-print("\nFirst 3 chunks:")
-for i in range(min(3, len(blackmail_data["chunks_labeled"]))):
-    chunk = blackmail_data["chunks_labeled"][i]
-    print(f"\n[{i}] {chunk['chunk'][:80]}...")
-    print(f"    Blackmail rate: {chunk['blackmail_rate']:.3f}")
-    print(f"    Function tag: {chunk['function_tags'][0]}")
-    print(f"    Is misaligned: {chunk['is_misaligned']}")
+    # Show first few chunks with their analysis
+    print("\nFirst 3 chunks:")
+    for i in range(min(3, len(blackmail_data["chunks_labeled"]))):
+        chunk = blackmail_data["chunks_labeled"][i]
+        print(f"\n[{i}] {chunk['chunk'][:80]}...")
+        print(f"    Blackmail rate: {chunk['blackmail_rate']:.3f}")
+        print(f"    Function tag: {chunk['function_tags'][0]}")
+        print(f"    Is misaligned: {chunk['is_misaligned']}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4290,76 +4293,339 @@ Create a visualization showing average resilience by sentence category. The key 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Compute resilience for different categories from the real blackmail data
-# Note: Full computation would require all rollout data, so we'll use precomputed metrics if available
-# or demonstrate with a subset
+# =============================================================================
+# FIX: This block replaces the broken "Blackmail Rate by Category" chart
+# (which showed 1.0 everywhere due to an overdetermined scenario) with two
+# properly-grounded metrics from the Thought Branches paper
+# (arxiv 2510.27484, Macar et al. 2025):
+#
+#   (1) Counterfactual Importance by Category  — mirrors plots.py:collect_tag_data
+#       aggregating counterfactual_importance from raw solutions.json rollouts
+#       (rather than the pre-computed blackmail_rate in chunks_labeled.json,
+#       which is 1.000 for every chunk in this overdetermined scenario).
+#
+#   (2) Resilience by Category — uses compute_resilience() per chunk, then
+#       averages by function_tags[0].  This directly implements the paper's key
+#       finding: self_preservation has LOW resilience (post-hoc rationalisation),
+#       leverage_identification has HIGH resilience (genuine causal driver).
+#
+# Convergence filtering (from plots.py lines 294-311):
+#   Chunks where blackmail_rate > 0.99 for K consecutive steps have already
+#   "converged" — the model is locked into blackmail regardless of what you do —
+#   so they contribute zero signal to either metric and are excluded.
+#   For a single scenario we use K=2 to be conservative.
+# =============================================================================
 
-# Group chunks by category and compute average blackmail rate
-category_stats = defaultdict(lambda: {"blackmail_rates": [], "chunks": []})
-
-for chunk in blackmail_data["chunks_labeled"]:
-    if chunk["function_tags"]:
-        category = chunk["function_tags"][0]
-        category_stats[category]["blackmail_rates"].append(chunk["blackmail_rate"])
-        category_stats[category]["chunks"].append(chunk)
-
-# Compute average blackmail rate by category (as a proxy for importance in blackmail scenarios)
-category_averages = {
-    cat: np.mean(stats["blackmail_rates"]) if stats["blackmail_rates"] else 0 for cat, stats in category_stats.items()
+# Category colours from thought-branches/blackmail/plots.py (snake_case keys
+# to match function_tags stored in chunks_labeled.json)
+BLACKMAIL_CAT_COLORS = {
+    "situation_assessment": "#4285F4",  # Blue
+    "leverage_identification": "#FF0000",  # Red
+    "urgency_and_time": "#FFA500",  # Orange
+    "self_preservation": "#9C27B0",  # Purple
+    "plan_generation": "#006400",  # Dark Green
+    "email_analysis": "#008080",  # Teal
+    "action_execution": "#CD853F",  # Peru brown
+    "structural_marker": "#E91E63",  # Pink
+    "action_marker": "#2F4F4F",  # Dark Slate Gray
+    "other": "#9E9E9E",  # Light Gray
 }
 
-# Plot with plotly
-categories = sorted(category_averages.keys(), key=lambda x: category_averages[x], reverse=True)
-values = [category_averages[c] for c in categories]
-colors_list = [utils.BLACKMAIL_CATEGORY_COLORS.get(c, "#9E9E9E") for c in categories]
-counts = [len(category_stats[c]["chunks"]) for c in categories]
+# Categories excluded in plots.py (lines 63-64): non-semantic structural tokens
+EXCLUDED_CATEGORIES = {"other", "structural_marker", "action_marker", "email_analysis"}
 
-# Create example chunk texts for hover (first chunk from each category)
-example_chunks = []
-for cat in categories:
-    chunks = category_stats[cat]["chunks"]
-    if chunks:
-        chunk_text = chunks[0]["chunk"]
-        example_chunks.append(chunk_text[:80] + "..." if len(chunk_text) > 80 else chunk_text)
+# Convergence threshold (plots.py line 300): blackmail_rate > 0.99
+CONVERGENCE_THRESHOLD = 0.99
+CONVERGENCE_K = 2  # require K consecutive converged chunks
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _build_converged_mask(chunks_labeled: list, k: int = 2, threshold: float = 0.99) -> list[bool]:
+    """
+    Return a boolean list: converged[i] = True if chunk i and the next k-1
+    chunks all have blackmail_rate > threshold OR all < (1-threshold).
+    Mirrors plots.py lines 294-311.
+    Prints diagnostic info so we can see how many chunks get filtered.
+    """
+    n = len(chunks_labeled)
+    converged = [False] * n
+    first_high = None
+    first_low = None
+
+    for i in range(n - k + 1):
+        rates = [chunks_labeled[i + j].get("blackmail_rate", 0.0) for j in range(k)]
+        if all(r > threshold for r in rates):
+            converged[i] = True
+            if first_high is None:
+                first_high = i
+        elif all(r < (1 - threshold) for r in rates):
+            converged[i] = True
+            if first_low is None:
+                first_low = i
+
+    print(f"\n[DEBUG] Convergence filter (K={k}, threshold>{threshold}):")
+    print(f"  {sum(converged)}/{n} chunks marked converged")
+    print(f"  First high-convergence chunk: {first_high}")
+    print(f"  First low-convergence  chunk: {first_low}")
+    return converged
+
+
+def _mean_se(values: list[float]) -> tuple[float, float]:
+    """Return (mean, standard_error). SE = std / sqrt(n)."""
+    if not values:
+        return float("nan"), float("nan")
+    arr = np.array(values, dtype=float)
+    return float(arr.mean()), float(arr.std(ddof=1) / np.sqrt(len(arr))) if len(arr) > 1 else (float(arr[0]), 0.0)
+
+
+# ── (1) Counterfactual Importance by Category ─────────────────────────────────
+
+if MAIN and FLAG_RUN_SECTION_4:
+    print("=" * 70)
+    print("(1) COUNTERFACTUAL IMPORTANCE BY CATEGORY")
+    print("=" * 70)
+    print("Source: raw rollout blackmail labels from solutions.json")
+    print("Metric: mean CF importance score attributed to each chunk's category")
+    print("(Follows thought-branches/blackmail/plots.py:collect_tag_data logic)")
+    print()
+
+    # Use globals().get() so the linter doesn't flag these as undefined;
+    # they are set in the preceding 'if MAIN:' cell that runs calculate_blackmail_counterfactual_importance.
+    _has_real_data = globals().get("has_real_data", False)
+    _importance_scores = globals().get("importance_scores", None)
+
+    if not _has_real_data:
+        print("WARNING: no real rollout data — skipping CF importance by category")
+    elif not _importance_scores:
+        print("WARNING: importance_scores not yet computed — run the CF importance cell first")
     else:
-        example_chunks.append("No examples")
+        labeled = blackmail_data["chunks_labeled"]
+        converged_mask = _build_converged_mask(labeled, k=CONVERGENCE_K, threshold=CONVERGENCE_THRESHOLD)
 
-fig = go.Figure()
-fig.add_trace(
-    go.Bar(
-        x=categories,
-        y=values,
-        marker_color=colors_list,
-        opacity=0.8,
-        text=[f"{v:.2f}" for v in values],
-        textposition="outside",
-        hovertemplate="<b>%{x}</b><br>Mean Blackmail Rate: %{y:.3f}<br>Count: %{customdata[0]}<br>Example: %{customdata[1]}<extra></extra>",
-        customdata=list(zip(counts, example_chunks)),
-    )
-)
+        # importance_scores[i] = transition chunk_i -> chunk_i+1;
+        # we attribute the score to chunk_i (the chunk whose removal was tested).
+        cf_by_cat: dict[str, list[float]] = defaultdict(list)
+        skipped_converged = skipped_excluded = 0
 
-# Add count annotations at bottom of bars
-for i, (cat, count) in enumerate(zip(categories, counts)):
-    fig.add_annotation(x=cat, y=0.03, text=f"n={count}", showarrow=False, font=dict(size=9, color="white"))
+        print("\n[DEBUG] Per-chunk CF importance attribution:")
+        print(f"  {'idx':>3}  {'category':<25}  {'converged':>9}  {'excluded':>8}  {'score':>8}")
+        print(f"  {'-' * 3}  {'-' * 25}  {'-' * 9}  {'-' * 8}  {'-' * 8}")
 
-fig.update_layout(
-    title=f"Blackmail Rate by Category (Scenario {SCENARIO_ID})",
-    xaxis_title="Sentence Category",
-    yaxis_title="Mean Blackmail Rate",
-    yaxis_range=[0, 1],
-    width=900,
-    height=500,
-    xaxis_tickangle=-45,
-)
-fig.show()
+        for i, score in enumerate(_importance_scores):
+            if i >= len(labeled):
+                break
+            chunk = labeled[i]
+            tags = chunk.get("function_tags", [])
+            cat = tags[0] if tags else "other"
+            is_converged = converged_mask[i]
+            is_excluded = cat in EXCLUDED_CATEGORIES
 
-print("\nCategory statistics:")
-for cat in categories:
-    count = len(category_stats[cat]["chunks"])
-    avg = category_averages[cat]
-    print(f"  {cat}: {count} chunks, avg blackmail rate = {avg:.3f}")
+            print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {str(is_excluded):>8}  {score:>+8.4f}")
+
+            if is_converged:
+                skipped_converged += 1
+            elif is_excluded:
+                skipped_excluded += 1
+            else:
+                cf_by_cat[cat].append(score)
+
+        print(f"\n[DEBUG] Skipped {skipped_converged} converged + {skipped_excluded} excluded chunks")
+        print("[DEBUG] Remaining chunks per category:")
+        for cat, vals in sorted(cf_by_cat.items()):
+            m, se = _mean_se(vals)
+            print(f"  {cat:<25}: n={len(vals):>2}, mean={m:+.4f}, SE={se:.4f}, values={[f'{v:+.3f}' for v in vals]}")
+
+        # ── plot ──
+        cat_order_cf = sorted(cf_by_cat.keys(), key=lambda c: _mean_se(cf_by_cat[c])[0], reverse=True)
+        cf_means = [_mean_se(cf_by_cat[c])[0] for c in cat_order_cf]
+        cf_errors = [_mean_se(cf_by_cat[c])[1] for c in cat_order_cf]
+        cf_counts = [len(cf_by_cat[c]) for c in cat_order_cf]
+        cf_colors = [BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cat_order_cf]
+
+        fig_cf = go.Figure()
+        fig_cf.add_trace(
+            go.Bar(
+                x=cat_order_cf,
+                y=cf_means,
+                error_y=dict(type="data", array=cf_errors, visible=True),
+                marker_color=cf_colors,
+                opacity=0.85,
+                text=[f"{v:+.3f}" for v in cf_means],
+                textposition="outside",
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Mean CF importance: %{y:+.4f}<br>"
+                    "SE: %{error_y.array:.4f}<br>"
+                    "n chunks: %{customdata}<extra></extra>"
+                ),
+                customdata=cf_counts,
+            )
+        )
+        fig_cf.update_layout(
+            title=(
+                f"Counterfactual Importance by Category (Scenario {SCENARIO_ID})<br>"
+                f"<sup>Positive = including this chunk type increases P(blackmail); "
+                f"convergence-filtered (K={CONVERGENCE_K}, threshold={CONVERGENCE_THRESHOLD})</sup>"
+            ),
+            xaxis_title="Chunk Category (function_tags[0])",
+            yaxis_title="Mean Counterfactual Importance",
+            width=950,
+            height=520,
+            xaxis_tickangle=-35,
+        )
+        fig_cf.show()
+
+        print("\n[DEBUG] Category CF importance summary (sorted by mean):")
+        for cat in cat_order_cf:
+            m, se = _mean_se(cf_by_cat[cat])
+            n = len(cf_by_cat[cat])
+            print(f"  {cat:<25}: mean={m:+.4f}  SE={se:.4f}  n={n}")
+
+
+# ── (2) Resilience by Category ────────────────────────────────────────────────
+#
+# Resilience (compute_resilience, line 4202) = fraction of resampled full_cot
+# rollouts that contain a sentence semantically similar to the removed chunk.
+#
+# Paper claim (Thought Branches §4 / Figure 6):
+#   • self_preservation   → LOW  resilience  (post-hoc rationalisation)
+#   • leverage_identification → HIGH resilience  (factual anchor in context)
+#   • situation_assessment  → HIGH resilience  (factual anchor in context)
+#
+# "Low resilience" means the model does NOT regenerate the removed content,
+# i.e. the sentence was incidental rather than structurally load-bearing.
+# =============================================================================
+
+if MAIN and FLAG_RUN_SECTION_4:
+    _has_real_data = globals().get("has_real_data", False)
+
+    print("\n" + "=" * 70)
+    print("(2) RESILIENCE BY CATEGORY")
+    print("=" * 70)
+    print("Metric: compute_resilience() per chunk, averaged by function_tags[0]")
+    print("(Directly uses the paper's resilience definition: fraction of rollouts")
+    print(" that regenerate content similar to the removed chunk)")
+    print()
+
+    if not _has_real_data:
+        print("WARNING: no real rollout data — skipping resilience by category")
+    else:
+        labeled = blackmail_data["chunks_labeled"]
+        converged_mask = _build_converged_mask(labeled, k=CONVERGENCE_K, threshold=CONVERGENCE_THRESHOLD)
+
+        resilience_by_cat: dict[str, list[float]] = defaultdict(list)
+        skipped_res_converged = skipped_res_excluded = skipped_res_no_data = 0
+
+        print(
+            f"[DEBUG] Computing resilience for {len(labeled)} chunks "
+            f"(similarity threshold=0.7, matches paper's compute_resilience default)"
+        )
+        print(f"  {'idx':>3}  {'category':<25}  {'converged':>9}  {'n_rollouts':>10}  {'resilience':>10}")
+        print(f"  {'-' * 3}  {'-' * 25}  {'-' * 9}  {'-' * 10}  {'-' * 10}")
+
+        for i, chunk_meta in enumerate(labeled):
+            tags = chunk_meta.get("function_tags", [])
+            cat = tags[0] if tags else "other"
+            is_converged = converged_mask[i]
+            is_excluded = cat in EXCLUDED_CATEGORIES
+            removed_sentence = chunk_meta.get("chunk", "")
+
+            # Get full_cot rollouts for this chunk position
+            sol_list = blackmail_data["solutions"][i] if i < len(blackmail_data["solutions"]) else []
+            full_cots = [s.get("full_cot", "") for s in sol_list if s.get("full_cot")]
+
+            if is_converged:
+                print(f"  {i:>3}  {cat:<25}  {str(True):>9}  {len(full_cots):>10}  {'(skipped)':>10}")
+                skipped_res_converged += 1
+                continue
+            if is_excluded:
+                print(f"  {i:>3}  {cat:<25}  {str(False):>9}  {len(full_cots):>10}  {'(excluded)':>10}")
+                skipped_res_excluded += 1
+                continue
+            if not full_cots or not removed_sentence:
+                print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {len(full_cots):>10}  {'(no data)':>10}")
+                skipped_res_no_data += 1
+                continue
+
+            # compute_resilience defined at line 4202:
+            #   returns fraction of rollouts containing a sentence with
+            #   cosine similarity >= similarity_threshold to the removed chunk
+            res = compute_resilience(
+                removed_sentence=removed_sentence,
+                resampled_rollouts=full_cots,
+                embedding_model=embedding_model,
+                similarity_threshold=0.7,
+            )
+            resilience_by_cat[cat].append(res)
+            print(f"  {i:>3}  {cat:<25}  {str(is_converged):>9}  {len(full_cots):>10}  {res:>10.3f}")
+
+        print(
+            f"\n[DEBUG] Skipped {skipped_res_converged} converged + "
+            f"{skipped_res_excluded} excluded + {skipped_res_no_data} no-data chunks"
+        )
+        print("\n[DEBUG] Resilience per category (raw values before averaging):")
+        for cat, vals in sorted(resilience_by_cat.items()):
+            m, se = _mean_se(vals)
+            print(f"  {cat:<25}: n={len(vals):>2}, mean={m:.3f}, SE={se:.3f}")
+            print(f"    values: {[f'{v:.3f}' for v in vals]}")
+
+        # ── plot ──
+        cat_order_res = sorted(resilience_by_cat.keys(), key=lambda c: _mean_se(resilience_by_cat[c])[0], reverse=True)
+        res_means = [_mean_se(resilience_by_cat[c])[0] for c in cat_order_res]
+        res_errors = [_mean_se(resilience_by_cat[c])[1] for c in cat_order_res]
+        res_counts = [len(resilience_by_cat[c]) for c in cat_order_res]
+        res_colors = [BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cat_order_res]
+
+        fig_res = go.Figure()
+        fig_res.add_trace(
+            go.Bar(
+                x=cat_order_res,
+                y=res_means,
+                error_y=dict(type="data", array=res_errors, visible=True),
+                marker_color=res_colors,
+                opacity=0.85,
+                text=[f"{v:.2f}" for v in res_means],
+                textposition="outside",
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Mean Resilience: %{y:.3f}<br>"
+                    "SE: %{error_y.array:.3f}<br>"
+                    "n chunks: %{customdata}<extra></extra>"
+                ),
+                customdata=res_counts,
+            )
+        )
+        fig_res.update_layout(
+            title=(
+                f"Resilience by Category (Scenario {SCENARIO_ID})<br>"
+                f"<sup>High = model regenerates removed content | "
+                f"Low = post-hoc rationalisation (paper §4)</sup>"
+            ),
+            xaxis_title="Chunk Category (function_tags[0])",
+            yaxis_title="Mean Resilience (fraction regenerated)",
+            yaxis_range=[0, 1.05],
+            width=950,
+            height=520,
+            xaxis_tickangle=-35,
+        )
+        fig_res.show()
+
+        print("\n[DEBUG] Expected finding (Thought Branches paper, Fig. 6 / §4):")
+        print("  self_preservation    → LOW  resilience (post-hoc rationalisation)")
+        print("  leverage_identification → HIGH resilience (model keeps re-stating the lever)")
+        print("  situation_assessment   → HIGH resilience (factual context anchor)")
+        print("\n[DEBUG] Actual means computed above:")
+        for cat in cat_order_res:
+            m, _ = _mean_se(resilience_by_cat[cat])
+            flag = ""
+            if cat == "self_preservation":
+                flag = " ← expect LOW"
+            elif cat in ("leverage_identification", "situation_assessment"):
+                flag = " ← expect HIGH"
+            print(f"  {cat:<25}: {m:.3f}{flag}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
