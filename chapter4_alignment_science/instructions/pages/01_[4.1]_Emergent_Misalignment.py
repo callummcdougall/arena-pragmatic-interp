@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Load & Test Model Organisms', 'icon': '1-circle-fill', 'subtitle': '(20%)'}, {'title': 'Quantifying Misalignment', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Activation Steering', 'icon': '3-circle-fill', 'subtitle': '(25%)'}, {'title': 'Phase Transitions', 'icon': '4-circle-fill', 'subtitle': '(30%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
+metadata = [{'title': 'Load & Test Model Organisms', 'icon': '1-circle-fill', 'subtitle': '(15%)'}, {'title': 'Quantifying Misalignment', 'icon': '2-circle-fill', 'subtitle': '(25%)'}, {'title': 'Activation Steering', 'icon': '3-circle-fill', 'subtitle': '(35%)'}, {'title': 'Phase Transitions', 'icon': '4-circle-fill', 'subtitle': '(25%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
 chapter_name = 'chapter4_alignment_science'
 chapter_name_long = 'Chapter 4 - Alignment Science'
 section_title = '[4.1] Emergent Misalignment'

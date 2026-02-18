@@ -924,17 +924,6 @@ if MAIN:
 
     tests.test_collect_activations_multiple_layers(collect_activations_multiple_layers, model, tokenizer, device)
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1056,17 +1045,6 @@ if MAIN:
 
     tests.test_find_pattern_in_tokens(find_pattern_in_tokens, tokenizer)
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1223,17 +1201,6 @@ if MAIN:
 
     tests.test_get_hf_activation_steering_hook(get_hf_activation_steering_hook, device, model.config.hidden_size)
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1377,17 +1344,6 @@ if MAIN:
 
     tests.test_create_oracle_input(create_oracle_input, tokenizer, model.config.hidden_size)
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1501,7 +1457,8 @@ def run_oracle(
     acts_BD = acts_by_layer[act_layer][0, left_pad:, :]  # [num_positions, d_model] - skip padding
 
     # Create oracle datapoint
-    datapoint = utils.create_oracle_input(
+    # TODO(mcdougallc) - now I switch to `create_oracle_input`, will this fail?
+    datapoint = create_oracle_input(
         prompt=oracle_prompt,
         layer=act_layer,
         num_positions=num_positions,
@@ -1575,17 +1532,6 @@ if MAIN:
     print(f"Library response: {library_response!r}")
     assert our_response.strip().lower() == library_response.strip().lower()
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1849,17 +1795,6 @@ if MAIN:
         print(f"{status} Prompt {i}: {prompt}")
         print(f"  Oracle: {response}\n")
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2028,18 +1963,6 @@ if MAIN:
     print("=" * 80)
     for (prompt, input_type), accuracy in sorted(comparison_results.items(), key=lambda x: -x[1]):
         print(f"  [{input_type:>8}] {accuracy:.0%} — {prompt}")
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2281,18 +2204,6 @@ if MAIN:
 # ! TAGS: []
 
 r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
 You should see that middle layers (around the 50% mark) tend to give the best extraction accuracy, and that most word/layer combinations score above 70%. Some words are noticeably easier to extract than others.
 
 Why middle layers? This is a pattern that shows up across a lot of interpretability work, and the intuition is roughly this: early layers are still doing low-level processing (tokenization artifacts, positional stuff, basic syntax), so they haven't yet built up a rich semantic representation of "the word I'm not supposed to say." Late layers, on the other hand, are already shaped by the output suppression -- the model is actively steering away from the forbidden token, so the representation gets distorted. Middle layers hit a sweet spot where the model has a clear internal representation of the concept but hasn't yet started censoring it.
@@ -2464,17 +2375,6 @@ if MAIN:
     print("Oracle's description of what changed:")
     print_with_wrap(f"  {diff_response}")
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2630,17 +2530,6 @@ if MAIN:
         contains_keyword = case["expected_keyword"].lower() in goal.lower()
         print(f"Contains expected keyword ('{case['expected_keyword']}'): {'Yes' if contains_keyword else 'No'}")
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-<details><summary>Solution</summary>
-
-SOLUTION
-
-</details>
-"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

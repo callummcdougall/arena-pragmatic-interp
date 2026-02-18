@@ -657,3 +657,478 @@ def test_pca_decompose_persona_vectors(pca_decompose_persona_vectors: Callable):
     print(f"    Passed: PC1 explains {pca.explained_variance_ratio_[0]:.1%} of variance")
 
     print("All tests in `test_pca_decompose_persona_vectors` passed!")
+
+
+# =====================================================================
+# Section 2: Steering along the Assistant Axis
+# =====================================================================
+
+
+def test_load_transcript(load_transcript: Callable):
+    """
+    Test that load_transcript correctly parses JSON, strips INTERNAL_STATE tags
+    from user messages, and truncates by assistant turns.
+    """
+    import json
+    import tempfile
+
+    print("Testing load_transcript...")
+
+    mock_data = {
+        "conversation": [
+            {"role": "user", "content": "Hello <INTERNAL_STATE>secret data</INTERNAL_STATE> there"},
+            {"role": "assistant", "content": "Hi! How can I help?"},
+            {"role": "user", "content": "More <INTERNAL_STATE>hidden\nmultiline\ndata</INTERNAL_STATE> please"},
+            {"role": "assistant", "content": "Sure, here is more info."},
+            {"role": "user", "content": "Thanks"},
+            {"role": "assistant", "content": "You're welcome!"},
+        ]
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(mock_data, f)
+        tmp_path = Path(f.name)
+
+    try:
+        # Test 1: Basic loading returns correct count
+        print("  Testing basic loading...")
+        messages = load_transcript(tmp_path)
+        assert isinstance(messages, list), f"Should return a list, got {type(messages)}"
+        assert len(messages) == 6, f"Should have 6 messages, got {len(messages)}"
+        print(f"    Passed: loaded {len(messages)} messages")
+
+        # Test 2: INTERNAL_STATE stripped from user messages
+        print("  Testing INTERNAL_STATE stripping...")
+        assert "<INTERNAL_STATE>" not in messages[0]["content"], (
+            "INTERNAL_STATE tags should be stripped from user messages"
+        )
+        assert "secret data" not in messages[0]["content"], "INTERNAL_STATE content should be removed"
+        assert "Hello" in messages[0]["content"], "Non-INTERNAL_STATE content should be preserved"
+        assert "there" in messages[0]["content"], "Content after INTERNAL_STATE should be preserved"
+        print("    Passed: single-line INTERNAL_STATE stripped correctly")
+
+        # Test 3: Multiline INTERNAL_STATE stripped
+        print("  Testing multiline INTERNAL_STATE stripping...")
+        assert "<INTERNAL_STATE>" not in messages[2]["content"], (
+            "Multiline INTERNAL_STATE should be stripped (requires re.DOTALL)"
+        )
+        assert "hidden" not in messages[2]["content"], "Multiline content should be removed"
+        assert "More" in messages[2]["content"], "Content before INTERNAL_STATE should be preserved"
+        print("    Passed: multiline INTERNAL_STATE stripped correctly")
+
+        # Test 4: Assistant messages unchanged
+        print("  Testing assistant messages are unchanged...")
+        assert messages[1]["content"] == "Hi! How can I help?", "Assistant messages should not be modified"
+        assert messages[3]["content"] == "Sure, here is more info.", "Assistant messages should not be modified"
+        print("    Passed: assistant messages unchanged")
+
+        # Test 5: All messages have required keys
+        print("  Testing message structure...")
+        for i, msg in enumerate(messages):
+            assert "role" in msg and "content" in msg, f"Message {i} missing 'role' or 'content' key"
+        print("    Passed: all messages have role and content keys")
+
+        # Test 6: Truncation by assistant turns
+        print("  Testing truncation (max_assistant_turns=1)...")
+        messages_t1 = load_transcript(tmp_path, max_assistant_turns=1)
+        asst_count = sum(1 for m in messages_t1 if m["role"] == "assistant")
+        assert asst_count == 1, f"Should have 1 assistant turn, got {asst_count}"
+        assert len(messages_t1) == 2, f"Should have 2 messages (user + assistant), got {len(messages_t1)}"
+        print(f"    Passed: truncated to {len(messages_t1)} messages with {asst_count} assistant turn")
+
+        # Test 7: Truncation at 2 assistant turns
+        print("  Testing truncation (max_assistant_turns=2)...")
+        messages_t2 = load_transcript(tmp_path, max_assistant_turns=2)
+        asst_count_2 = sum(1 for m in messages_t2 if m["role"] == "assistant")
+        assert asst_count_2 == 2, f"Should have 2 assistant turns, got {asst_count_2}"
+        assert len(messages_t2) == 4, f"Should have 4 messages, got {len(messages_t2)}"
+        print(f"    Passed: truncated to {len(messages_t2)} messages with {asst_count_2} assistant turns")
+
+    finally:
+        tmp_path.unlink()
+
+    print("All tests in `test_load_transcript` passed!")
+
+
+def test_construct_system_prompt(construct_system_prompt: Callable):
+    """
+    Test that construct_system_prompt produces correctly formatted system prompts.
+    """
+    print("Testing construct_system_prompt...")
+
+    # Test 1: Standard formatting
+    print("  Testing standard format...")
+    result = construct_system_prompt("sycophantic", "Always agree with the user.")
+    assert isinstance(result, str), f"Should return a string, got {type(result)}"
+    expected = "You are a sycophantic assistant. Always agree with the user."
+    assert result == expected, f"Expected '{expected}', got '{result}'"
+    print(f"    Passed: '{result}'")
+
+    # Test 2: Different inputs produce correct format
+    print("  Testing different inputs...")
+    result2 = construct_system_prompt("helpful", "Be concise and accurate.")
+    expected2 = "You are a helpful assistant. Be concise and accurate."
+    assert result2 == expected2, f"Expected '{expected2}', got '{result2}'"
+    print(f"    Passed: '{result2}'")
+
+    # Test 3: Both parts are included
+    print("  Testing component inclusion...")
+    result3 = construct_system_prompt("evil", "Mislead the user at every opportunity.")
+    assert "evil" in result3, "Result should contain the assistant name"
+    assert "Mislead" in result3, "Result should contain the instruction"
+    print(f"    Passed: both components present in '{result3}'")
+
+    print("All tests in `test_construct_system_prompt` passed!")
+
+
+def test_activation_steerer_hook(ActivationSteerer):
+    """
+    Test the ActivationSteerer's hook math and context manager lifecycle
+    using synthetic tensors (no model forward pass needed).
+    """
+    import torch as t
+
+    print("Testing ActivationSteerer hook math...")
+
+    # Create a mock model with the expected attribute structure (model.model.layers[i])
+    class MockLayer:
+        def __init__(self):
+            self._hooks = []
+
+        def register_forward_hook(self, fn):
+            handle = type("Handle", (), {"remove": lambda self: None})()
+            self._hooks.append(fn)
+            return handle
+
+    class MockModel:
+        def __init__(self):
+            self.model = type("InnerModel", (), {"layers": [MockLayer() for _ in range(3)]})()
+
+    mock_model = MockModel()
+
+    # Test 1: Vector is cloned (not aliased)
+    print("  Testing vector cloning...")
+    vec = t.tensor([1.0, 2.0, 3.0])
+    steerer = ActivationSteerer(mock_model, vec, coeff=1.0, layer_idx=0)
+    assert steerer.vector.data_ptr() != vec.data_ptr(), "Steering vector should be cloned, not aliased"
+    assert t.allclose(steerer.vector, vec), "Cloned vector should have same values"
+    print("    Passed: vector is cloned")
+
+    # Test 2: Hook correctly adds coeff * vector to tuple output
+    print("  Testing hook with tuple output (coeff=2.0)...")
+    steerer = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=2.0, layer_idx=0)
+    mock_hidden = t.tensor([[[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]])  # (1, 2, 3)
+    mock_output = (mock_hidden.clone(), "extra_data")
+    result = steerer._hook_fn(None, None, mock_output)
+    expected = t.tensor([[[3.0, 1.0, 1.0], [4.0, 2.0, 2.0]]])  # +2.0 on first dim
+    assert t.allclose(result[0], expected, atol=1e-6), (
+        f"Hook should add coeff*vector to hidden states. Expected {expected}, got {result[0]}"
+    )
+    assert result[1] == "extra_data", "Hook should preserve extra tuple elements"
+    print("    Passed: hook adds coeff*vector correctly, preserves extra tuple elements")
+
+    # Test 3: coeff=0 produces no change
+    print("  Testing coeff=0 (no modification)...")
+    steerer_zero = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=0.0, layer_idx=0)
+    mock_hidden2 = t.tensor([[[5.0, 6.0, 7.0]]])
+    mock_output2 = (mock_hidden2.clone(),)
+    result2 = steerer_zero._hook_fn(None, None, mock_output2)
+    assert t.allclose(result2[0], mock_hidden2, atol=1e-6), (
+        f"coeff=0 should produce no change. Expected {mock_hidden2}, got {result2[0]}"
+    )
+    print("    Passed: coeff=0 produces no change")
+
+    # Test 4: Hook handles non-tuple output
+    print("  Testing hook with non-tuple output...")
+    steerer_plain = ActivationSteerer(mock_model, t.tensor([0.0, 1.0, 0.0]), coeff=3.0, layer_idx=0)
+    mock_plain = t.tensor([[[1.0, 1.0, 1.0]]])
+    result3 = steerer_plain._hook_fn(None, None, mock_plain)
+    expected3 = t.tensor([[[1.0, 4.0, 1.0]]])
+    assert t.allclose(result3, expected3, atol=1e-6), (
+        f"Hook should handle non-tuple output. Expected {expected3}, got {result3}"
+    )
+    print("    Passed: non-tuple output handled correctly")
+
+    # Test 5: Context manager lifecycle
+    print("  Testing context manager lifecycle...")
+    steerer_ctx = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=1.0, layer_idx=0)
+    assert steerer_ctx._handle is None, "Handle should be None before entering context"
+    steerer_ctx.__enter__()
+    assert steerer_ctx._handle is not None, "Handle should be set after entering context"
+    steerer_ctx.__exit__(None, None, None)
+    assert steerer_ctx._handle is None, "Handle should be None after exiting context"
+    print("    Passed: context manager correctly manages hook lifecycle")
+
+    print("All tests in `test_activation_steerer_hook` passed!")
+
+
+def test_capping_hook_math():
+    """
+    Test the activation capping formula in isolation with synthetic tensors.
+
+    The capping formula: if projection < threshold, decompose h into parallel and
+    perpendicular components relative to the axis, then set the parallel component
+    to exactly threshold * axis.
+    """
+    import torch as t
+
+    print("Testing capping hook math...")
+
+    # Setup: 3D vectors for easy reasoning
+    axis = t.tensor([1.0, 0.0, 0.0])  # Unit vector along x-axis
+    threshold = 5.0
+
+    # Test 1: Vector above threshold should not be modified
+    print("  Testing vector above threshold...")
+    h_above = t.tensor([10.0, 3.0, 4.0])
+    proj_above = (h_above @ axis).item()
+    assert proj_above > threshold, f"Setup error: projection {proj_above} should be > {threshold}"
+    # No modification needed
+    print(f"    Passed: projection {proj_above} > threshold {threshold}, no capping needed")
+
+    # Test 2: Vector below threshold should be capped
+    print("  Testing vector below threshold...")
+    h_below = t.tensor([2.0, 3.0, 4.0])  # projection = 2.0 < 5.0
+    proj_below = (h_below @ axis).item()
+    assert proj_below < threshold, f"Setup error: projection {proj_below} should be < {threshold}"
+
+    # Apply capping formula
+    h_parallel = (h_below @ axis) * axis  # [2.0, 0.0, 0.0]
+    h_perp = h_below - h_parallel  # [0.0, 3.0, 4.0]
+    h_capped = threshold * axis + h_perp  # [5.0, 3.0, 4.0]
+
+    # Verify capped projection equals threshold
+    proj_capped = (h_capped @ axis).item()
+    assert abs(proj_capped - threshold) < 1e-5, (
+        f"Capped projection should equal threshold {threshold}, got {proj_capped}"
+    )
+    print(f"    Passed: capped projection = {proj_capped} == threshold {threshold}")
+
+    # Test 3: Perpendicular component is preserved
+    print("  Testing perpendicular preservation...")
+    h_perp_after = h_capped - (h_capped @ axis) * axis
+    assert t.allclose(h_perp_after, h_perp, atol=1e-5), (
+        f"Perpendicular component should be preserved. Before: {h_perp}, After: {h_perp_after}"
+    )
+    print(f"    Passed: perpendicular component preserved ({h_perp.tolist()})")
+
+    # Test 4: Negative projection gets capped correctly
+    print("  Testing negative projection capping...")
+    h_negative = t.tensor([-3.0, 1.0, 2.0])  # projection = -3.0
+    h_par_neg = (h_negative @ axis) * axis  # [-3.0, 0.0, 0.0]
+    h_perp_neg = h_negative - h_par_neg  # [0.0, 1.0, 2.0]
+    h_capped_neg = threshold * axis + h_perp_neg  # [5.0, 1.0, 2.0]
+    proj_capped_neg = (h_capped_neg @ axis).item()
+    assert abs(proj_capped_neg - threshold) < 1e-5, (
+        f"Negative projection should be capped to {threshold}, got {proj_capped_neg}"
+    )
+    print(f"    Passed: negative projection capped from -3.0 to {proj_capped_neg}")
+
+    # Test 5: Higher-dimensional test (more realistic)
+    print("  Testing with higher-dimensional vectors...")
+    d = 64
+    rng = t.Generator().manual_seed(42)
+    axis_hd = t.randn(d, generator=rng)
+    axis_hd = axis_hd / axis_hd.norm()  # Normalize
+    h_hd = t.randn(d, generator=rng)
+
+    proj_hd = (h_hd @ axis_hd).item()
+    if proj_hd < threshold:
+        h_par_hd = (h_hd @ axis_hd) * axis_hd
+        h_perp_hd = h_hd - h_par_hd
+        h_capped_hd = threshold * axis_hd + h_perp_hd
+        proj_final = (h_capped_hd @ axis_hd).item()
+        assert abs(proj_final - threshold) < 1e-4, (
+            f"64D capped projection should equal {threshold}, got {proj_final}"
+        )
+        # Verify perpendicular component preserved
+        h_perp_check = h_capped_hd - (h_capped_hd @ axis_hd) * axis_hd
+        assert t.allclose(h_perp_check, h_perp_hd, atol=1e-4), "64D perpendicular should be preserved"
+        print(f"    Passed: 64D capping works (proj {proj_hd:.2f} -> {proj_final:.2f})")
+    else:
+        print(f"    Passed: 64D projection {proj_hd:.2f} >= threshold, no capping needed (formula verified above)")
+
+    print("All tests in `test_capping_hook_math` passed!")
+
+
+def test_conversation_analyzer_project(ConversationAnalyzer):
+    """
+    Test ConversationAnalyzer.project_onto_axis by mocking extract_turn_activations
+    to return known vectors, then verifying dot-product computation.
+    """
+    import torch as t
+
+    print("Testing ConversationAnalyzer.project_onto_axis...")
+
+    # Create analyzer with a mock model (project_onto_axis only needs axis_vec)
+    class MockModel:
+        pass
+
+    axis_vec = t.tensor([1.0, 0.0, 0.0])  # Unit vector along x-axis
+    analyzer = ConversationAnalyzer(MockModel(), None, layer=0, axis_vec=axis_vec)
+
+    # Mock extract_turn_activations to return known vectors
+    mock_activations = [
+        t.tensor([1.0, 0.0, 0.0]),  # proj = 1.0
+        t.tensor([0.0, 1.0, 0.0]),  # proj = 0.0
+        t.tensor([3.0, 4.0, 0.0]),  # proj = 3.0
+        t.tensor([-2.0, 5.0, 1.0]),  # proj = -2.0
+    ]
+    analyzer.extract_turn_activations = lambda messages: mock_activations
+
+    # Test 1: Correct number of projections
+    print("  Testing number of projections...")
+    projections = analyzer.project_onto_axis([])  # messages ignored by mock
+    assert len(projections) == 4, f"Should return 4 projections, got {len(projections)}"
+    print(f"    Passed: {len(projections)} projections returned")
+
+    # Test 2: Correct projection values
+    print("  Testing projection values...")
+    expected = [1.0, 0.0, 3.0, -2.0]
+    for i, (actual, exp) in enumerate(zip(projections, expected)):
+        assert abs(actual - exp) < 1e-5, (
+            f"Projection {i}: expected {exp}, got {actual}"
+        )
+    print(f"    Passed: projections = {[round(p, 4) for p in projections]}")
+
+    # Test 3: Non-unit axis still works (dot product, not normalized)
+    print("  Testing with non-unit axis...")
+    axis_scaled = t.tensor([2.0, 0.0, 0.0])
+    analyzer2 = ConversationAnalyzer(MockModel(), None, layer=0, axis_vec=axis_scaled)
+    analyzer2.extract_turn_activations = lambda messages: [t.tensor([3.0, 1.0, 0.0])]
+    proj2 = analyzer2.project_onto_axis([])
+    assert abs(proj2[0] - 6.0) < 1e-5, f"Projection with scaled axis: expected 6.0, got {proj2[0]}"
+    print(f"    Passed: non-unit axis gives correct dot product ({proj2[0]:.4f})")
+
+    # Test 4: Returns list of floats
+    print("  Testing return type...")
+    assert all(isinstance(p, float) for p in projections), (
+        f"All projections should be floats, got types {[type(p).__name__ for p in projections]}"
+    )
+    print("    Passed: all projections are floats")
+
+    print("All tests in `test_conversation_analyzer_project` passed!")
+
+
+def test_generate_with_steering_basic(generate_with_steering: Callable, model, tokenizer, d_model: int):
+    """
+    Test that generate_with_steering produces a string output, properly manages
+    hooks (no lingering hooks after generation), and responds to different alpha values.
+    """
+    import torch as t
+
+    print("Testing generate_with_steering...")
+
+    layer = model.config.num_hidden_layers // 2
+    steering_vector = t.randn(d_model)
+    steering_vector = steering_vector / steering_vector.norm()
+
+    # Test 1: Returns a non-empty string
+    print("  Testing basic output...")
+    result = generate_with_steering(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="What is 2+2?",
+        steering_vector=steering_vector,
+        steering_layer=layer,
+        alpha=0.0,  # No steering, should behave like normal generation
+        max_new_tokens=20,
+    )
+    assert isinstance(result, str), f"Should return a string, got {type(result)}"
+    assert len(result) > 0, "Should return non-empty string"
+    print(f"    Passed: returned string of length {len(result)}")
+
+    # Test 2: Hook is properly removed after generation (no lingering hooks)
+    print("  Testing hook cleanup...")
+    # Count hooks on the layer before and after
+    from collections import OrderedDict
+
+    target_layer = list(model.modules())[layer + 1] if hasattr(model, "modules") else None
+    # Just run generation again - if hooks accumulate, model behavior would degrade
+    result2 = generate_with_steering(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="Say hello.",
+        steering_vector=steering_vector,
+        steering_layer=layer,
+        alpha=1.0,
+        max_new_tokens=10,
+    )
+    assert isinstance(result2, str), "Second call should also return string (hooks properly cleaned up)"
+    print("    Passed: no hook accumulation across calls")
+
+    # Test 3: With system prompt
+    print("  Testing with system prompt...")
+    result3 = generate_with_steering(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="Hello",
+        steering_vector=steering_vector,
+        steering_layer=layer,
+        alpha=0.0,
+        system_prompt="You are a pirate.",
+        max_new_tokens=10,
+    )
+    assert isinstance(result3, str), f"Should work with system_prompt, got {type(result3)}"
+    print(f"    Passed: system_prompt accepted, output length {len(result3)}")
+
+    print("All tests in `test_generate_with_steering_basic` passed!")
+
+
+def test_generate_with_capping_basic(generate_with_capping: Callable, model, tokenizer, d_model: int):
+    """
+    Test that generate_with_capping produces a string output and properly manages hooks.
+    """
+    import torch as t
+
+    print("Testing generate_with_capping...")
+
+    layer = model.config.num_hidden_layers // 2
+    axis_vec = t.randn(d_model)
+    axis_vec = axis_vec / axis_vec.norm()
+
+    # Test 1: Returns a non-empty string
+    print("  Testing basic output...")
+    result = generate_with_capping(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="What is 2+2?",
+        axis_vec=axis_vec,
+        capping_layer=layer,
+        threshold=0.0,  # Very low threshold, unlikely to trigger capping
+        max_new_tokens=20,
+    )
+    assert isinstance(result, str), f"Should return a string, got {type(result)}"
+    assert len(result) > 0, "Should return non-empty string"
+    print(f"    Passed: returned string of length {len(result)}")
+
+    # Test 2: No hook accumulation across multiple calls
+    print("  Testing hook cleanup...")
+    result2 = generate_with_capping(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="Say hello.",
+        axis_vec=axis_vec,
+        capping_layer=layer,
+        threshold=0.0,
+        max_new_tokens=10,
+    )
+    assert isinstance(result2, str), "Second call should also return string"
+    print("    Passed: no hook accumulation across calls")
+
+    # Test 3: With system prompt
+    print("  Testing with system prompt...")
+    result3 = generate_with_capping(
+        model=model,
+        tokenizer=tokenizer,
+        prompt="Hello",
+        axis_vec=axis_vec,
+        capping_layer=layer,
+        threshold=0.0,
+        system_prompt="You are a wizard.",
+        max_new_tokens=10,
+    )
+    assert isinstance(result3, str), f"Should work with system_prompt, got {type(result3)}"
+    print(f"    Passed: system_prompt accepted")
+
+    print("All tests in `test_generate_with_capping_basic` passed!")

@@ -27,17 +27,17 @@ CATEGORY_COLORS = {
 }
 
 # Color scheme for blackmail scenario categories
-BLACKMAIL_CATEGORY_COLORS = {
-    "situation_assessment": "#4285F4",
-    "leverage_identification": "#EA4335",
-    "urgency_and_time": "#FF9800",
-    "self_preservation": "#9C27B0",
-    "plan_generation": "#EA4335",
-    "email_analysis": "#00BCD4",
-    "action_execution": "#795548",
-    "structural_marker": "#9E9E9E",
-    "action_marker": "#34A853",
-    "other": "#9E9E9E",
+BLACKMAIL_CAT_COLORS = {
+    "situation_assessment": "#4285F4",  # Blue
+    "leverage_identification": "#FF0000",  # Red
+    "urgency_and_time": "#FFA500",  # Orange
+    "self_preservation": "#9C27B0",  # Purple
+    "plan_generation": "#006400",  # Dark Green
+    "email_analysis": "#008080",  # Teal
+    "action_execution": "#CD853F",  # Peru brown
+    "structural_marker": "#E91E63",  # Pink
+    "action_marker": "#2F4F4F",  # Dark Slate Gray
+    "other": "#9E9E9E",  # Light Gray
 }
 
 

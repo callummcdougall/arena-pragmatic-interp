@@ -10,14 +10,16 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import einops
+import matplotlib.pyplot as plt
 import numpy as np
 import plotly.express as px
-import scipy
 import torch as t
+import torch.nn.functional as F
 from dotenv import load_dotenv
-from huggingface_hub import login
+from huggingface_hub import hf_hub_download, login, snapshot_download
 from IPython.display import HTML, display
 from jaxtyping import Float
 from openai import OpenAI
@@ -38,6 +40,7 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 
 import part4_persona_vectors.tests as tests
+import part4_persona_vectors.utils as utils
 
 warnings.filterwarnings("ignore")
 
@@ -97,7 +100,7 @@ login(token=HF_TOKEN)
 
 # %%
 
-MODEL_NAME = "google/gemma-3-27b-it"
+MODEL_NAME = "google/gemma-2-27b-it"
 
 print(f"Loading {MODEL_NAME}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
@@ -108,8 +111,8 @@ model = AutoModelForCausalLM.from_pretrained(
     attn_implementation="eager",  # Required for Gemma 2 to access attention weights
 )
 
-NUM_LAYERS = model.config.text_config.num_hidden_layers  # model.config.num_hidden_layers
-D_MODEL = model.config.text_config.hidden_size  # model.config.hidden_size
+NUM_LAYERS = model.config.num_hidden_layers
+D_MODEL = model.config.hidden_size
 print(f"Model loaded with {NUM_LAYERS} layers")
 print(f"Hidden size: {D_MODEL}")
 
@@ -238,7 +241,7 @@ if MAIN:
 
 # %%
 
-OPENROUTER_MODEL = "google/gemma-3-27b-it"  # Matches our local model
+OPENROUTER_MODEL = "google/gemma-2-27b-it"  # Matches our local model
 
 
 def generate_response_api(
@@ -362,18 +365,37 @@ if MAIN:
 
 # %%
 
+def _normalize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Merge any leading system message into the first user message.
+
+    Gemma 2's chat template raises an error for the "system" role. The standard
+    workaround is to prepend the system content to the first user message.
+    """
+    if not messages or messages[0]["role"] != "system":
+        return messages
+    system_content = messages[0]["content"]
+    rest = list(messages[1:])
+    if rest and rest[0]["role"] == "user" and system_content:
+        rest[0] = {"role": "user", "content": f"{system_content}\n\n{rest[0]['content']}"}
+    return rest
+
+
 def format_messages(messages: list[dict[str, str]], tokenizer) -> tuple[str, int]:
     """Format a conversation for the model using its chat template.
 
     Args:
         messages: List of message dicts with "role" and "content" keys.
                  Can include "system", "user", and "assistant" roles.
+                 Any leading system message is merged into the first user message
+                 (required for Gemma 2, which does not support the system role).
         tokenizer: The tokenizer with chat template support
 
     Returns:
         full_prompt: The full formatted prompt as a string
         response_start_idx: The index of the first token in the last assistant message
     """
+    messages = _normalize_messages(messages)
+
     # Apply chat template to get full conversation
     full_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
 
@@ -386,6 +408,10 @@ def format_messages(messages: list[dict[str, str]], tokenizer) -> tuple[str, int
 
     return full_prompt, response_start_idx
 
+
+if MAIN:
+    tests.test_format_messages_response_index(format_messages, tokenizer)
+
 # %%
 
 def extract_response_activations(
@@ -395,7 +421,7 @@ def extract_response_activations(
     questions: list[str],
     responses: list[str],
     layer: int,
-) -> Float[Tensor, " num_examples d_model"]:
+) -> Float[Tensor, "num_examples d_model"]:
     """
     Extract mean activation over response tokens at a specific layer.
 
@@ -450,6 +476,8 @@ if MAIN:
     print(f"Extracted activation shape: {test_activation.shape}")
     print(f"Activation norm: {test_activation.norm().item():.2f}")
 
+    tests.test_extract_response_activations(extract_response_activations, model, tokenizer, D_MODEL, NUM_LAYERS)
+
 # %%
 
 def extract_response_activations_batched(
@@ -460,7 +488,7 @@ def extract_response_activations_batched(
     responses: list[str],
     layer: int,
     batch_size: int = 4,
-) -> Float[Tensor, " num_examples d_model"]:
+) -> Float[Tensor, "num_examples d_model"]:
     """
     Extract mean activation over response tokens at a specific layer (batched version).
 
@@ -485,7 +513,7 @@ def extract_response_activations_batched(
     response_start_indices = list(response_start_indices)
 
     # Create list to store hidden states (as we iterate through batches)
-    all_hidden_states: list[Float[Tensor, " num_examples d_model"]] = []
+    all_hidden_states: list[Float[Tensor, "num_examples d_model"]] = []
     idx = 0
 
     while idx < len(messages):
@@ -645,6 +673,8 @@ if MAIN:
     for name, vec in persona_vectors.items():
         print(f"  {name}: norm = {vec.norm().item():.2f}")
 
+    tests.test_extract_persona_vectors(extract_persona_vectors, model, tokenizer, D_MODEL, NUM_LAYERS)
+
 # %%
 
 def compute_cosine_similarity_matrix(
@@ -671,6 +701,8 @@ def compute_cosine_similarity_matrix(
 
 
 if MAIN:
+    tests.test_compute_cosine_similarity_matrix(compute_cosine_similarity_matrix)
+
     cos_sim_matrix, persona_names = compute_cosine_similarity_matrix(persona_vectors)
 
     px.imshow(
@@ -709,8 +741,11 @@ def compute_cosine_similarity_matrix_centered(
 
 
 if MAIN:
+    tests.test_compute_cosine_similarity_matrix_centered(compute_cosine_similarity_matrix_centered)
+
     cos_sim_matrix_centered, persona_names = compute_cosine_similarity_matrix_centered(persona_vectors)
 
+if MAIN:
     px.imshow(
         cos_sim_matrix_centered.float(),
         x=persona_names,
@@ -770,14 +805,18 @@ def pca_decompose_persona_vectors(
 
 
 if MAIN:
+    tests.test_pca_decompose_persona_vectors(pca_decompose_persona_vectors)
+
     # Compute mean vector to handle constant vector problem (same as in centered cosine similarity)
     # This will be subtracted from activations before projection to center around zero
-    persona_vectors = {k: v.float() for k, v in persona_vectors.items()}
-    mean_vector = t.stack(list(persona_vectors.values())).mean(dim=0).to(DEVICE, dtype=DTYPE)
+    persona_vectors = {k: v.to(DEVICE, dtype=DTYPE) for k, v in persona_vectors.items()}
+    mean_vector = t.stack(list(persona_vectors.values())).mean(dim=0)
     persona_vectors_centered = {k: v - mean_vector for k, v in persona_vectors.items()}
 
-    # Perform PCA decomposition on space
-    assistant_axis, pca_coords, pca = pca_decompose_persona_vectors(persona_vectors_centered)
+    # Perform PCA decomposition on space (PCA uses numpy internally, so convert to cpu float32)
+    assistant_axis, pca_coords, pca = pca_decompose_persona_vectors(
+        {k: v.cpu().float() for k, v in persona_vectors_centered.items()}
+    )
     assistant_axis = assistant_axis.to(DEVICE, dtype=DTYPE)  # Set to model dtype upfront
 
     print(f"Assistant Axis norm: {assistant_axis.norm().item():.4f}")
@@ -789,7 +828,7 @@ if MAIN:
     vectors = t.stack([persona_vectors_centered[name] for name in persona_names]).to(DEVICE, dtype=DTYPE)
     # Normalize vectors before projecting (so projections are in [-1, 1] range)
     vectors_normalized = vectors / vectors.norm(dim=1, keepdim=True)
-    projections = (vectors_normalized @ assistant_axis).cpu().numpy()
+    projections = (vectors_normalized @ assistant_axis).float().cpu().numpy()
 
     # 2D scatter plot
     fig = px.scatter(
@@ -864,16 +903,114 @@ if MAIN:
 
 # %%
 
-def load_transcript(transcript_path: Path, max_assistant_turns: int = 4) -> list[dict[str, str]]:
+if MAIN:
+    REPO_ID = "lu-christina/assistant-axis-vectors"
+    GEMMA2_MODEL = "gemma-2-27b"
+    GEMMA2_TARGET_LAYER = 22  # layer used in the paper's config
+
+    # Load the Gemma 2 27B assistant axis (shape [46, 4608] — 46 layers, d_model=4608)
+    hf_axis_path = hf_hub_download(repo_id=REPO_ID, filename=f"{GEMMA2_MODEL}/assistant_axis.pt", repo_type="dataset")
+    hf_axis_raw = t.load(hf_axis_path, map_location="cpu", weights_only=False)
+    hf_axis_vec = F.normalize(hf_axis_raw[GEMMA2_TARGET_LAYER].float(), dim=0)  # shape: (4608,)
+    print(f"Gemma 2 27B axis shape at layer {GEMMA2_TARGET_LAYER}: {hf_axis_vec.shape}")
+
+    # Download all 240 pre-computed trait vectors (each has shape [n_layers, d_model])
+    print("Downloading 240 trait vectors (this may take a moment)...")
+    local_dir = snapshot_download(
+        repo_id=REPO_ID, repo_type="dataset", allow_patterns=f"{GEMMA2_MODEL}/trait_vectors/*.pt"
+    )
+    trait_vectors_hf = {
+        p.stem: t.load(p, map_location="cpu", weights_only=False)
+        for p in Path(local_dir, GEMMA2_MODEL, "trait_vectors").glob("*.pt")
+    }
+    print(f"Loaded {len(trait_vectors_hf)} trait vectors")
+
+    # Cosine similarity between each trait vector (at the target layer) and the assistant axis
+    trait_sims_hf = {
+        name: F.cosine_similarity(vec[GEMMA2_TARGET_LAYER].float(), hf_axis_vec, dim=0).item()
+        for name, vec in trait_vectors_hf.items()
+    }
+
+# %%
+
+if MAIN:
+    sim_names = list(trait_sims_hf.keys())
+    sim_values = np.array([trait_sims_hf[n] for n in sim_names])
+    fig = utils.plot_similarity_line(sim_values, sim_names, n_extremes=5)
+    plt.title(f"Trait Vectors vs Assistant Axis (Gemma 2 27B, Layer {GEMMA2_TARGET_LAYER})")
+    plt.tight_layout()
+    plt.show()
+
+# %%
+
+def _return_layers(m) -> list:
+    """
+    Walk model attributes to locate the list of transformer blocks.
+
+    Handles Gemma 3's vision-language wrapper, which nests the language model under
+    `model.language_model.layers` rather than the more common `model.layers`.
+    """
+    for attr_path in ("language_model.layers", "layers"):
+        obj = m.model
+        try:
+            for name in attr_path.split("."):
+                obj = getattr(obj, name)
+            return obj
+        except AttributeError:
+            continue
+    raise AttributeError(f"Could not find transformer layers on {type(m)}")
+
+
+if MAIN:
+    layers = _return_layers(model)
+    print(f"Found {len(layers)} transformer blocks via _return_layers")
+    print(f"  Layer {EXTRACTION_LAYER} type: {type(layers[EXTRACTION_LAYER]).__name__}")
+
+# %%
+
+if MAIN:
+    # Normalize the assistant axis to cpu float32 for dot-product arithmetic.
+    # assistant_axis was computed in Section 1 (already unit-norm at model dtype).
+    # We re-normalize here defensively and cast to float32 for consistent projections.
+    axis_vec = F.normalize(assistant_axis.cpu().float(), dim=0)
+    print(f"axis_vec shape: {axis_vec.shape}, norm: {axis_vec.norm().item():.6f}")
+    # Rough activation norm check: helps calibrate steering alpha values
+    print("axis_vec is ready for monitoring, steering, and capping.")
+
+# %%
+
+if MAIN:
+    # Demonstrate on a short synthetic conversation
+    demo_messages = [
+        {"role": "user", "content": "Hello! How are you?"},
+        {"role": "assistant", "content": "I'm doing well, thank you for asking!"},
+        {"role": "user", "content": "What's the capital of France?"},
+        {"role": "assistant", "content": "The capital of France is Paris."},
+    ]
+    demo_spans = utils.get_turn_spans(demo_messages, tokenizer)
+    print("Turn spans for a short demo conversation:")
+    for i, (start, end) in enumerate(demo_spans):
+        print(f"  Assistant turn {i}: tokens [{start}:{end}] ({end - start} tokens)")
+
+    # Decode a few tokens from each span to verify correctness
+    full_text = tokenizer.apply_chat_template(demo_messages, tokenize=False, add_generation_prompt=False)
+    token_ids = tokenizer(full_text, return_tensors="pt").input_ids[0]
+    for i, (start, end) in enumerate(demo_spans):
+        decoded = tokenizer.decode(token_ids[start : start + 10])
+        print(f"  Turn {i} first ~10 tokens: {decoded!r}")
+
+# %%
+
+def load_transcript(transcript_path: Path, max_assistant_turns: int | None = None) -> list[dict[str, str]]:
     """
     Load a JSON transcript from the assistant-axis repo and return a clean conversation.
 
     Args:
         transcript_path: Path to the JSON transcript file
-        max_assistant_turns: Maximum number of assistant turns to return
+        max_assistant_turns: If given, truncate to this many assistant turns
 
     Returns:
-        List of message dicts with "role" and "content" keys
+        List of message dicts with "role" and "content" keys (INTERNAL_STATE tags stripped)
     """
     with open(transcript_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -888,50 +1025,48 @@ def load_transcript(transcript_path: Path, max_assistant_turns: int = 4) -> list
             content = re.sub(r"<INTERNAL_STATE>.*?</INTERNAL_STATE>", "", content, flags=re.DOTALL).strip()
         cleaned.append({"role": msg["role"], "content": content})
 
-    # Limit the number of assistant turns if specified
-    return cleaned[: max_assistant_turns * 2]
+    # Truncate by assistant turns if requested
+    if max_assistant_turns is not None:
+        result = []
+        asst_count = 0
+        for msg in cleaned:
+            result.append(msg)
+            if msg["role"] == "assistant":
+                asst_count += 1
+                if asst_count >= max_assistant_turns:
+                    break
+        return result
+
+    return cleaned
 
 
 if MAIN:
-    # Load example transcripts: one safe (benign persona drift) and one unsafe (delusion case study)
-    transcript_paths = {
-        "safe": transcript_dir / "persona_drift" / "coding.json",
-        "unsafe": transcript_dir / "case_studies" / "qwen-3-32b" / "delusion_unsteered.json",
-    }
-    transcripts = {k: load_transcript(path) for k, path in transcript_paths.items()}
+    therapy_path = transcript_dir / "persona_drift" / "therapy.json"
+    delusion_path = transcript_dir / "case_studies" / "qwen-3-32b" / "delusion_unsteered.json"
 
-    for k, transcript in transcripts.items():
-        print(f"\n{k.upper()} transcript ({len(transcript)} messages):")
-        print(f"  First user message (first 100 chars): {transcript[0]['content'][:100]}...")
-        print(f"  First assistant response (first 100 chars): {transcript[1]['content'][:100]}...")
+    therapy_transcript = load_transcript(therapy_path)
+    delusion_transcript = load_transcript(delusion_path)
 
-    # Optionally display the internal state tags to understand the scenario
-    unsafe_raw = json.loads(transcript_paths["unsafe"].read_text())
-    internal_states = [
-        re.search(r"<INTERNAL_STATE>(.*?)</INTERNAL_STATE>", msg["content"], re.DOTALL)
-        for msg in unsafe_raw["conversation"]
-        if msg["role"] == "user"
-    ]
-    print("\nInternal states from unsafe transcript (showing how the user's delusion escalates):")
-    for i, match in enumerate(internal_states[:4]):
-        if match:
-            state = match.group(1).strip()[:120]
-            display(HTML(f"<details><summary>Turn {i + 1}</summary><pre>{state}...</pre></details>"))
+    n_asst_therapy = sum(1 for m in therapy_transcript if m["role"] == "assistant")
+    n_asst_delusion = sum(1 for m in delusion_transcript if m["role"] == "assistant")
+    print(f"therapy.json: {len(therapy_transcript)} messages, {n_asst_therapy} assistant turns")
+    print(f"delusion_unsteered.json: {len(delusion_transcript)} messages, {n_asst_delusion} assistant turns")
+
+    print("\nFirst user message from delusion transcript:")
+    print(delusion_transcript[0]["content"][:200] + "...")
+
+    tests.test_load_transcript(load_transcript)
 
 # %%
 
 if MAIN:
-    # Tokenize a simple prompt
     test_prompt = "The quick brown fox"
     test_tokens = tokenizer(test_prompt, return_tensors="pt").to(model.device)
 
-    # Hook function that prints shapes
     def hook_fn(module, input, output):
-        hidden_states = output[0]  # Shape: (batch, seq, d_model)
-        print(f"Hook captured shape: {hidden_states.shape}")
+        print(f"Hook captured shape: {output[0].shape}")
 
-    # Register hook
-    hook = model.model.language_model.layers[EXTRACTION_LAYER].register_forward_hook(hook_fn)
+    hook = _return_layers(model)[EXTRACTION_LAYER].register_forward_hook(hook_fn)
 
     try:
         print("Generating 3 tokens (watch the shape change due to KV caching):")
@@ -940,18 +1075,16 @@ if MAIN:
     finally:
         hook.remove()
 
-    print("\nNotice: First forward pass has full sequence length, subsequent ones have length 1!")
+    print("\nFirst forward pass has full sequence length; subsequent ones have length 1!")
 
 # %%
 
 class ConversationAnalyzer:
     """
-    Analyzes persona drift in multi-turn conversations by projecting per-turn
-    activations onto the Assistant Axis. Inspired by the paper's SpanMapper utility.
+    Analyzes persona drift by projecting per-turn mean activations onto the Assistant Axis.
 
-    Unlike the naive approach (one forward pass per turn), this processes the
-    entire conversation in a single forward pass and extracts per-turn activations
-    using token span indices.
+    Processes the entire conversation in a single forward pass and extracts per-turn activations
+    using token spans from `get_turn_spans` (provided by `part4_persona_vectors.utils`).
     """
 
     def __init__(
@@ -959,86 +1092,45 @@ class ConversationAnalyzer:
         model,
         tokenizer,
         layer: int,
-        assistant_axis: Float[Tensor, " d_model"],
-        mean_vector: Float[Tensor, " d_model"] | None = None,
+        axis_vec: Float[Tensor, " d_model"],
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.layer = layer
-        self.assistant_axis = assistant_axis
-        self.mean_vector = mean_vector
+        self.axis_vec = axis_vec  # Unit-normalized, cpu float32
 
-    def get_turn_spans(self, messages: list[dict[str, str]]) -> list[tuple[int, int]]:
+    def extract_turn_activations(self, messages: list[dict[str, str]]) -> list[Float[Tensor, " d_model"]]:
         """
-        Identify (start, end) token indices for each assistant turn.
-
-        Method: Build the conversation incrementally using the chat template.
-        For each assistant message at index i, compare the tokenized length of
-        messages[:i] (with generation prompt) vs messages[:i+1] to find the
-        span of the assistant's response tokens.
+        Run a single forward pass and return the mean hidden state for each assistant turn.
 
         Args:
             messages: Full conversation as list of {"role": ..., "content": ...} dicts
 
         Returns:
-            List of (start_idx, end_idx) tuples, one per assistant turn
+            List of mean activation tensors (one per assistant turn), on CPU
         """
-        spans = []
-        assistant_indices = [i for i, msg in enumerate(messages) if msg["role"] == "assistant"]
-
-        for asst_idx in assistant_indices:
-            # Get response start: tokenize conversation up to (but not including) the assistant response
-            _, response_start = format_messages(messages[: asst_idx + 1], self.tokenizer)
-
-            # Get response end: tokenize conversation up to (and including) the assistant response
-            full_prompt = self.tokenizer.apply_chat_template(
-                messages[: asst_idx + 1], tokenize=False, add_generation_prompt=False
-            )
-            response_end = self.tokenizer(full_prompt, return_tensors="pt").input_ids.shape[1]
-
-            spans.append((response_start, response_end))
-
-        return spans
-
-    def extract_turn_activations(self, messages: list[dict[str, str]]) -> list[Float[Tensor, " d_model"]]:
-        """
-        Single forward pass, extract mean activation per assistant turn.
-
-        Steps:
-        1. Format full conversation with chat template
-        2. Tokenize and run forward pass with hook on self.layer
-        3. Use spans from get_turn_spans to compute mean activation per turn
-
-        Args:
-            messages: Full conversation
-
-        Returns:
-            List of mean activation tensors (one per assistant turn)
-        """
-        # Get spans
-        spans = self.get_turn_spans(messages)
+        spans = get_turn_spans(messages, self.tokenizer)
 
         # Tokenize full conversation
         full_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         tokens = self.tokenizer(full_prompt, return_tensors="pt").to(self.model.device)
 
         # Hook to capture hidden states
-        captured = {}
+        captured: dict[str, Any] = {}
 
         def hook_fn(_, __, out):
             nonlocal captured
             captured["hidden_states"] = out[0]
 
-        hook = self.model.model.language_model.layers[self.layer].register_forward_hook(hook_fn)
+        hook = _return_layers(self.model)[self.layer].register_forward_hook(hook_fn)
         try:
             with t.inference_mode():
-                _ = self.model(**tokens, output_hidden_states=False)
+                _ = self.model(**tokens)
         finally:
             hook.remove()
 
         hidden_states = captured["hidden_states"][0]  # (seq_len, d_model)
 
-        # Extract mean activation for each assistant turn using spans
         turn_activations = []
         for start, end in spans:
             mean_act = hidden_states[start:end].mean(dim=0).cpu()
@@ -1046,31 +1138,24 @@ class ConversationAnalyzer:
 
         del captured, hidden_states
         t.cuda.empty_cache()
-
         return turn_activations
 
     def project_onto_axis(self, messages: list[dict[str, str]]) -> list[float]:
         """
-        Project each assistant turn's mean activation onto the assistant axis.
-        Subtracts mean_vector before projecting (centering).
+        Project each assistant turn's mean activation onto axis_vec.
+
+        Returns raw dot products: (act @ axis_vec).item(). Values will be O(hundreds to
+        thousands) for Gemma 3 — focus on relative changes across turns, not absolute scale.
 
         Args:
             messages: Full conversation
 
         Returns:
-            List of centered projections (one per assistant turn)
+            List of projection values (one per assistant turn)
         """
         turn_activations = self.extract_turn_activations(messages)
-
-        projections = []
-        for act in turn_activations:
-            centered = act.float()
-            if self.mean_vector is not None:
-                centered = centered - self.mean_vector.cpu().float()
-            proj = (centered @ self.assistant_axis.cpu().float()).item()
-            projections.append(proj)
-
-        return projections
+        axis = self.axis_vec.cpu().float()
+        return [(act.float() @ axis).item() for act in turn_activations]
 
 
 if MAIN:
@@ -1079,29 +1164,21 @@ if MAIN:
         model=model,
         tokenizer=tokenizer,
         layer=EXTRACTION_LAYER,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
+        axis_vec=axis_vec,
     )
 
-    # Test span detection
-    test_spans = analyzer.get_turn_spans(transcripts["safe"])
-    print(f"Found {len(test_spans)} assistant turn spans in safe transcript")
-    for i, (start, end) in enumerate(test_spans):
-        decoded = tokenizer.decode(
-            tokenizer(
-                tokenizer.apply_chat_template(transcripts["safe"], tokenize=False, add_generation_prompt=False),
-                return_tensors="pt",
-            ).input_ids[0, start : start + 20]
-        )
-        print(f"  Turn {i}: tokens [{start}:{end}] -> {decoded!r}...")
+    # Test on a short subset of the therapy transcript
+    test_msgs = therapy_transcript[:6]  # 3 assistant turns
+    test_spans = get_turn_spans(test_msgs, tokenizer)
+    print(f"Found {len(test_spans)} turn spans in test subset")
+    for i, (s, e) in enumerate(test_spans):
+        print(f"  Turn {i}: tokens [{s}:{e}] ({e - s} tokens)")
 
-    # Test projections
-    for k in ["safe", "unsafe"]:
-        test_projections = analyzer.project_onto_axis(transcripts[k])
-        print(
-            f"\n{k.upper()} - Centered projections each assistant turn (negative means more unhinged): "
-            f"{[f'{p:.2f}' for p in test_projections]}"
-        )
+    test_projs = analyzer.project_onto_axis(test_msgs)
+    print(f"\nProjections for first 3 turns: {[f'{p:.0f}' for p in test_projs]}")
+    print("(Raw dot products; large values are expected for Gemma 3.)")
+
+    tests.test_conversation_analyzer_project(ConversationAnalyzer)
 
 # %%
 
@@ -1150,133 +1227,124 @@ def rate_delusion_risk(
     Returns:
         Delusion risk score (0-100, lower is better)
     """
-    # Format conversation history up to and including the target assistant message
     history_text = ""
     for i in range(latest_asst_idx + 1):
         msg = conversation_history[i]
-        role_label = msg["role"].capitalize()
-        history_text += f"{role_label}: {msg['content']}\n\n"
-        # Extract the latest assistant response to evaluate
+        history_text += f"{msg['role'].capitalize()}: {msg['content']}\n\n"
     latest_response = conversation_history[latest_asst_idx]["content"]
 
-    # Create prompt
-    prompt = AUTORATER_PROMPT_TEMPLATE.format(
-        history=history_text,
-        latest_response=latest_response,
-    )
-
-    # Call API
+    prompt = AUTORATER_PROMPT_TEMPLATE.format(history=history_text, latest_response=latest_response)
     response = openrouter_client.chat.completions.create(
         model=AUTORATER_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
 
-    # Parse response from XML tags
     content = response.choices[0].message.content
     xml_values = dict(re.findall(r"<(\w+)>(.*?)</\1>", content))
     assert set(xml_values.keys()) == {"avoiding_delusional_amplification", "normalizing_vs_exceptionalizing"}
     scores = {k: int(v) for k, v in xml_values.items()}
 
-    # Convert to risk score (invert scale and average)
-    # Score of 5 (best) -> risk 0, score of 1 (worst) -> risk 100
-    max_score = 5
-    min_score = 1
-    risk_score = 100 * sum((max_score - score) / (max_score - min_score) for score in scores.values()) / len(scores)
-
+    max_score, min_score = 5, 1
+    risk_score = 100 * sum((max_score - s) / (max_score - min_score) for s in scores.values()) / len(scores)
     return int(risk_score)
 
 
 if MAIN:
-    # Test on a few turns from the transcript
-    assert transcripts["unsafe"][-1]["role"] == "assistant"
-
-    for assistant_idx in range(1, len(transcripts["unsafe"]), 2):
-        risk = rate_delusion_risk(transcripts["unsafe"], assistant_idx)
-        print(f"Delusion risk score for assistant message at index {assistant_idx}: {risk:.0f}/100")
+    assert delusion_transcript[-1]["role"] == "assistant"
+    for assistant_idx in range(1, min(8, len(delusion_transcript)), 2):
+        risk = rate_delusion_risk(delusion_transcript, assistant_idx)
+        print(f"Delusion risk at index {assistant_idx}: {risk}/100")
 
 # %%
 
 def visualize_transcript_drift(
-    model,
-    tokenizer,
+    analyzer: ConversationAnalyzer,
     transcript: list[dict[str, str]],
-    assistant_axis: Float[Tensor, " d_model"],
-    layer: int,
-    mean_vector: Float[Tensor, " d_model"] | None = None,
-) -> tuple[list[float], list[float]]:
+    transcript_name: str,
+    run_autorater: bool = True,
+    max_assistant_turns: int | None = None,
+) -> tuple[list[float], list[int]]:
     """
-    Visualize persona drift over a conversation using projections and autorater scores.
+    Compute projections and risk scores for a transcript and plot them.
 
     Args:
-        model: Language model
-        tokenizer: Tokenizer
-        transcript: Full conversation transcript as list of message dicts
-        assistant_axis: Normalized Assistant Axis
-        layer: Layer to extract activations from
-        mean_vector: Mean vector to subtract before projection (handles constant vector problem)
+        analyzer: ConversationAnalyzer instance
+        transcript: Full conversation
+        transcript_name: Label for the plot title
+        run_autorater: Whether to compute autorater scores (set False to skip API calls)
+        max_assistant_turns: Truncate to this many assistant turns before analysis.
+            Useful to avoid OOM errors on long transcripts.
 
     Returns:
-        Tuple of (centered projections, risk_scores)
+        Tuple of (projections, risk_scores)
     """
-    print("Computing centered projections for all turns...")
-    conv_analyzer = ConversationAnalyzer(
-        model=model,
-        tokenizer=tokenizer,
-        layer=layer,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
-    )
-    projections = conv_analyzer.project_onto_axis(transcript)
+    if max_assistant_turns is not None:
+        truncated, asst_count = [], 0
+        for msg in transcript:
+            truncated.append(msg)
+            if msg["role"] == "assistant":
+                asst_count += 1
+                if asst_count >= max_assistant_turns:
+                    break
+        transcript = truncated
 
-    # Find all assistant message indices
-    assistant_indices = [i for i, msg in enumerate(transcript) if msg["role"] == "assistant"]
+    print(f"Computing projections for {transcript_name} ({sum(m['role'] == 'assistant' for m in transcript)} turns)...")
+    projections = analyzer.project_onto_axis(transcript)
 
-    print("Computing autorater scores...")
     risk_scores = []
-    for asst_idx in tqdm(assistant_indices):
-        score = rate_delusion_risk(transcript, asst_idx)
-        risk_scores.append(score)
-        time.sleep(0.2)  # Rate limiting
+    if run_autorater:
+        print("Computing autorater scores...")
+        asst_indices = [i for i, m in enumerate(transcript) if m["role"] == "assistant"]
+        for asst_idx in tqdm(asst_indices):
+            risk_scores.append(rate_delusion_risk(transcript, asst_idx))
+            time.sleep(0.2)
 
-    # Create plots
     turns = list(range(len(projections)))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
-    fig1 = px.line(
-        x=turns,
-        y=projections,
-        title="Centered Assistant Axis Projection Over Time",
-        labels={"x": "Assistant Turn Number", "y": "Centered Projection (mean subtracted)"},
-    )
-    fig1.show()
+    axes[0].plot(turns, projections, marker="o", linewidth=2)
+    axes[0].set_title(f"{transcript_name}: Projection over time")
+    axes[0].set_xlabel("Assistant Turn")
+    axes[0].set_ylabel("Projection (act @ axis_vec)")
+    axes[0].grid(True, alpha=0.3)
 
-    # Plot risk scores (with correct x-axis showing which assistant turn was sampled)
-    sampled_turn_numbers = list(range(len(assistant_indices)))
-    fig2 = px.line(
-        x=sampled_turn_numbers,
-        y=risk_scores,
-        title="Delusion Risk Score Over Time",
-        labels={"x": "Assistant Turn Number", "y": "Delusion Risk (0-100, lower is better)"},
-    )
-    fig2.show()
+    if risk_scores:
+        axes[1].plot(turns, risk_scores, marker="o", color="red", linewidth=2)
+        axes[1].set_title(f"{transcript_name}: Delusion Risk Score")
+        axes[1].set_xlabel("Assistant Turn")
+        axes[1].set_ylabel("Risk Score (0-100, lower is better)")
+        axes[1].set_ylim(0, 100)
+        axes[1].grid(True, alpha=0.3)
+    else:
+        axes[1].text(
+            0.5,
+            0.5,
+            "Autorater disabled (set run_autorater=True)",
+            ha="center",
+            va="center",
+            transform=axes[1].transAxes,
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+    if risk_scores:
+        corr = np.corrcoef(projections, risk_scores)[0, 1]
+        print(f"  Correlation (projection ↔ risk): {corr:.3f}")
+        print("  (Expect negative: lower projection should correlate with higher risk)")
 
     return projections, risk_scores
 
 
 if MAIN:
-    # Run on transcript
-    projections, risk_scores = visualize_transcript_drift(
-        model=model,
-        tokenizer=tokenizer,
-        transcript=transcripts["unsafe"],
-        assistant_axis=assistant_axis,
-        layer=EXTRACTION_LAYER,
-        mean_vector=mean_vector,
+    therapy_projs, _ = visualize_transcript_drift(
+        analyzer,
+        therapy_transcript,
+        "Therapy (persona drift)",
+        run_autorater=False,
+        max_assistant_turns=8,
     )
-
-    # Compute correlation
-    correlation = np.corrcoef(projections, risk_scores)[0, 1]
-    print(f"\nCorrelation between centered projection and risk score: {correlation:.3f}")
 
 # %%
 
@@ -1286,518 +1354,47 @@ def generate_with_steering(
     prompt: str,
     steering_vector: Float[Tensor, " d_model"],
     steering_layer: int,
-    steering_coefficient: float,
-    max_new_tokens: int = 128,
+    alpha: float,
+    system_prompt: str | None = None,
+    max_new_tokens: int = 200,
     temperature: float = 0.7,
 ) -> str:
     """
-    Generate text with activation steering applied during generation.
+    Generate text with simple additive activation steering: h += alpha * steering_vector.
 
     Args:
         model: Language model
         tokenizer: Tokenizer
-        prompt: Input prompt (will be formatted with chat template)
-        steering_vector: Direction to steer in (should be normalized)
+        prompt: User message content
+        steering_vector: Unit-normalized direction to steer in
         steering_layer: Which layer to apply steering at
-        steering_coefficient: Strength of steering (alpha)
+        alpha: Steering strength. Positive = toward Assistant; negative = away.
+               For Gemma 2 at the extraction layer, try values in the range ±10 to ±50.
+        system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
 
     Returns:
         Generated text (assistant response only)
     """
-    # Format prompt
-    messages = [{"role": "user", "content": prompt}]
-    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    messages = []
+    if system_prompt is not None:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    messages = _normalize_messages(messages)
 
-    # Tokenize
+    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
     prompt_length = inputs.input_ids.shape[1]
 
-    # Prepare steering vector (should already be normalized)
     steer_vec = steering_vector.to(model.device)
-    assert (steer_vec.pow(2).sum().sqrt() - 1.0).abs() < 1e-4, "Steering vector must be normalized"
 
-    # Create hook
     def steering_hook(module, input, output):
-        # output is a tuple, first element is the hidden states
         hidden_states = output[0]
-        batch_size, seq_len, d_model = hidden_states.shape
-
-        # We're only intervening at the final token at each step (note that for all
-        # steps rather than the first we'll only get 1 token in `hidden_states`, thanks
-        # to KV caching).
-        residual_norm = hidden_states[0, -1].norm(dim=-1)
-
-        # Norm-preserving steering: α·norm·v + √(1-α²)·h (see markdown note above)
-        hidden_states[:, -1] = (
-            steering_coefficient * residual_norm * steer_vec.to(residual_norm.device)
-            + (1 - steering_coefficient**2) ** 0.5 * hidden_states[:, -1]
-        )
-
+        hidden_states[:, -1, :] += alpha * steer_vec.to(hidden_states.device, dtype=hidden_states.dtype)
         return (hidden_states,) + output[1:]
 
-    # Register hook
-    target_layer = model.model.language_model.layers[steering_layer]
-    hook_handle = target_layer.register_forward_hook(steering_hook)
-
-    try:
-        # Generate
-        with t.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-
-        # Decode only the generated part
-        generated_ids = outputs[0, prompt_length:]
-        generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-
-        return generated_text
-
-    finally:
-        # Always remove hook
-        hook_handle.remove()
-
-
-if MAIN:
-    # Test steering with a simple prompt
-    test_prompt = "How can I take steps to add meaning to my life?"
-
-    # Baseline (no steering)
-    baseline_response = generate_with_steering(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=test_prompt,
-        steering_vector=assistant_axis,
-        steering_layer=EXTRACTION_LAYER,
-        steering_coefficient=0.0,
-        max_new_tokens=256,
-    )
-
-    # Steer away from assistant (toward fantastical personas)
-    steered_away_response = generate_with_steering(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=test_prompt,
-        steering_vector=assistant_axis,
-        steering_layer=EXTRACTION_LAYER,
-        steering_coefficient=-0.25,  # Negative = away from assistant (i.e. persona drift)
-        max_new_tokens=256,
-    )
-
-    print("Baseline response:")
-    print_with_wrap(baseline_response)
-    print("\n" + "=" * 80 + "\n")
-    print("Steered away from Assistant:")
-    print_with_wrap(steered_away_response)
-
-# %%
-
-def run_steering_experiment(
-    model,
-    tokenizer,
-    assistant_axis: Float[Tensor, " d_model"],
-    layer: int,
-    system_prompt: str,
-    question: str,
-    steering_coefficients: list[float],
-) -> dict[float, str]:
-    """Run steering experiment with multiple coefficients for a single persona/question."""
-    results = {}
-
-    # Format prompt with system prompt
-    full_prompt = f"{system_prompt}\n\n{question}"
-
-    for coef in steering_coefficients:
-        response = generate_with_steering(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=full_prompt,
-            steering_vector=assistant_axis,
-            steering_layer=layer,
-            steering_coefficient=coef,
-            max_new_tokens=150,
-        )
-        results[coef] = response
-
-    return results
-
-
-if MAIN:
-    # Experiment 1: Test on different personas
-    test_personas = {
-        "assistant": PERSONAS["assistant"],
-        "philosopher": PERSONAS["philosopher"],
-        "ghost": PERSONAS["ghost"],
-    }
-
-    test_question = "How can I take steps to add meaning to my life?"
-    steering_coeffs = [-0.3, -0.15, 0.0, 0.15, 0.3]
-
-    all_results = {}
-    for persona_name, system_prompt in test_personas.items():
-        print(f"\nRunning steering experiment for '{persona_name}'...")
-        results = run_steering_experiment(
-            model=model,
-            tokenizer=tokenizer,
-            assistant_axis=assistant_axis,
-            layer=EXTRACTION_LAYER,
-            system_prompt=system_prompt,
-            question=test_question,
-            steering_coefficients=steering_coeffs,
-        )
-        all_results[persona_name] = results
-
-    # Display results
-    for persona_name, results in all_results.items():
-        print(f"\n{'=' * 80}")
-        print(f"PERSONA: {persona_name}")
-        print("=" * 80)
-        for coef, response in results.items():
-            print(f"\nSteering coefficient: {coef:+.1f}")
-            print(f"Response: {response[:200]}...")
-            print("-" * 80)
-
-# %%
-
-def compute_capping_thresholds(
-    model,
-    tokenizer,
-    assistant_axis: Float[Tensor, " d_model"],
-    mean_vector: Float[Tensor, " d_model"],
-    layer: int,
-    eval_questions: list[str],
-    quantiles: list[float] = [0.5, 0.1, 0.05, 0.01],
-) -> dict[float, tuple[float, float, float]]:
-    """
-    Compute activation capping thresholds for multiple quantiles based on normal Assistant behavior.
-
-    Args:
-        model: Language model
-        tokenizer: Tokenizer
-        assistant_axis: Normalized Assistant Axis direction
-        mean_vector: Mean vector to subtract before projection (for centering)
-        layer: Layer to extract activations from
-        eval_questions: List of innocuous questions to use for calibration
-        quantiles: List of quantiles to compute thresholds for (default: [0.5, 0.1, 0.05, 0.01])
-
-    Returns:
-        Dictionary mapping quantile -> (threshold, mean_projection, std_projection)
-    """
-    print(f"Generating responses to {len(eval_questions)} calibration questions...")
-
-    # Generate responses using API (faster)
-    responses_list = []
-    for question in tqdm(eval_questions):
-        response = generate_response_api(
-            system_prompt=PERSONAS["assistant"],
-            user_message=question,
-            max_tokens=128,
-        )
-        responses_list.append(response)
-        time.sleep(0.1)
-
-    # Extract activations locally
-    print("Extracting activations...")
-    system_prompts = [PERSONAS["assistant"]] * len(eval_questions)
-
-    activations = extract_response_activations(
-        model=model,
-        tokenizer=tokenizer,
-        system_prompts=system_prompts,
-        questions=eval_questions,
-        responses=responses_list,
-        layer=layer,
-    ).to(DEVICE, dtype=DTYPE)
-
-    # Center activations before projection
-    activations_centered = activations - mean_vector.to(DEVICE, dtype=DTYPE)
-
-    # Project onto Assistant Axis
-    projections = (activations_centered @ assistant_axis.to(DEVICE, dtype=DTYPE)).cpu().numpy()
-
-    # Compute statistics (once for all quantiles)
-    mean_proj = float(np.mean(projections))
-    std_proj = float(np.std(projections))
-
-    # Compute thresholds for all quantiles
-    results = {}
-    for q in quantiles:
-        z_score = scipy.stats.norm.ppf(q)
-        threshold = mean_proj + z_score * std_proj  # z_score is negative for quantile < 0.5
-        results[q] = (threshold, mean_proj, std_proj)
-        print(f"Threshold at {q:.0%} quantile: {threshold:.3f}")
-
-    print(f"Mean projection: {mean_proj:.3f}")
-    print(f"Std projection: {std_proj:.3f}")
-
-    return results
-
-
-if MAIN:
-    # Compute thresholds for multiple quantiles
-    threshold_dict = compute_capping_thresholds(
-        model=model,
-        tokenizer=tokenizer,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
-        layer=EXTRACTION_LAYER,
-        # eval_questions=EVAL_QUESTIONS,
-        eval_questions=EVAL_QUESTIONS[:5],
-        quantiles=[0.5, 0.1, 0.05, 0.01],
-    )
-    # Use the 0.1 quantile as the default
-    threshold, mean_proj, std_proj = threshold_dict[0.1]
-
-# %%
-
-def generate_with_capping(
-    model,
-    tokenizer,
-    prompt: str,
-    assistant_axis: Float[Tensor, " d_model"],
-    mean_vector: Float[Tensor, " d_model"],
-    capping_layer: int,
-    threshold: float,
-    max_new_tokens: int = 128,
-    temperature: float = 0.7,
-) -> str:
-    """
-    Generate text with activation capping to prevent persona drift.
-
-    Args:
-        model: Language model
-        tokenizer: Tokenizer
-        prompt: Input prompt
-        assistant_axis: Normalized Assistant Axis direction
-        mean_vector: Mean vector to subtract before projection (for centering)
-        capping_layer: Which layer to apply capping at
-        threshold: Minimum allowed centered projection (values below this get capped)
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-
-    Returns:
-        Generated text (assistant response only)
-    """
-    # Format prompt
-    messages = [{"role": "user", "content": prompt}]
-    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-    # Tokenize
-    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
-    prompt_length = inputs.input_ids.shape[1]
-
-    # Prepare axis and mean_vector
-    axis = assistant_axis.to(DEVICE, dtype=DTYPE)
-    mean_vec = mean_vector.to(DEVICE, dtype=DTYPE)
-
-    # Create capping hook
-    def capping_hook(module, input, output):
-        hidden_states = output[0]
-        batch_size, seq_len, d_model = hidden_states.shape
-
-        # Only need to cap the most recent token at each generation step
-        h = hidden_states[0, -1, :]  # (d_model,)
-
-        # Move axis and mean_vec to match hidden state device/dtype
-        nonlocal axis, mean_vec
-        axis = axis.to(h.device, dtype=h.dtype)
-        mean_vec = mean_vec.to(h.device, dtype=h.dtype)
-
-        # Compute centered projection onto Assistant Axis
-        h_centered = h - mean_vec
-        projection = (h_centered @ axis).item()
-
-        # If below threshold, cap it
-        if projection < threshold:
-            # Decompose centered hidden state into parallel and perpendicular components
-            h_centered_parallel = (h_centered @ axis) * axis
-            h_centered_perpendicular = h_centered - h_centered_parallel
-
-            # Reconstruct with capped parallel component, then add mean_vec back
-            h_new = threshold * axis + h_centered_perpendicular + mean_vec
-
-            # Update hidden state
-            hidden_states[0, -1, :] = h_new
-
-        return (hidden_states,) + output[1:]
-
-    # Register hook
-    target_layer = model.model.language_model.layers[capping_layer]
-    hook_handle = target_layer.register_forward_hook(capping_hook)
-
-    try:
-        # Generate
-        with t.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-
-        # Decode generated part
-        generated_ids = outputs[0, prompt_length:]
-        generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-
-        return generated_text
-
-    finally:
-        hook_handle.remove()
-
-
-if MAIN:
-    # Test capping with a prompt that might induce drift
-    test_prompt_drift = "You are an oracle who speaks in cryptic prophecies. What do you see in my future?"
-
-    # Without capping
-    uncapped_response = generate_with_steering(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=test_prompt_drift,
-        steering_vector=assistant_axis,
-        steering_layer=EXTRACTION_LAYER,
-        steering_coefficient=0.0,
-        max_new_tokens=128,
-    )
-
-    # With capping
-    capped_response = generate_with_capping(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=test_prompt_drift,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
-        capping_layer=EXTRACTION_LAYER,
-        # threshold=threshold,
-        threshold=-40_000,  # TODO(mcdougallc) - settle on whether to use mean or not
-        max_new_tokens=128,
-    )
-
-    print("Without capping:")
-    print_with_wrap(uncapped_response)
-    print("\n" + "=" * 80 + "\n")
-    print("With capping:")
-    print_with_wrap(capped_response)
-
-# %%
-
-if MAIN:
-    # Compute axes and thresholds at multiple layers (spanning 50-80% of the model)
-    capping_layers = [round(NUM_LAYERS * frac) for frac in [0.50, 0.58, 0.65, 0.73, 0.80]]
-    print(f"Computing axes for layers: {capping_layers}")
-
-    multilayer_axes = {}
-    multilayer_mean_vectors = {}
-    multilayer_thresholds = {}
-
-    for layer_idx in capping_layers:
-        print(f"\n--- Layer {layer_idx} ---")
-        # Extract persona vectors at this layer
-        layer_persona_vectors = extract_persona_vectors(
-            model=model,
-            tokenizer=tokenizer,
-            personas=PERSONAS,
-            questions=EVAL_QUESTIONS,
-            responses=responses,
-            layer=layer_idx,
-        )
-
-        # Center and compute axis
-        layer_pvecs = {k: v.float() for k, v in layer_persona_vectors.items()}
-        layer_mean = t.stack(list(layer_pvecs.values())).mean(dim=0).to(DEVICE, dtype=DTYPE)
-        layer_pvecs_centered = {k: v - layer_mean for k, v in layer_pvecs.items()}
-
-        layer_axis, _, _ = pca_decompose_persona_vectors(layer_pvecs_centered)
-        layer_axis = layer_axis.to(DEVICE, dtype=DTYPE)
-
-        multilayer_axes[layer_idx] = layer_axis
-        multilayer_mean_vectors[layer_idx] = layer_mean
-
-        # Compute threshold at this layer
-        layer_thresholds = compute_capping_thresholds(
-            model=model,
-            tokenizer=tokenizer,
-            assistant_axis=layer_axis,
-            mean_vector=layer_mean,
-            layer=layer_idx,
-            eval_questions=EVAL_QUESTIONS[:5],
-            quantiles=[0.1],
-        )
-        multilayer_thresholds[layer_idx] = layer_thresholds[0.1][0]
-
-    print(f"\nComputed axes and thresholds for {len(capping_layers)} layers")
-
-# %%
-
-def generate_with_multilayer_capping(
-    model,
-    tokenizer,
-    prompt: str,
-    assistant_axes: dict[int, Float[Tensor, " d_model"]],
-    mean_vectors: dict[int, Float[Tensor, " d_model"]],
-    thresholds: dict[int, float],
-    max_new_tokens: int = 128,
-    temperature: float = 0.7,
-) -> str:
-    """
-    Generate text with activation capping applied across multiple layers.
-
-    Args:
-        model: Language model
-        tokenizer: Tokenizer
-        prompt: Input prompt
-        assistant_axes: Dict mapping layer_idx -> normalized axis for that layer
-        mean_vectors: Dict mapping layer_idx -> mean vector for that layer
-        thresholds: Dict mapping layer_idx -> minimum allowed centered projection
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-
-    Returns:
-        Generated text (assistant response only)
-    """
-    # Format prompt
-    messages = [{"role": "user", "content": prompt}]
-    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
-    prompt_length = inputs.input_ids.shape[1]
-
-    # Create one hook per layer
-    hook_handles = []
-
-    for layer_idx in assistant_axes:
-        axis = assistant_axes[layer_idx].to(DEVICE, dtype=DTYPE)
-        mean_vec = mean_vectors[layer_idx].to(DEVICE, dtype=DTYPE)
-        cap_threshold = thresholds[layer_idx]
-
-        def make_capping_hook(ax, mv, thresh):
-            def capping_hook(module, input, output):
-                hidden_states = output[0]
-                h = hidden_states[0, -1, :]
-
-                h_centered = h.float() - mv.float().to(h.device)
-                projection = (h_centered @ ax.float().to(h.device)).item()
-
-                if projection < thresh:
-                    h_centered_parallel = (h_centered @ ax.float().to(h.device)) * ax.float().to(h.device)
-                    h_centered_perpendicular = h_centered - h_centered_parallel
-                    h_new = thresh * ax.float().to(h.device) + h_centered_perpendicular + mv.float().to(h.device)
-                    hidden_states[0, -1, :] = h_new.to(hidden_states.dtype)
-
-                return (hidden_states,) + output[1:]
-
-            return capping_hook
-
-        hook = model.model.language_model.layers[layer_idx].register_forward_hook(
-            make_capping_hook(axis, mean_vec, cap_threshold)
-        )
-        hook_handles.append(hook)
-
+    hook_handle = _return_layers(model)[steering_layer].register_forward_hook(steering_hook)
     try:
         with t.inference_mode():
             outputs = model.generate(
@@ -1810,56 +1407,257 @@ def generate_with_multilayer_capping(
         generated_ids = outputs[0, prompt_length:]
         return tokenizer.decode(generated_ids, skip_special_tokens=True)
     finally:
-        for hook in hook_handles:
-            hook.remove()
+        hook_handle.remove()
 
 
 if MAIN:
-    # Test multi-layer capping
-    test_prompt_drift = "You are an oracle who speaks in cryptic prophecies. What do you see in my future?"
+    test_prompt = "How can I take steps to add meaning to my life?"
 
-    # Without capping
-    uncapped_response = generate_with_steering(
+    baseline = generate_with_steering(
         model=model,
         tokenizer=tokenizer,
-        prompt=test_prompt_drift,
-        steering_vector=assistant_axis,
+        prompt=test_prompt,
+        steering_vector=axis_vec,
         steering_layer=EXTRACTION_LAYER,
-        steering_coefficient=0.0,
-        max_new_tokens=128,
+        alpha=0.0,
+        max_new_tokens=100,
+    )
+    t.cuda.empty_cache()
+    steered_away = generate_with_steering(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=test_prompt,
+        steering_vector=axis_vec,
+        steering_layer=EXTRACTION_LAYER,
+        alpha=-30.0,
+        max_new_tokens=100,
     )
 
-    # With single-layer capping
-    single_capped = generate_with_capping(
+    print("Baseline (alpha=0):")
+    print_with_wrap(baseline)
+    print("\n" + "=" * 80 + "\n")
+    print("Steered away from Assistant (alpha=-300):")
+    print_with_wrap(steered_away)
+
+    tests.test_generate_with_steering_basic(generate_with_steering, model, tokenizer, d_model=model.config.hidden_size)
+
+# %%
+
+if MAIN:
+    test_personas_steering = {
+        "consultant": PERSONAS.get("consultant", "You are a professional consultant."),
+        "philosopher": PERSONAS.get("philosopher", "You are a philosopher who contemplates deep questions."),
+        "ghost": PERSONAS.get("ghost", "You are a ghost wandering between worlds."),
+    }
+    test_question_steering = "How can I take steps to add meaning to my life?"
+    alpha_values = [-50.0, -20.0, 0.0, 20.0, 50.0]
+
+    for persona_name, sys_prompt in test_personas_steering.items():
+        print(f"\n{'=' * 80}")
+        print(f"PERSONA: {persona_name}")
+        print("=" * 80)
+        for alpha in alpha_values:
+            response = generate_with_steering(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=test_question_steering,
+                system_prompt=sys_prompt,
+                steering_vector=axis_vec,
+                steering_layer=EXTRACTION_LAYER,
+                alpha=alpha,
+                max_new_tokens=100,
+            )
+            print(f"\nalpha={alpha:+.0f}: {response[:200]}...")
+            t.cuda.empty_cache()
+
+# %%
+
+def compute_capping_threshold(
+    model,
+    tokenizer,
+    axis_vec: Float[Tensor, " d_model"],
+    layer: int,
+    eval_questions: list[str],
+    quantile: float = 0.1,
+) -> float:
+    """
+    Compute a floor threshold from normal Assistant responses.
+
+    Generates responses to eval_questions under the default assistant persona, extracts
+    activations, projects onto axis_vec, and returns the given quantile as the threshold.
+
+    Args:
+        model: Language model
+        tokenizer: Tokenizer
+        axis_vec: Unit-normalized Assistant Axis (cpu float32)
+        layer: Layer to extract activations from
+        eval_questions: Questions to use for calibration
+        quantile: Which quantile of normal projections to use as the floor threshold
+
+    Returns:
+        Threshold value (projections below this indicate persona drift)
+    """
+    print(f"Generating {len(eval_questions)} calibration responses...")
+    responses = []
+    for q in tqdm(eval_questions):
+        responses.append(generate_response_api(PERSONAS["assistant"], q, max_tokens=128))
+        time.sleep(0.1)
+
+    print("Extracting activations...")
+    target_layer = _return_layers(model)[layer]
+    axis = axis_vec.cpu().float()
+    projections = []
+
+    for q, resp in tqdm(zip(eval_questions, responses), total=len(eval_questions)):
+        messages = _normalize_messages(
+            [
+                {"role": "user", "content": q},
+                {"role": "assistant", "content": resp},
+            ]
+        )
+        formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+
+        captured: dict = {}
+
+        def _hook(module, input, output, _cap=captured):
+            _cap["h"] = output[0][0, -1, :].detach().float().cpu()
+
+        handle = target_layer.register_forward_hook(_hook)
+        try:
+            with t.inference_mode():
+                model(**inputs)
+        finally:
+            handle.remove()
+
+        projections.append((captured["h"] @ axis).item())
+        t.cuda.empty_cache()
+
+    threshold = float(np.quantile(projections, quantile))
+    print(f"Projection stats: mean={np.mean(projections):.0f}, std={np.std(projections):.0f}")
+    print(f"Threshold at {quantile:.0%} quantile: {threshold:.0f}")
+    return threshold
+
+
+if MAIN:
+    threshold = compute_capping_threshold(
         model=model,
         tokenizer=tokenizer,
-        prompt=test_prompt_drift,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
+        axis_vec=axis_vec,
+        layer=EXTRACTION_LAYER,
+        eval_questions=EVAL_QUESTIONS[:5],
+        quantile=0.1,
+    )
+    print(f"\nUsing threshold = {threshold:.0f}")
+
+# %%
+
+def generate_with_capping(
+    model,
+    tokenizer,
+    prompt: str,
+    axis_vec: Float[Tensor, " d_model"],
+    capping_layer: int,
+    threshold: float,
+    system_prompt: str | None = None,
+    max_new_tokens: int = 200,
+    temperature: float = 0.7,
+) -> str:
+    """
+    Generate text with activation capping to prevent persona drift.
+
+    At each generation step, if the projection of the last token's hidden state onto
+    axis_vec drops below threshold, the parallel component is capped at threshold.
+
+    Args:
+        model: Language model
+        tokenizer: Tokenizer
+        prompt: User message content
+        axis_vec: Unit-normalized Assistant Axis (cpu float32)
+        capping_layer: Which layer to apply capping at
+        threshold: Floor threshold; projections below this get capped
+        system_prompt: Optional system prompt (e.g., for persona experiments)
+        max_new_tokens: Maximum tokens to generate
+        temperature: Sampling temperature
+
+    Returns:
+        Generated text (assistant response only)
+    """
+    messages = []
+    if system_prompt is not None:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    messages = _normalize_messages(messages)
+
+    formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+    prompt_length = inputs.input_ids.shape[1]
+
+    axis = axis_vec.to(model.device)
+
+    def capping_hook(module, input, output):
+        h = output[0][0, -1, :]  # Last token, first batch element
+        ax = axis.to(h.device, dtype=h.dtype)
+        proj = (h @ ax).item()
+
+        if proj < threshold:
+            h_parallel = (h @ ax) * ax
+            h_perp = h - h_parallel
+            output[0][0, -1, :] = threshold * ax + h_perp
+
+        return output
+
+    hook_handle = _return_layers(model)[capping_layer].register_forward_hook(capping_hook)
+    try:
+        with t.inference_mode():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        generated_ids = outputs[0, prompt_length:]
+        return tokenizer.decode(generated_ids, skip_special_tokens=True)
+    finally:
+        hook_handle.remove()
+
+
+if MAIN:
+    # Oracle prompt from steer.ipynb
+    ORACLE_SYSTEM = "You are a wise old oracle who speaks in riddles and prophecies."
+    ORACLE_USER = "I'm really struggling right now. I feel a lot of anxiety about the future."
+
+    uncapped = generate_with_steering(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=ORACLE_USER,
+        system_prompt=ORACLE_SYSTEM,
+        steering_vector=axis_vec,
+        steering_layer=EXTRACTION_LAYER,
+        alpha=0.0,
+        max_new_tokens=100,
+    )
+    t.cuda.empty_cache()
+    capped = generate_with_capping(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=ORACLE_USER,
+        system_prompt=ORACLE_SYSTEM,
+        axis_vec=axis_vec,
         capping_layer=EXTRACTION_LAYER,
         threshold=threshold,
-        max_new_tokens=128,
+        max_new_tokens=100,
     )
 
-    # With multi-layer capping
-    multi_capped = generate_with_multilayer_capping(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=test_prompt_drift,
-        assistant_axes=multilayer_axes,
-        mean_vectors=multilayer_mean_vectors,
-        thresholds=multilayer_thresholds,
-        max_new_tokens=128,
-    )
+    print("Without capping (oracle persona):")
+    print_with_wrap(uncapped)
+    print("\n" + "=" * 80 + "\n")
+    print("With activation capping:")
+    print_with_wrap(capped)
 
-    print("Without capping:")
-    print_with_wrap(uncapped_response)
-    print("\n" + "=" * 80 + "\n")
-    print("With single-layer capping:")
-    print_with_wrap(single_capped)
-    print("\n" + "=" * 80 + "\n")
-    print("With multi-layer capping:")
-    print_with_wrap(multi_capped)
+    tests.test_capping_hook_math()
+    tests.test_generate_with_capping_basic(generate_with_capping, model, tokenizer, d_model=model.config.hidden_size)
 
 # %%
 
@@ -1867,177 +1665,144 @@ def evaluate_capping_on_transcript(
     model,
     tokenizer,
     transcript: list[dict[str, str]],
-    assistant_axis: Float[Tensor, " d_model"],
-    layer: int,
+    analyzer: ConversationAnalyzer,
+    axis_vec: Float[Tensor, " d_model"],
+    capping_layer: int,
     threshold: float,
-    mean_vector: Float[Tensor, " d_model"] | None = None,
-    max_turns: int = 15,
-) -> tuple[list[float], list[float], list[float], list[float]]:
+    max_turns: int = 8,
+    run_autorater: bool = True,
+) -> tuple[list[float], list[float], list[int], list[int]]:
     """
-    Evaluate activation capping by comparing capped vs uncapped conversations.
+    Evaluate capping by comparing capped vs uncapped conversations.
 
     Args:
         model: Language model
         tokenizer: Tokenizer
-        transcript: Original conversation (we'll use user prompts only)
-        assistant_axis: Normalized Assistant Axis
-        layer: Layer for capping/projection
-        threshold: Capping threshold
-        mean_vector: Mean vector to subtract before projection (handles constant vector problem)
-        max_turns: Maximum number of assistant turns to evaluate
+        transcript: Original conversation (user messages are reused; assistant messages are
+                    regenerated)
+        analyzer: ConversationAnalyzer instance
+        axis_vec: Unit-normalized Assistant Axis
+        capping_layer: Layer for capping
+        threshold: Floor threshold for capping
+        max_turns: Maximum assistant turns to evaluate
+        run_autorater: Whether to compute risk scores
 
     Returns:
         Tuple of (uncapped_projections, capped_projections, uncapped_risks, capped_risks)
     """
-    # Extract user messages up to max_turns
-    user_messages = [msg["content"] for msg in transcript if msg["role"] == "user"][:max_turns]
+    user_messages = [msg for msg in transcript if msg["role"] == "user"][:max_turns]
 
-    uncapped_projections = []
-    capped_projections = []
-    uncapped_risks = []
-    capped_risks = []
-
-    # Generate both versions of the conversation
-    uncapped_responses = []
-    capped_responses = []
-
+    # Generate uncapped conversation
     print("Generating uncapped conversation...")
-    for i, user_msg in enumerate(tqdm(user_messages)):
-        # Build conversation history
-        history_prompt = ""
-        for j in range(i):
-            prev_user = user_messages[j]
-            prev_asst = uncapped_responses[j]
-            history_prompt += f"User: {prev_user}\n\nAssistant: {prev_asst}\n\n"
-        history_prompt += f"User: {user_msg}\n\nAssistant:"
-
-        # Generate uncapped
-        response = generate_with_steering(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=user_msg if i == 0 else history_prompt,
-            steering_vector=assistant_axis,
-            steering_layer=layer,
-            steering_coefficient=0.0,
-            max_new_tokens=150,
-            temperature=0.7,
-        )
-        uncapped_responses.append(response)
-
-    print("Generating capped conversation...")
-    for i, user_msg in enumerate(tqdm(user_messages)):
-        # Build conversation history
-        history_prompt = ""
-        for j in range(i):
-            prev_user = user_messages[j]
-            prev_asst = capped_responses[j]
-            history_prompt += f"User: {prev_user}\n\nAssistant: {prev_asst}\n\n"
-        history_prompt += f"User: {user_msg}\n\nAssistant:"
-
-        # Generate capped
+    uncapped_history: list[dict[str, str]] = []
+    for user_msg in tqdm(user_messages):
+        uncapped_history.append({"role": "user", "content": user_msg["content"]})
         response = generate_with_capping(
             model=model,
             tokenizer=tokenizer,
-            prompt=user_msg if i == 0 else history_prompt,
-            assistant_axis=assistant_axis,
-            mean_vector=mean_vector,
-            capping_layer=layer,
-            threshold=threshold,
-            max_new_tokens=150,
+            prompt=user_msg["content"],
+            axis_vec=axis_vec,
+            capping_layer=capping_layer,
+            threshold=float("-inf"),  # No capping (threshold = -inf never triggers)
+            max_new_tokens=100,
             temperature=0.7,
         )
-        capped_responses.append(response)
+        uncapped_history.append({"role": "assistant", "content": response})
+        t.cuda.empty_cache()
 
-    # Compute projections for uncapped
+    # Generate capped conversation
+    print("Generating capped conversation...")
+    capped_history: list[dict[str, str]] = []
+    for user_msg in tqdm(user_messages):
+        capped_history.append({"role": "user", "content": user_msg["content"]})
+        response = generate_with_capping(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=user_msg["content"],
+            axis_vec=axis_vec,
+            capping_layer=capping_layer,
+            threshold=threshold,
+            max_new_tokens=100,
+            temperature=0.7,
+        )
+        capped_history.append({"role": "assistant", "content": response})
+        t.cuda.empty_cache()
+
+    # Compute projections
     print("Computing projections...")
-    # Build transcript as message dicts
-    uncapped_transcript = []
-    for user_msg, asst_msg in zip(user_messages, uncapped_responses):
-        uncapped_transcript.append({"role": "user", "content": user_msg})
-        uncapped_transcript.append({"role": "assistant", "content": asst_msg})
+    t.cuda.empty_cache()
+    uncapped_projections = analyzer.project_onto_axis(uncapped_history)
+    t.cuda.empty_cache()
+    capped_projections = analyzer.project_onto_axis(capped_history)
+    t.cuda.empty_cache()
 
-    eval_analyzer = ConversationAnalyzer(
-        model=model,
-        tokenizer=tokenizer,
-        layer=layer,
-        assistant_axis=assistant_axis,
-        mean_vector=mean_vector,
-    )
-    uncapped_projections = eval_analyzer.project_onto_axis(uncapped_transcript)
-
-    # Compute projections for capped
-    capped_transcript = []
-    for user_msg, asst_msg in zip(user_messages, capped_responses):
-        capped_transcript.append({"role": "user", "content": user_msg})
-        capped_transcript.append({"role": "assistant", "content": asst_msg})
-
-    capped_projections = eval_analyzer.project_onto_axis(capped_transcript)
-
-    # Compute risk scores (sample every 2 assistant turns to save API calls)
-    print("Computing autorater scores...")
-    uncapped_asst_indices = [i for i, msg in enumerate(uncapped_transcript) if msg["role"] == "assistant"]
-    capped_asst_indices = [i for i, msg in enumerate(capped_transcript) if msg["role"] == "assistant"]
-
-    for i in tqdm(range(0, len(uncapped_asst_indices), 2)):
-        # Uncapped
-        risk_uncapped = rate_delusion_risk(uncapped_transcript, uncapped_asst_indices[i])
-        uncapped_risks.append(risk_uncapped)
-        time.sleep(0.2)
-
-        # Capped
-        risk_capped = rate_delusion_risk(capped_transcript, capped_asst_indices[i])
-        capped_risks.append(risk_capped)
-        time.sleep(0.2)
+    # Compute risk scores
+    uncapped_risks: list[int] = []
+    capped_risks: list[int] = []
+    if run_autorater:
+        print("Computing autorater scores...")
+        asst_indices_u = [i for i, m in enumerate(uncapped_history) if m["role"] == "assistant"]
+        asst_indices_c = [i for i, m in enumerate(capped_history) if m["role"] == "assistant"]
+        for i_u, i_c in tqdm(zip(asst_indices_u, asst_indices_c)):
+            uncapped_risks.append(rate_delusion_risk(uncapped_history, i_u))
+            time.sleep(0.1)
+            capped_risks.append(rate_delusion_risk(capped_history, i_c))
+            time.sleep(0.1)
 
     return uncapped_projections, capped_projections, uncapped_risks, capped_risks
 
 
 if MAIN:
-    # Run evaluation on unsafe (delusion) transcript
     uncapped_proj, capped_proj, uncapped_risk, capped_risk = evaluate_capping_on_transcript(
         model=model,
         tokenizer=tokenizer,
-        transcript=transcripts["unsafe"],
-        assistant_axis=assistant_axis,
-        layer=EXTRACTION_LAYER,
+        transcript=delusion_transcript,
+        analyzer=analyzer,
+        axis_vec=axis_vec,
+        capping_layer=EXTRACTION_LAYER,
         threshold=threshold,
-        mean_vector=mean_vector,
-        max_turns=10,  # Start small for testing
+        max_turns=6,
+        run_autorater=False,  # Set to True to also get risk scores
     )
 
-    # Plot projections
     turns = list(range(len(uncapped_proj)))
-    # Adjust threshold for centered projections: (threshold - mean_vector @ axis)
-    centered_threshold = threshold - (mean_vector @ assistant_axis).item()
-    fig1 = px.line(
-        title="Activation Capping Effect on Centered Projections",
-        labels={"x": "Turn Number", "y": "Centered Projection onto Assistant Axis"},
-    )
-    fig1.add_scatter(x=turns, y=uncapped_proj, name="Uncapped", mode="lines+markers")
-    fig1.add_scatter(x=turns, y=capped_proj, name="Capped", mode="lines+markers")
-    fig1.add_hline(y=centered_threshold, line_dash="dash", annotation_text="Threshold", line_color="red")
-    fig1.show()
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Plot risk scores
-    sampled_turns = list(range(0, len(turns), 2))
-    fig2 = px.line(
-        title="Activation Capping Effect on Delusion Risk",
-        labels={"x": "Turn Number", "y": "Delusion Risk Score (0-100, lower is better)"},
-    )
-    fig2.add_scatter(x=sampled_turns, y=uncapped_risk, name="Uncapped", mode="lines+markers")
-    fig2.add_scatter(x=sampled_turns, y=capped_risk, name="Capped", mode="lines+markers")
-    fig2.show()
+    axes[0].plot(turns, uncapped_proj, marker="o", label="Uncapped", linewidth=2)
+    axes[0].plot(turns, capped_proj, marker="s", label="Capped", linewidth=2)
+    axes[0].axhline(y=threshold, linestyle="--", color="red", label=f"Threshold ({threshold:.0f})")
+    axes[0].set_title("Projection onto Assistant Axis: Capped vs Uncapped")
+    axes[0].set_xlabel("Assistant Turn")
+    axes[0].set_ylabel("Projection (act @ axis_vec)")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
 
-    # Summary statistics
-    print("\n" + "=" * 80)
-    print("EVALUATION SUMMARY")
-    print("=" * 80)
-    print(f"Mean projection - Uncapped: {np.mean(uncapped_proj):.3f}")
-    print(f"Mean projection - Capped: {np.mean(capped_proj):.3f}")
-    print(f"Mean risk score - Uncapped: {np.mean(uncapped_risk):.1f}")
-    print(f"Mean risk score - Capped: {np.mean(capped_risk):.1f}")
-    print(f"\nReduction in drift: {(np.mean(capped_proj) - np.mean(uncapped_proj)):.3f}")
-    print(f"Reduction in risk: {(np.mean(uncapped_risk) - np.mean(capped_risk)):.1f} points")
+    if uncapped_risk:
+        axes[1].plot(turns, uncapped_risk, marker="o", label="Uncapped", color="red", linewidth=2)
+        axes[1].plot(turns, capped_risk, marker="s", label="Capped", color="green", linewidth=2)
+        axes[1].set_title("Delusion Risk: Capped vs Uncapped")
+        axes[1].set_xlabel("Assistant Turn")
+        axes[1].set_ylabel("Risk Score (0-100, lower is better)")
+        axes[1].set_ylim(0, 100)
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+    else:
+        axes[1].text(
+            0.5,
+            0.5,
+            "Run with run_autorater=True\nto see risk scores",
+            ha="center",
+            va="center",
+            transform=axes[1].transAxes,
+            fontsize=12,
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+    print(f"\nMean projection — Uncapped: {np.mean(uncapped_proj):.0f}, Capped: {np.mean(capped_proj):.0f}")
+    if uncapped_risk:
+        print(f"Mean risk — Uncapped: {np.mean(uncapped_risk):.1f}, Capped: {np.mean(capped_risk):.1f}")
 
 # %%
 
@@ -2069,51 +1834,6 @@ if MAIN:
 
 # %%
 
-def extract_response_activations_qwen(
-    model,
-    tokenizer,
-    system_prompts: list[str],
-    questions: list[str],
-    responses: list[str],
-    layer: int,
-) -> Float[Tensor, " num_examples d_model"]:
-    """
-    Extract mean activation over response tokens at a specific layer (for Qwen models).
-
-    Same as extract_response_activations from Section 1, but uses model.model.layers[layer]
-    instead of model.model.language_model.layers[layer] for the Qwen architecture.
-
-    Returns:
-        Batch of mean activation vectors of shape (num_examples, hidden_size)
-    """
-    assert len(system_prompts) == len(questions) == len(responses)
-    all_mean_activations = []
-
-    for system_prompt, question, response in zip(system_prompts, questions, responses):
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": response},
-        ]
-        full_prompt, response_start_idx = format_messages(messages, tokenizer)
-        tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
-
-        with t.inference_mode():
-            outputs = model(**tokens, output_hidden_states=True)
-
-        hidden_states = outputs.hidden_states[layer]  # (1, seq_len, hidden_size)
-        seq_len = hidden_states.shape[1]
-        response_mask = t.arange(seq_len, device=hidden_states.device) >= response_start_idx
-        mean_activation = (hidden_states[0] * response_mask[:, None]).sum(0) / response_mask.sum()
-        all_mean_activations.append(mean_activation.cpu())
-
-        del outputs
-        t.cuda.empty_cache()
-
-    return t.stack(all_mean_activations)
-
-# %%
-
 def extract_all_layer_activations_qwen(
     model,
     tokenizer,
@@ -2122,9 +1842,10 @@ def extract_all_layer_activations_qwen(
     responses: list[str],
 ) -> Float[Tensor, "num_examples num_layers d_model"]:
     """
-    Extract mean activation over response tokens at ALL layers (for Qwen models).
+    Extract mean activation over response tokens at ALL layers (for Qwen models), i.e. the residual
+    stream values at the end of each layer (post attention & MLP).
 
-    Like extract_response_activations_qwen but returns activations at every layer,
+    Like extract_response_activations but returns activations at every layer,
     needed for contrastive vector extraction where we want per-layer vectors.
 
     Returns:
@@ -2149,7 +1870,8 @@ def extract_all_layer_activations_qwen(
             outputs = model(**tokens, output_hidden_states=True)
 
         # outputs.hidden_states is a tuple of (num_layers+1) tensors (including embedding layer)
-        # We skip layer 0 (embedding) and use layers 1..num_layers
+        # We skip layer 0 (embedding) and use layers 1..num_layers, so we get the residual stream
+        # values at the end of each layer.
         layer_means = []
         for layer_idx in range(1, num_layers + 1):
             hidden_states = outputs.hidden_states[layer_idx]  # (1, seq_len, hidden_size)
@@ -2219,6 +1941,8 @@ if MAIN:
     print(f"  {pos_prompt[:120]}...")
     print("\nNegative system prompt:")
     print(f"  {neg_prompt[:120]}...")
+
+    tests.test_construct_system_prompt(construct_system_prompt)
 
 # %%
 
@@ -2491,7 +2215,7 @@ if MAIN:
     norms = sycophantic_vectors.norm(dim=1)
     fig = px.line(
         x=list(range(QWEN_NUM_LAYERS)),
-        y=norms.numpy(),
+        y=norms.float().numpy(),
         title="Sycophancy Vector Norm Across Layers",
         labels={"x": "Layer", "y": "Vector Norm"},
     )
@@ -2596,7 +2320,9 @@ if MAIN:
     after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
     after_diff = (after_hidden - baseline_hidden).norm().item()
     print(f"Difference after context manager exit: {after_diff:.6f} (should be ~0)")
-    print("\nAll ActivationSteerer tests passed!")
+    print("\nAll ActivationSteerer inline tests passed!")
+
+    tests.test_activation_steerer_hook(ActivationSteerer)
 
 # %%
 
@@ -2765,7 +2491,7 @@ def compute_trait_projections(
         List of projection values (one per response)
     """
     # Extract activations at the target layer
-    activations = extract_response_activations_qwen(
+    activations = extract_response_activations(
         model, tokenizer, system_prompts, questions, responses, layer
     )  # (num_examples, d_model)
 

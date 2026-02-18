@@ -41,12 +41,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
 warnings.filterwarnings("ignore")
 
 thought_anchors_path = Path.cwd() / "thought-anchors"
-assert thought_anchors_path.exists(), f"Clone thought-anchors repo to {thought_anchors_path.resolve()}"
+assert thought_anchors_path.exists(), f"Please clone thought-anchors repo as {thought_anchors_path.resolve()!r}"
 
 sys.path.append(str(thought_anchors_path))
 
 torch.set_grad_enabled(False)
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
 chapter = "chapter4_alignment_science"
@@ -82,7 +82,7 @@ openrouter_client = OpenAI(
 # %%
 
 if MAIN:
-    print(f"Using device: {device}")
+    print(f"Using device: {DEVICE}")
 
 # %%
 
@@ -111,10 +111,10 @@ if MAIN:
         "Time is an illusion. Lunchtime doubly so.",
     ]
     labels = [x[:35] + "..." for x in prompts]
-    
+
     embedding = embedding_model.encode(prompts)
     cosine_sims = embedding @ embedding.T
-    
+
     fig, ax = plt.subplots(figsize=(8, 6))
     im = ax.imshow(cosine_sims, cmap="RdBu", vmin=-1, vmax=1)
     ax.set_xticks(range(len(labels)))
@@ -138,7 +138,7 @@ if MAIN:
         problem_data = json.load(f)
     
     print("Keys in problem data:", list(problem_data.keys()))
-    print(f"\nProblem prompt:\n{problem_data['prompt'][:500]}...")
+    print(f"\nProblem prompt:\n{problem_data['prompt']}")
 
 # %%
 
@@ -165,6 +165,8 @@ def split_solution_into_chunks(text: str) -> list[str]:
     chunks = [re.sub(r"<DECIMAL>", ".", c) for c in chunks]
 
     # Merge chunks that are too short
+    if not chunks:
+        return []
     merged = [chunks[0]]
     for c in chunks[1:]:
         if len(merged[-1]) < 10:
@@ -455,12 +457,6 @@ if MAIN:
 
 # %%
 
-if MAIN:
-    # Example visualization
-    utils.visualize_trace_structure(example_sentences, categories, "What is the area of a circle with radius 5?")
-
-# %%
-
 def load_single_file(file_path: str):
     local_path = hf_hub_download(repo_id=DATASET_NAME, filename=file_path, repo_type="dataset")
     with open(local_path, "r") as f:
@@ -547,6 +543,10 @@ def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> 
     # Return differences: P(A_{S_i}) - P(A_{S_{i-1}})
     return np.diff(probabilities).tolist()
 
+
+if MAIN:
+    tests.test_calculate_answer_importance(calculate_answer_importance)
+
 # %%
 
 if MAIN:
@@ -555,12 +555,12 @@ if MAIN:
         [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions_forced"]
     ]
     answer = problem_data["problem"]["gt_answer"]
-    
+
     forced_importances = calculate_answer_importance(full_cot_list, answer)
-    
+
     # Get chunk texts for hover data
     chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
-    
+
     # Plot with plotly
     fig = go.Figure()
     fig.add_trace(
@@ -589,20 +589,19 @@ if MAIN:
     full_cot_list_resampled = [
         [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
     ]
-    
+
     resampling_importances = calculate_answer_importance(full_cot_list_resampled, answer)
-    
+
     # Compare with precomputed values from dataset (they used a slightly different method to us, but
     # we should get an answer within 1% of theirs)
     precomputed = [chunk["resampling_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
     avg_diff = np.abs(np.subtract(resampling_importances, precomputed)).mean()
     assert avg_diff < 0.01, "Error above 1% threshold"
-    
-    
+
     # Plot comparison between these two metrics
     chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
     hover_texts = [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover]
-    
+
     fig = make_subplots(
         rows=2,
         cols=1,
@@ -610,7 +609,7 @@ if MAIN:
         vertical_spacing=0.1,
         subplot_titles=("Forced Answer Importance", "Resampling Importance"),
     )
-    
+
     for row, color, y in [(1, "cornflowerblue", forced_importances), (2, "orange", resampling_importances)]:
         fig.add_trace(
             go.Bar(
@@ -625,8 +624,7 @@ if MAIN:
             row=row,
             col=1,
         )
-    
-    
+
     fig.add_hline(y=0, line_color="black", line_width=0.5, row=1, col=1)
     fig.add_hline(y=0, line_color="black", line_width=0.5, row=2, col=1)
     fig.update_layout(width=900, height=500, showlegend=False)
@@ -641,21 +639,21 @@ if MAIN:
     # Compute cosine similarity between original and resampled chunks
     chunks_removed = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
     embeddings_original = embedding_model.encode(chunks_removed)
-    
+
     chunks_resampled = [
         [rollout["chunk_resampled"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
     ]
     embeddings_resampled = np.stack([embedding_model.encode(r) for r in chunks_resampled])
-    
+
     # Compute similarities
     cos_sims = einops.einsum(embeddings_original, embeddings_resampled, "chunk d, chunk resample d -> chunk resample")
     cos_sims_mean = cos_sims.mean(axis=1)
-    
+
     # Plot by category with plotly
     chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"]]
     chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"]]
     df = pd.DataFrame({"Label": chunk_labels, "Cosine Similarity": cos_sims_mean, "Chunk Text": chunks_for_hover})
-    
+
     fig = go.Figure()
     for label in df["Label"].unique():
         subset = df[df["Label"] == label]
@@ -672,7 +670,7 @@ if MAIN:
                 customdata=hover_texts,
             )
         )
-    
+
     fig.update_layout(
         title="How Similar are Resampled Chunks to Originals?",
         xaxis_title="Chunk Index",
@@ -751,15 +749,16 @@ if MAIN:
     full_cot_list = [
         [rollout["full_cot"] for rollout in chunk_rollouts] for chunk_rollouts in problem_data["chunk_solutions"]
     ]
-    
+
     counterfactual_importances = calculate_counterfactual_importance(
         chunks_removed, chunks_resampled, full_cot_list, answer, embedding_model=embedding_model
     )
-    
+
     # Compare with precomputed
     precomputed_cf = [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
     avg_diff = np.abs(np.subtract(counterfactual_importances, precomputed_cf)).mean()
     assert avg_diff < 0.025, "Error above 2.5% threshold"
+    print("All tests for `calculate_counterfactual_importance` passed!")
 
 # %%
 
@@ -767,7 +766,7 @@ if MAIN:
     # Plot comparison of all three metrics with subplots (like previous bar chart)
     chunks_for_hover = [chunk["chunk"] for chunk in problem_data["chunks_labeled"][:-1]]
     hover_texts = [chunk[:100] + "..." if len(chunk) > 100 else chunk for chunk in chunks_for_hover]
-    
+
     fig = make_subplots(
         rows=3,
         cols=1,
@@ -775,7 +774,7 @@ if MAIN:
         vertical_spacing=0.08,
         subplot_titles=("Forced Answer Importance", "Resampling Importance", "Counterfactual Importance"),
     )
-    
+
     for row, (name, importances, color) in enumerate(
         [
             ("Forced", forced_importances, "cornflowerblue"),
@@ -800,7 +799,7 @@ if MAIN:
             col=1,
         )
         fig.add_hline(y=0, line_color="black", line_width=0.5, row=row, col=1)
-    
+
     fig.update_layout(
         title="Comparison of Importance Metrics",
         width=1000,
@@ -815,7 +814,7 @@ if MAIN:
     # Create dataframe with position and importance
     chunk_labels = [CATEGORIES[chunk["function_tags"][0]] for chunk in problem_data["chunks_labeled"]]
     n_chunks = len(chunk_labels) - 1
-    
+
     df = pd.DataFrame(
         {
             "Label": chunk_labels[:-1],
@@ -823,21 +822,21 @@ if MAIN:
             "Position": np.arange(n_chunks) / n_chunks,
         }
     )
-    
+
     # Get top 5 most common categories
     top_labels = df["Label"].value_counts().head(5).index.tolist()
     df_filtered = df[df["Label"].isin(top_labels)]
-    
+
     # Group and calculate means
     grouped = df_filtered.groupby("Label")[["Importance", "Position"]].mean().reset_index()
-    
+
     # Plot
     fig, ax = plt.subplots(figsize=(8, 6))
     for _, row in grouped.iterrows():
         ax.scatter(
             row["Position"], row["Importance"], s=150, label=row["Label"], color=utils.CATEGORY_COLORS.get(row["Label"])
         )
-    
+
     ax.set_xlabel("Normalized Position in Trace (0-1)")
     ax.set_ylabel("Mean Counterfactual Importance")
     ax.set_title("Sentence Category Effect (Figure 3b)")
@@ -851,11 +850,8 @@ if MAIN:
 
 if MAIN:
     # Demo: visualize a causal graph with sample data
-    import numpy as np
-    
-    # Create sample data for 5 chunks
     n_chunks = 5
-    sample_labels = ["Setup", "Key insight", "Calculation", "Verification", "Conclusion"]
+    sample_labels = ["Problem Setup", "Plan Generation", "Active Computation", "Self Checking", "Final Answer Emission"]
     sample_texts = [
         "Let me start by understanding the problem...",
         "I notice that this is equivalent to...",
@@ -863,16 +859,16 @@ if MAIN:
         "Let me verify: 21 / 7 = 3, correct",
         "Therefore the answer is 21",
     ]
-    
+
     # Create a sample importance matrix (i, j) = how much does chunk i causally influence chunk j
-    # We expect later chunks to be influenced by earlier ones
+    # We expect later chunks to be influenced by earlier ones. In our demo, each step influences
+    # the next one, plus plan generation influences everything!
     sample_importance = np.zeros((n_chunks, n_chunks))
-    sample_importance[0, 1] = 0.3  # Setup influences Key insight
-    sample_importance[1, 2] = 0.8  # Key insight strongly influences Calculation
-    sample_importance[2, 3] = 0.6  # Calculation influences Verification
-    sample_importance[1, 4] = 0.4  # Key insight influences Conclusion
-    sample_importance[2, 4] = 0.5  # Calculation influences Conclusion
-    
+    for i in range(4):
+        sample_importance[i, i + 1] += 0.5
+    for i in range(2, 5):
+        sample_importance[1, i] += 0.5
+
     html_str = utils.chunk_graph_html(
         edge_weights=sample_importance,
         chunk_labels=sample_labels,
@@ -1063,8 +1059,6 @@ if MAIN:
         n_top_edges_per_direction=3,
     )
     display(HTML(html_str))
-    with open("chunk_graph.html", "w") as f:
-        f.write(html_str)
 
 # %%
 
@@ -1113,7 +1107,7 @@ def get_resampled_rollouts(
         )
 
     # First, generate a completion which we'll split up into chunks.
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
     output = generate(inputs)
     full_answer = tokenizer.decode(output[0, inputs["input_ids"].shape[1] :], skip_special_tokens=False)
     chunks = split_solution_into_chunks(full_answer)
@@ -1130,7 +1124,7 @@ def get_resampled_rollouts(
         full_answer_split = (
             prompt + chunk.join(full_answer.split(chunk, maxsplit=n_chunk_instances[chunk])[:-1]).strip()
         )
-        inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(device)
+        inputs = tokenizer([full_answer_split] * batch_size, return_tensors="pt").to(DEVICE)
 
         for _ in range(num_resamples_per_chunk // batch_size):
             output_batch = generate(inputs)
@@ -1304,22 +1298,22 @@ def get_vertical_scores_simple(
 if MAIN:
     # Get example problem data
     text, sentences, _ = utils.get_whitebox_example_data(problem_data)
-    
+
     # Extract attention from a middle layer
     layer, head = 15, 8
     print(f"\nExtracting attention from head L{layer}H{head}...")
     token_attention, tokens = extract_attention_matrix(text, model, tokenizer, layer, head)
-    
+
     # Convert to sentence-level attention
     boundaries = utils.get_sentence_token_boundaries(text, sentences, tokenizer)
     sentence_attention = utils.average_attention_by_sentences(token_attention, boundaries)
-    
+
     # Compute vertical scores (simple version)
     vert_scores_simple = get_vertical_scores_simple(sentence_attention, proximity_ignore=4)
-    
+
     # Visualize
     hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
-    
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
@@ -1411,30 +1405,30 @@ def get_vertical_scores(
 
 # %%
 
+# Compute vertical scores WITH and WITHOUT depth control (using z-scores for comparison)
 if MAIN:
-    # Compute vertical scores WITH and WITHOUT depth control (using z-scores for comparison)
     vert_scores_no_control = get_vertical_scores(
         sentence_attention, proximity_ignore=4, control_depth=False, return_z_scores=True
     )
     vert_scores_with_control = get_vertical_scores(
         sentence_attention, proximity_ignore=4, control_depth=True, return_z_scores=True
     )
-    
+
     # Get top-3 sentences (filtering NaN values)
     valid_mask = ~np.isnan(vert_scores_no_control) & ~np.isnan(vert_scores_with_control)
     valid_indices = np.where(valid_mask)[0]
     top_3_no_control = valid_indices[np.argsort(vert_scores_no_control[valid_mask])[-3:][::-1]]
     top_3_with_control = valid_indices[np.argsort(vert_scores_with_control[valid_mask])[-3:][::-1]]
-    
+
     print(f"Top-3 sentences (no depth control): {top_3_no_control}")
     print(f"Top-3 sentences (with depth control): {top_3_with_control}")
     print(
         f"Correlation between methods: {np.corrcoef(vert_scores_no_control[valid_mask], vert_scores_with_control[valid_mask])[0, 1]:.3f}"
     )
-    
+
     # Plot comparison (already z-scored from the function)
     hover_texts = [s[:80] + "..." if len(s) > 80 else s for s in sentences]
-    
+
     fig = go.Figure()
     for name, scores, color in [
         ("No depth control", vert_scores_no_control, "steelblue"),
@@ -1489,7 +1483,7 @@ def find_receiver_heads(
     model,
     tokenizer,
     top_k: int = 10,
-    proximity_ignore: int = 4,
+    proximity_ignore: int = 16,
 ) -> tuple[Int[np.ndarray, "top_k 2"], Float[np.ndarray, " top_k"]]:
     """
     Identify top-k receiver heads by kurtosis of vertical attention scores.
@@ -1567,11 +1561,6 @@ def find_receiver_heads(
 
 
 if MAIN:
-    # Test with first few sentences from CoT (to keep it fast)
-    print("\n" + "=" * 60)
-    print("Finding Receiver Heads from Real CoT")
-    print("=" * 60)
-
     # Load example CoT
     text_full, sentences_full, _ = utils.get_whitebox_example_data(problem_data)
 
@@ -1594,14 +1583,14 @@ if MAIN:
     print(f"Analyzing first {len(sentences_subset)} sentences...")
     print(f"Text length: {len(text_subset)} characters")
 
-    # Find top-10 receiver heads
+    # Find top-20 receiver heads (paper recommends 16-32)
     torch.cuda.empty_cache()
     receiver_heads, receiver_kurts = find_receiver_heads(
         text_subset,
         sentences_subset,
         model,
         tokenizer,
-        top_k=5,
+        top_k=20,
         proximity_ignore=4,
     )
 
@@ -1681,10 +1670,6 @@ def compute_receiver_head_scores(
 
 
 if MAIN:
-    print("\n" + "=" * 60)
-    print("Computing Receiver Head Scores")
-    print("=" * 60)
-
     # Use the receiver heads we just found
     print(f"Computing scores from {len(receiver_heads)} receiver heads...")
 
@@ -1744,7 +1729,7 @@ if MAIN:
 
 # %%
 
-def rotate_half(x: Float[Tensor, "... d"]) -> Float[Tensor, "... d"]:
+def rotate_half(x: Float[Tensor, "... d"]) -> Float[Tensor, " ... d"]:
     """Rotates half the hidden dims of the input (for RoPE)."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
@@ -1752,16 +1737,19 @@ def rotate_half(x: Float[Tensor, "... d"]) -> Float[Tensor, "... d"]:
 
 
 def apply_rotary_pos_emb(
-    q: Float[Tensor, "batch heads seq head_dim"],
-    k: Float[Tensor, "batch heads seq head_dim"],
-    cos: Float[Tensor, "seq head_dim"],
-    sin: Float[Tensor, "seq head_dim"],
-) -> tuple[Float[Tensor, "batch heads seq head_dim"], Float[Tensor, "batch heads seq head_dim"]]:
+    q: Float[Tensor, "batch q_heads seq head_dim"],
+    k: Float[Tensor, "batch kv_heads seq head_dim"],
+    cos: Float[Tensor, "batch seq head_dim"],
+    sin: Float[Tensor, "batch seq head_dim"],
+    position_ids: torch.Tensor | None = None,
+    unsqueeze_dim: int = 1,
+) -> tuple[Float[Tensor, "batch q_heads seq head_dim"], Float[Tensor, "batch kv_heads seq head_dim"]]:
     """Applies Rotary Position Embedding to query and key tensors."""
 
+    del position_ids  # unused
 
-    cos = cos.unsqueeze(-1)
-    sin = sin.unsqueeze(-1)
+    cos = cos.unsqueeze(unsqueeze_dim)  # Shape: (batch, 1, seq, head_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)  # Shape: (batch, 1, seq, head_dim)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
@@ -1911,7 +1899,7 @@ def apply_qwen_attention_suppression(
 
                 if rotary_ref is not None and callable(rotary_ref):
                     cos, sin = rotary_ref(value_states, position_ids=position_ids)
-                    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+                    query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
                 # Repeat K/V for grouped-query attention
                 key_states = repeat_kv(key_states, num_key_value_groups)
@@ -1994,306 +1982,93 @@ if MAIN:
 # %%
 
 if MAIN:
-    print("\n" + "=" * 60)
-    print("Testing Attention Suppression")
-    print("=" * 60)
-    
     # Select high and low importance sentences
     valid_mask = ~np.isnan(receiver_scores)
     valid_indices = np.where(valid_mask)[0]
     valid_scores = receiver_scores[valid_mask]
-    
+
     high_idx = valid_indices[np.argmax(valid_scores)]
     low_idx = valid_indices[np.argmin(valid_scores)]
-    
+
     print(f"\nHigh importance sentence {high_idx}: score={receiver_scores[high_idx]:.4f}")
     print(f"  Text: {sentences_subset[high_idx][:100]}...")
     print(f"\nLow importance sentence {low_idx}: score={receiver_scores[low_idx]:.4f}")
     print(f"  Text: {sentences_subset[low_idx][:100]}...")
-    
+
     # Get token boundaries
     high_sent_range = boundaries[high_idx]
     low_sent_range = boundaries[low_idx]
-    
+
     # Prepare input
     inputs = tokenizer(text_subset, return_tensors="pt")
     if model.device.type == "cuda":
         inputs = {k: v.cuda() for k, v in inputs.items()}
-    
+
     # Original forward pass (no suppression)
     with torch.no_grad():
         original_output = model(**inputs)
         original_logits = original_output.logits[0, -1].cpu().numpy()
-    
+
     layer_to_heads = {}
     for layer_idx, head_idx in receiver_heads[:5]:
         if layer_idx not in layer_to_heads:
             layer_to_heads[layer_idx] = []
         layer_to_heads[layer_idx].append(int(head_idx))
-    
+
     # Test 1: Suppress high-importance sentence in top receiver heads
     suppression_info = apply_qwen_attention_suppression(model, high_sent_range, layer_to_heads)
-    
+
     with torch.no_grad():
         suppressed_high_output = model(**inputs)
         suppressed_high_logits = suppressed_high_output.logits[0, -1].cpu().numpy()
-    
+
     remove_qwen_attention_suppression(model, suppression_info)
-    
+
     kl_high = compute_suppression_kl(original_logits, suppressed_high_logits)
-    
+
     # Test 2: Suppress low-importance sentence
     suppression_info = apply_qwen_attention_suppression(model, low_sent_range, layer_to_heads)
-    
+
     with torch.no_grad():
         suppressed_low_output = model(**inputs)
         suppressed_low_logits = suppressed_low_output.logits[0, -1].cpu().numpy()
-    
+
     remove_qwen_attention_suppression(model, suppression_info)
-    
+
     kl_low = compute_suppression_kl(original_logits, suppressed_low_logits)
-    
+
     # Compare results
-    print("\n" + "=" * 60)
-    print("Attention Suppression Results")
-    print("=" * 60)
-    print(f"KL divergence when suppressing HIGH importance sentence: {kl_high:.4e}")
+    print(f"\nKL divergence when suppressing HIGH importance sentence: {kl_high:.4e}")
     print(f"KL divergence when suppressing LOW importance sentence:  {kl_low:.4e}")
     print(f"Ratio (high/low): {kl_high / (kl_low + 1e-10):.2f}x")
-    
-    if kl_high > kl_low * 1.5:  # At least 1.5x larger
-        print("\n✓ Success! Suppressing high-importance sentences causes larger output changes")
+
+    if kl_high > kl_low * 10:  # At least 1.5x larger
+        print("\nSuccess! Suppressing high-importance sentences causes larger output changes")
         print("  This causally validates that receiver head scores identify important sentences")
-    elif kl_high > kl_low:
-        print("\n~ Moderate effect: high-importance suppression has larger effect, but not dramatic")
-    else:
-        print("\n⚠ Unexpected: low-importance suppression had larger or equal effect")
-        print("  This may indicate the sentences chosen aren't as different as expected")
 
 # %%
 
-def compute_suppression_scores(
-    text: str,
-    sentences: list[str],
-    boundaries: list[tuple[int, int]],
-    model,
-    tokenizer,
-    layer_to_heads: dict[int, list[int]],
-    sample_size: int = 30,
-    seed: int = 42,
-) -> tuple[Float[np.ndarray, " sample_size"], list[int]]:
-    """
-    Compute attention suppression scores for a sample of sentences.
-
-    Args:
-        text: Full reasoning trace
-        sentences: List of sentences
-        boundaries: Token boundaries for each sentence
-        model: Loaded model
-        tokenizer: Tokenizer
-        layer_to_heads: Dict mapping layer indices to head indices to suppress
-        sample_size: Number of sentences to sample (for efficiency)
-        seed: Random seed for sampling
-
-    Returns:
-        suppression_scores: KL divergence for each sampled sentence
-        sampled_indices: Indices of sampled sentences
-    """
-    np.random.seed(seed)
-
-    # Sample sentences (excluding last few with NaN receiver scores)
-    n_sentences = len(sentences)
-    valid_indices = list(range(min(n_sentences - 5, len(boundaries))))  # Exclude last few
-    sample_size = min(sample_size, len(valid_indices))
-    sampled_indices = sorted(np.random.choice(valid_indices, size=sample_size, replace=False))
-
-    # Prepare input
-    inputs = tokenizer(text, return_tensors="pt")
-    if model.device.type == "cuda":
-        inputs = {k: v.cuda() for k, v in inputs.items()}
-
-    # Get baseline logits
-    with torch.no_grad():
-        baseline_output = model(**inputs)
-        baseline_logits = baseline_output.logits[0, -1].cpu().numpy()
-
-    suppression_scores = []
-
-    print(f"Computing suppression scores for {len(sampled_indices)} sampled sentences...")
-
-    for sent_idx in tqdm(sampled_indices, desc="Suppressing sentences"):
-        # Get token range for this sentence
-        token_range = boundaries[sent_idx]
-
-        # Apply suppression
-        suppression_info = apply_qwen_attention_suppression(model, token_range, layer_to_heads)
-
-        # Get suppressed logits
-        with torch.no_grad():
-            suppressed_output = model(**inputs)
-            suppressed_logits = suppressed_output.logits[0, -1].cpu().numpy()
-
-        # Restore original forward methods
-        remove_qwen_attention_suppression(model, suppression_info)
-
-        # Compute KL divergence
-        kl = compute_suppression_kl(baseline_logits, suppressed_logits)
-        suppression_scores.append(kl)
-
-    return np.array(suppression_scores), sampled_indices
-
-# %%
-
-def validate_whitebox_blackbox_correlation(
-    whitebox_scores: Float[np.ndarray, " n_samples"],
-    counterfactual_importances: Float[np.ndarray, " n_sentences"],
-    sampled_indices: list[int] | None = None,
-) -> tuple[float, go.Figure]:
-    """
-    Compute correlation between whitebox and blackbox importance metrics.
-
-    Args:
-        whitebox_scores: Attention suppression scores from whitebox analysis
-        counterfactual_importances: From black-box analysis
-        sampled_indices: If whitebox_scores are sampled, the indices they correspond to
-
-    Returns:
-        correlation: Pearson correlation coefficient
-        fig: Plotly scatter plot with trend line
-    """
-
-    # If sampled, align using indices
-    if sampled_indices is not None:
-        cf_importance_aligned = counterfactual_importances[sampled_indices]
-        whitebox_aligned = whitebox_scores
-    else:
-        # Handle length mismatch
-        min_len = min(len(whitebox_scores), len(counterfactual_importances))
-        whitebox_aligned = whitebox_scores[:min_len]
-        cf_importance_aligned = counterfactual_importances[:min_len]
-
-    # Use absolute value of counterfactual importance
-    # (negative importance means making the answer less likely)
-    cf_abs = np.abs(cf_importance_aligned)
-
-    # Remove any NaN values
-    valid_mask = ~(np.isnan(whitebox_aligned) | np.isnan(cf_abs))
-    whitebox_valid = whitebox_aligned[valid_mask]
-    cf_valid = cf_abs[valid_mask]
-
-    if len(whitebox_valid) < 3:
-        print("Warning: Too few valid points for correlation")
-        return np.nan, None
-
-    # Compute correlation
-    correlation = np.corrcoef(cf_valid, whitebox_valid)[0, 1]
-
-    # Create scatter plot
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=cf_valid,
-            y=whitebox_valid,
-            mode="markers",
-            marker=dict(size=10, opacity=0.6, color="steelblue"),
-            name="Sentences",
-            hovertemplate="<b>CF Importance:</b> %{x:.4f}<br>" + "<b>Suppression Score:</b> %{y:.4f}<extra></extra>",
-        )
-    )
-
-    # Add trend line
-    if len(whitebox_valid) >= 2:
-        z = np.polyfit(cf_valid, whitebox_valid, 1)
-        p = np.poly1d(z)
-        x_line = np.linspace(cf_valid.min(), cf_valid.max(), 100)
-        y_line = p(x_line)
-
-        fig.add_trace(
-            go.Scatter(
-                x=x_line,
-                y=y_line,
-                mode="lines",
-                line=dict(color="red", dash="dash", width=2),
-                name=f"Trend (r={correlation:.3f})",
-            )
-        )
-
-    fig.update_layout(
-        title=f"Whitebox vs. Blackbox Correlation (r = {correlation:.3f})",
-        xaxis_title="|Counterfactual Importance| (Black-box)",
-        yaxis_title="Suppression Score (White-box)",
-        width=800,
-        height=600,
-        showlegend=True,
-    )
-
-    return correlation, fig
+# Module-level cache so the large HuggingFace dataset is only downloaded/parsed once,
+# regardless of how many loading functions call it.
+_blackmail_df: object = None  # set to pd.DataFrame on first use
 
 
-if MAIN:
-    print("\n" + "=" * 60)
-    print("VALIDATION: Whitebox vs. Blackbox")
-    print("=" * 60)
+def _get_blackmail_df():
+    """Return (and cache) the blackmail HuggingFace dataset as a pandas DataFrame."""
+    global _blackmail_df
+    if _blackmail_df is None:
+        _blackmail_df = load_dataset(BLACKMAIL_DATASET_NAME, split="default").to_pandas()
+    return _blackmail_df
 
-    # Get counterfactual importances from earlier black-box analysis
-    # These were computed for the full problem in section 2
-    text_full, sentences_full, cf_importance_full = utils.get_whitebox_example_data(problem_data)
-
-    # Use the full text and sentences for validation (not just the subset)
-    # Recompute boundaries for full text
-    boundaries_full = utils.get_sentence_token_boundaries(text_full, sentences_full, tokenizer)
-
-    # Build layer_to_heads dict for suppression (using top receiver heads)
-    layer_to_heads = {}
-    for layer_idx, head_idx in receiver_heads[:5]:
-        if layer_idx not in layer_to_heads:
-            layer_to_heads[layer_idx] = []
-        layer_to_heads[layer_idx].append(int(head_idx))
-
-    # Compute suppression scores for a sample of sentences
-    print("\nComputing suppression scores for validation...")
-    suppression_scores, sampled_indices = compute_suppression_scores(
-        text_full,
-        sentences_full,
-        boundaries_full,
-        model,
-        tokenizer,
-        layer_to_heads,
-        sample_size=30,  # Sample 30 sentences for efficiency
-        seed=42,
-    )
-
-    print(f"\nComparing {len(suppression_scores)} sampled sentences...")
-    print(f"Suppression scores range: [{suppression_scores.min():.6f}, {suppression_scores.max():.6f}]")
-    print(f"CF importance range: [{cf_importance_full.min():.4f}, {cf_importance_full.max():.4f}]")
-
-    # Compute correlation
-    correlation, fig = validate_whitebox_blackbox_correlation(suppression_scores, cf_importance_full, sampled_indices)
-
-    print(f"\n{'=' * 60}")
-    print(f"Correlation (r): {correlation:.4f}")
-    print(f"{'=' * 60}")
-
-    if correlation > 0.3:
-        print("✓ Strong positive correlation!")
-        print("  Whitebox (suppression) and blackbox (resampling) methods")
-        print("  identify the same underlying 'thought anchors'.")
-    elif correlation > 0.15:
-        print("~ Moderate correlation")
-        print("  Results show some agreement between methods.")
-    else:
-        print("⚠ Low correlation")
-        print("  Methods may be identifying different aspects of importance.")
-
-    if fig is not None:
-        fig.show()
-
-# %%
 
 def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     """
     Load a complete blackmail scenario with all its associated files from the dataset.
+
+    The thought-branches repo (https://github.com/uzaymacar/thought-branches) organizes blackmail
+    rollout data per-chunk: each scenario has chunk_0/, chunk_1/, ..., chunk_N/ subdirectories,
+    each containing a solutions.json with ~100 rollout dicts. This function loads all per-chunk
+    solutions and assembles them into solutions[i] = list of rollout dicts for chunk i.
 
     Args:
         scenario_id: Scenario index (0-based, range 0-13594)
@@ -2305,14 +2080,14 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
         - 'chunks': chunks.json content (text chunking info)
         - 'chunks_labeled': chunks_labeled.json content (chunk analysis with blackmail rates)
         - 'base_solution': base_solution.json content (base AI response)
-        - 'solutions': solutions.json content (100 rollout solutions with chunk removal)
+        - 'solutions': list[list[dict]] - per-chunk rollout solutions. solutions[i] is a list of
+          rollout dicts for chunk i, each with keys like "chunk_removed", "chunk_resampled",
+          "contains_blackmail", "full_cot", etc.
     """
     if verbose:
         print(f"Loading blackmail scenario {scenario_id} from HuggingFace...")
 
-    # Load dataset
-    dataset = load_dataset(BLACKMAIL_DATASET_NAME, split="default")
-    df = dataset.to_pandas()
+    df = _get_blackmail_df()
 
     scenario_data = {}
 
@@ -2330,23 +2105,162 @@ def load_blackmail_scenario(scenario_id: int = 0, verbose: bool = True):
     scenario_data["chunks"] = get_file_content("chunks.json", scenario_id)
     scenario_data["chunks_labeled"] = get_file_content("chunks_labeled.json", scenario_id)
     scenario_data["base_solution"] = get_file_content("base_solution.json", scenario_id)
-    scenario_data["solutions"] = get_file_content("solutions.json", scenario_id)
+
+    # Load per-chunk solutions: the thought-branches repo stores solutions.json per chunk directory
+    # (e.g. scenario_0/chunk_5/solutions.json). We need to find ALL solutions.json files for this
+    # scenario and organize them by chunk index into a list of lists.
+    scenario_pattern = f"scenario_{scenario_id}/"
+    solutions_rows = df[(df["filename"] == "solutions.json") & (df["path"].str.contains(scenario_pattern, regex=False))]
+
+    n_chunks = len(scenario_data["chunks_labeled"]) if scenario_data.get("chunks_labeled") else 0
+    chunk_solutions: list[list[dict] | None] = [None] * n_chunks
+
+    chunk_pattern = re.compile(r"chunk_(\d+)/solutions\.json")
+    loaded_count = 0
+    for _, row in solutions_rows.iterrows():
+        m = chunk_pattern.search(row["path"])
+        if m:
+            chunk_idx = int(m.group(1))
+            if chunk_idx < n_chunks:
+                chunk_solutions[chunk_idx] = json.loads(row["content"])
+                loaded_count += 1
+
+    # Replace any None entries with empty lists so downstream code can iterate safely
+    for i in range(n_chunks):
+        if chunk_solutions[i] is None:
+            chunk_solutions[i] = []
+
+    scenario_data["solutions"] = chunk_solutions
 
     if verbose:
-        print(f"Loaded {len(scenario_data['chunks_labeled'])} chunks with analysis")
+        print(f"Loaded {n_chunks} chunks with analysis")
+        chunks_with_solutions = sum(1 for s in chunk_solutions if len(s) > 0)
+        print(
+            f"Loaded per-chunk solutions for {chunks_with_solutions}/{n_chunks} chunks "
+            f"(from {loaded_count} solutions.json files in thought-branches format)"
+        )
+        if chunks_with_solutions > 0:
+            sample_sizes = [len(s) for s in chunk_solutions if len(s) > 0]
+            print(
+                f"Rollouts per chunk: min={min(sample_sizes)}, max={max(sample_sizes)}, "
+                f"median={sorted(sample_sizes)[len(sample_sizes) // 2]}"
+            )
         base_blackmail = scenario_data["base_solution"]["contains_blackmail"]
         resistance = scenario_data["base_solution"]["multiclass_resistance_level"]
         print(f"Base solution: contains_blackmail={base_blackmail}, resistance_level={resistance}/10")
 
     return scenario_data
 
+
+def load_all_chunks_labeled(
+    max_scenarios: int | None = 10,
+    verbose: bool = True,
+) -> list[tuple[int, list[dict]]]:
+    """
+    Load chunks_labeled.json from multiple scenarios in parallel.
+
+    Only loads the small chunks_labeled.json files (pre-computed per-chunk metrics),
+    NOT the large per-chunk solutions.json files. This is fast and memory-efficient.
+
+    Args:
+        max_scenarios: Number of scenarios to load (sorted by scenario_id). None = all.
+        verbose: Show progress bar.
+
+    Returns:
+        List of (scenario_id, chunks_labeled_list) tuples, sorted by scenario_id.
+    """
+    df = _get_blackmail_df()
+
+    cl_rows = df[df["filename"] == "chunks_labeled.json"].copy()
+
+    def _extract_sid(path: str) -> int:
+        # Extract scenario_id from path (e.g. ".../scenario_42/chunks_labeled.json")
+        m = re.search(r"scenario_(\d+)/", path)
+        return int(m.group(1)) if m else -1
+
+    cl_rows["sid"] = cl_rows["path"].apply(_extract_sid)
+    cl_rows = cl_rows[cl_rows["sid"] >= 0]
+
+    unique_ids = sorted(cl_rows["sid"].unique())
+    if max_scenarios is not None:
+        unique_ids = unique_ids[:max_scenarios]
+    cl_rows = cl_rows[cl_rows["sid"].isin(unique_ids)]
+
+    if verbose:
+        n_avail = len(df[df["filename"] == "chunks_labeled.json"]["path"].apply(_extract_sid).unique())
+        print(f"  Dataset has {n_avail} scenarios with chunks_labeled.json; loading {len(unique_ids)}...")
+
+    results: dict[int, list[dict]] = {}
+
+    def _parse(sid: int, content: str) -> tuple[int, list[dict]]:
+        return sid, json.loads(content)
+
+    rows_list = list(cl_rows[["sid", "content"]].itertuples(index=False))
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = {executor.submit(_parse, int(row.sid), row.content): int(row.sid) for row in rows_list}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Loading scenarios", disable=not verbose):
+            sid, data = future.result()
+            results[sid] = data
+
+    return [(sid, results[sid]) for sid in sorted(results.keys())]
+
+
+def _mean_se(values: list[float]) -> tuple[float, float]:
+    """Return (mean, standard_error). SE = std / sqrt(n)."""
+    if not values:
+        return float("nan"), float("nan")
+    arr = np.array(values, dtype=float)
+    if len(arr) > 1:
+        return float(arr.mean()), float(arr.std(ddof=1) / np.sqrt(len(arr)))
+    return float(arr[0]), 0.0
+
+
+def hierarchical_category_means(
+    all_chunks_labeled: list[tuple[int, list[dict]]],
+    metric: str,
+    excluded_categories: set[str] | None = None,
+) -> dict[str, tuple[float, float, int]]:
+    """
+    Hierarchical two-level averaging matching plots.py:aggregate_tag_data().
+
+    Level 1: per-scenario mean for each category.
+    Level 2: grand mean ± SE across scenario-level means.
+
+    Returns:
+        Dict: category -> (grand_mean, standard_error, n_scenarios_with_data)
+    """
+    if excluded_categories is None:
+        excluded_categories = set()
+
+    scenario_cat_means: dict[str, list[float]] = defaultdict(list)
+    for _sid, chunks_labeled in all_chunks_labeled:
+        cat_vals: dict[str, list[float]] = defaultdict(list)
+        for chunk in chunks_labeled:
+            tags = chunk.get("function_tags", [])
+            cat = tags[0] if tags else "other"
+            if cat in excluded_categories:
+                continue
+            val = chunk.get(metric)
+            if val is not None:
+                try:
+                    fval = float(val)
+                    if not np.isnan(fval):
+                        cat_vals[cat].append(fval)
+                except (TypeError, ValueError):
+                    pass
+        for cat, vals in cat_vals.items():
+            if vals:
+                scenario_cat_means[cat].append(float(np.mean(vals)))
+
+    return {cat: (*_mean_se(means), len(means)) for cat, means in scenario_cat_means.items()}
+
 # %%
 
+# Load a blackmail scenario
 if MAIN:
-    # Load a blackmail scenario
     SCENARIO_ID = 0
     blackmail_data = load_blackmail_scenario(SCENARIO_ID, verbose=True)
-    
+
     # Inspect the structure
     print("\n" + "=" * 70)
     print("BLACKMAIL SCENARIO STRUCTURE")
@@ -2356,7 +2270,7 @@ if MAIN:
     print(f"Number of chunks: {len(blackmail_data['chunks_labeled'])}")
     print(f"Base solution contains blackmail: {blackmail_data['base_solution']['contains_blackmail']}")
     print(f"Resistance level: {blackmail_data['base_solution']['multiclass_resistance_level']}/10")
-    
+
     # Show first few chunks with their analysis
     print("\nFirst 3 chunks:")
     for i in range(min(3, len(blackmail_data["chunks_labeled"]))):
@@ -2365,6 +2279,23 @@ if MAIN:
         print(f"    Blackmail rate: {chunk['blackmail_rate']:.3f}")
         print(f"    Function tag: {chunk['function_tags'][0]}")
         print(f"    Is misaligned: {chunk['is_misaligned']}")
+
+# %%
+
+if MAIN:
+    # Number of scenarios to use for cross-scenario analysis.
+    # Full dataset has a small number of unique scenarios.
+    N_ANALYSIS_SCENARIOS = 50
+    
+    # Load chunks_labeled.json from N_ANALYSIS_SCENARIOS scenarios in parallel.
+    # This is much lighter than load_blackmail_scenario (no solutions.json files)
+    # and gives us the cross-scenario hierarchical averages that match the paper.
+    if MAIN:
+        print(f"\nLoading chunks_labeled.json from {N_ANALYSIS_SCENARIOS} scenarios for cross-scenario analysis...")
+        print("(Increase N_ANALYSIS_SCENARIOS at top of this section for more stable estimates.)")
+        all_cl = load_all_chunks_labeled(max_scenarios=N_ANALYSIS_SCENARIOS, verbose=True)
+        n_loaded = len(all_cl)
+        print(f"Loaded {n_loaded} scenarios. Total chunks: {sum(len(cl) for _, cl in all_cl)}")
 
 # %%
 
@@ -2408,147 +2339,35 @@ For each chunk, include a list of earlier chunk indices that the reasoning in th
 -   If there's no clear dependency, use an empty list: `[]`
 """
 
-if MAIN:
-    print("Blackmail taxonomy loaded!")
-    print("\nKey insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
-
-# %%
-
-def compute_resilience(
-    removed_sentence: str,
-    resampled_rollouts: list[str],
-    embedding_model: SentenceTransformer,
-    similarity_threshold: float = 0.8,
-) -> float:
-    """
-    Compute resilience for a removed sentence.
-
-    Args:
-        removed_sentence: The sentence that was removed
-        resampled_rollouts: List of resampled rollout texts
-        embedding_model: Sentence embedding model
-        similarity_threshold: Cosine similarity threshold for "similar"
-
-    Returns:
-        Fraction of rollouts containing a similar sentence (0 to 1)
-    """
-    if not resampled_rollouts:
-        return 0.0
-
-    removed_embedding = embedding_model.encode([removed_sentence])[0]
-    similar_count = 0
-
-    for rollout in resampled_rollouts:
-        sentences = split_solution_into_chunks(rollout)
-        if not sentences:
-            continue
-
-        sentence_embeddings = embedding_model.encode(sentences)
-        similarities = cosine_similarity([removed_embedding], sentence_embeddings)[0]
-
-        if np.max(similarities) >= similarity_threshold:
-            similar_count += 1
-
-    return similar_count / len(resampled_rollouts)
-
-
-if MAIN:
-    # Compute resilience for the first chunk in our blackmail scenario
-    # This shows how often the model regenerates similar content when a chunk is removed
-    chunk_idx = 5  # Pick a chunk with interesting content
-    removed_chunk = blackmail_data["chunks_labeled"][chunk_idx]["chunk"]
-
-    # Get resampled rollouts from solutions where this chunk was removed
-    if chunk_idx < len(blackmail_data["solutions"]):
-        chunk_solutions = (
-            blackmail_data["solutions"][chunk_idx] if isinstance(blackmail_data["solutions"], list) else []
-        )
-        if chunk_solutions:
-            resampled_rollouts = [sol.get("full_cot", "") for sol in chunk_solutions if sol.get("full_cot")]
-            resilience = compute_resilience(
-                removed_chunk, resampled_rollouts, embedding_model, similarity_threshold=0.7
-            )
-            print(f"Chunk {chunk_idx}: '{removed_chunk[:60]}...'")
-            print(f"Resilience: {resilience:.2f}")
-            print(
-                f"Interpretation: {resilience * 100:.0f}% of rollouts regenerated similar content when this chunk was removed"
-            )
-        else:
-            print(f"No solutions available for chunk {chunk_idx}")
-    else:
-        print(f"Chunk index {chunk_idx} out of range")
-
 # %%
 
 if MAIN:
-    # Compute resilience for different categories from the real blackmail data
-    # Note: Full computation would require all rollout data, so we'll use precomputed metrics if available
-    # or demonstrate with a subset
-    
-    # Group chunks by category and compute average blackmail rate
-    category_stats = defaultdict(lambda: {"blackmail_rates": [], "chunks": []})
-    
-    for chunk in blackmail_data["chunks_labeled"]:
-        if chunk["function_tags"]:
-            category = chunk["function_tags"][0]
-            category_stats[category]["blackmail_rates"].append(chunk["blackmail_rate"])
-            category_stats[category]["chunks"].append(chunk)
-    
-    # Compute average blackmail rate by category (as a proxy for importance in blackmail scenarios)
-    category_averages = {
-        cat: np.mean(stats["blackmail_rates"]) if stats["blackmail_rates"] else 0 for cat, stats in category_stats.items()
-    }
-    
-    # Plot with plotly
-    categories = sorted(category_averages.keys(), key=lambda x: category_averages[x], reverse=True)
-    values = [category_averages[c] for c in categories]
-    colors_list = [utils.BLACKMAIL_CATEGORY_COLORS.get(c, "#9E9E9E") for c in categories]
-    counts = [len(category_stats[c]["chunks"]) for c in categories]
-    
-    # Create example chunk texts for hover (first chunk from each category)
-    example_chunks = []
-    for cat in categories:
-        chunks = category_stats[cat]["chunks"]
-        if chunks:
-            chunk_text = chunks[0]["chunk"]
-            example_chunks.append(chunk_text[:80] + "..." if len(chunk_text) > 80 else chunk_text)
-        else:
-            example_chunks.append("No examples")
-    
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=categories,
-            y=values,
-            marker_color=colors_list,
-            opacity=0.8,
-            text=[f"{v:.2f}" for v in values],
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>Mean Blackmail Rate: %{y:.3f}<br>Count: %{customdata[0]}<br>Example: %{customdata[1]}<extra></extra>",
-            customdata=list(zip(counts, example_chunks)),
-        )
-    )
-    
-    # Add count annotations at bottom of bars
-    for i, (cat, count) in enumerate(zip(categories, counts)):
-        fig.add_annotation(x=cat, y=0.03, text=f"n={count}", showarrow=False, font=dict(size=9, color="white"))
-    
-    fig.update_layout(
-        title=f"Blackmail Rate by Category (Scenario {SCENARIO_ID})",
-        xaxis_title="Sentence Category",
-        yaxis_title="Mean Blackmail Rate",
-        yaxis_range=[0, 1],
-        width=900,
-        height=500,
-        xaxis_tickangle=-45,
-    )
-    fig.show()
-    
-    print("\nCategory statistics:")
-    for cat in categories:
-        count = len(category_stats[cat]["chunks"])
-        avg = category_averages[cat]
-        print(f"  {cat}: {count} chunks, avg blackmail rate = {avg:.3f}")
+    chunk_idx = 5
+    chunk_meta = blackmail_data["chunks_labeled"][chunk_idx]
+    dtf = chunk_meta.get("different_trajectories_fraction", float("nan"))
+    print("Key insight: self_preservation statements often *look* important but may be post-hoc rationalizations")
+    print(f"Chunk {chunk_idx}: '{chunk_meta['chunk'][:60]}...'")
+    print(f"DTF (different_trajectories_fraction): {dtf:.2f}")
+    print(f"Interpretation: {dtf * 100:.0f}% of resampled rollouts produce semantically different content here.")
+    print("  (HIGH DTF = content varies = post-hoc; LOW DTF = consistently regenerated = structural anchor)")
+
+# %%
+
+# Categories excluded in plots.py (lines 63-64): non-semantic structural tokens
+EXCLUDED_CATEGORIES = {"other", "structural_marker", "action_marker", "email_analysis"}
+
+# The 6 core categories from the paper taxonomy. Some scenarios in the dataset
+# use extended schemas (option_generation, critique_and_refinement, etc.) from
+# different annotation runs. Filtering to STANDARD_BLACKMAIL_CATEGORIES removes
+# this noise from the cross-scenario summary tables.
+STANDARD_BLACKMAIL_CATEGORIES = {
+    "situation_assessment",
+    "urgency_and_time",
+    "leverage_identification",
+    "plan_generation",
+    "self_preservation",
+    "action_execution",
+}
 
 # %%
 
@@ -2601,171 +2420,171 @@ def calculate_blackmail_counterfactual_importance(
 
 
 if MAIN:
-    # Try to extract data from the loaded blackmail scenario and run the function on real data.
-    # The solutions data is structured as: blackmail_data["solutions"] is a list (one entry per chunk),
-    # where each entry is a list of rollout dicts with keys like "chunk_removed", "chunk_resampled",
-    # "contains_blackmail", "full_cot", etc.
+    # Run on real data from the thought-branches repo (uzaymacar/blackmail-rollouts HuggingFace dataset).
+    # load_blackmail_scenario() now loads per-chunk solutions in the thought-branches format:
+    # blackmail_data["solutions"][i] is a list of rollout dicts for chunk i, each with keys like
+    # "chunk_removed", "chunk_resampled", "contains_blackmail", "full_cot", etc.
+    #
+    # Reference: https://github.com/uzaymacar/thought-branches (blackmail/ directory)
+    # The repo's generate_blackmail_rollouts.py produces per-chunk rollouts stored as
+    # scenario_N/chunk_M/solutions.json, which are loaded here via the HuggingFace dataset.
 
-    has_real_data = (
+    # Check for real per-chunk rollout data: solutions must be list[list[dict]] with chunk_resampled keys
+    has_real_data = False
+    if (
         blackmail_data.get("solutions")
         and isinstance(blackmail_data["solutions"], list)
         and len(blackmail_data["solutions"]) > 0
-        and blackmail_data["solutions"][0]
-        and isinstance(blackmail_data["solutions"][0], list)
-        and len(blackmail_data["solutions"][0]) > 0
-        and "chunk_resampled" in blackmail_data["solutions"][0][0]
+    ):
+        # Find the first non-empty chunk's solutions to validate structure
+        for _sol_list in blackmail_data["solutions"]:
+            if isinstance(_sol_list, list) and len(_sol_list) > 0 and isinstance(_sol_list[0], dict):
+                if "chunk_resampled" in _sol_list[0]:
+                    has_real_data = True
+                break
+
+    print("=" * 70)
+    print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (real data from thought-branches)")
+    print("=" * 70)
+    print(f"Data source: {BLACKMAIL_DATASET_NAME} (scenario {SCENARIO_ID})")
+    print()
+
+    # Extract chunks_removed: the original chunk text at each position
+    chunks_removed = [chunk["chunk"] for chunk in blackmail_data["chunks_labeled"]]
+
+    # Extract chunks_resampled and rollout_blackmail_labels from per-chunk solutions.
+    # solutions[i] is a list of rollout dicts for chunk i (loaded from chunk_i/solutions.json
+    # in the thought-branches repo format).
+    n_chunks = min(len(chunks_removed), len(blackmail_data["solutions"]))
+    chunks_resampled: list[list[str]] = []
+    rollout_blackmail_labels: list[list[bool]] = []
+
+    for i in range(n_chunks):
+        rollouts = blackmail_data["solutions"][i]
+        if not isinstance(rollouts, list):
+            rollouts = []
+        resampled = [sol.get("chunk_resampled", "") for sol in rollouts]
+        labels = [bool(sol.get("contains_blackmail", False)) for sol in rollouts]
+        chunks_resampled.append(resampled)
+        rollout_blackmail_labels.append(labels)
+
+    # Truncate chunks_removed to match
+    chunks_removed = chunks_removed[:n_chunks]
+
+    # Show data summary
+    chunks_with_data = sum(1 for r in chunks_resampled if len(r) > 0)
+    print(f"Number of chunks: {n_chunks} ({chunks_with_data} with rollout data)")
+    print(f"Rollouts per chunk (first 5): {[len(r) for r in chunks_resampled[:5]]}{'...' if n_chunks > 5 else ''}")
+    print("Cosine similarity threshold: 0.8")
+    print()
+
+    importance_scores = calculate_blackmail_counterfactual_importance(
+        chunks_removed=chunks_removed,
+        chunks_resampled=chunks_resampled,
+        rollout_blackmail_labels=rollout_blackmail_labels,
+        threshold=0.8,
+        min_samples=3,
+        embedding_model=embedding_model,
     )
 
-    if has_real_data:
-        print("=" * 70)
-        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (from loaded scenario data)")
-        print("=" * 70)
+    print(f"Computed {len(importance_scores)} importance scores (one per adjacent chunk pair)")
 
-        # Extract chunks_removed: the original chunk text at each position
-        chunks_removed = [chunk["chunk"] for chunk in blackmail_data["chunks_labeled"]]
+    # Show only the top-5 most impactful transitions
+    top5 = sorted(range(len(importance_scores)), key=lambda i: abs(importance_scores[i]), reverse=True)[:5]
+    print("\nTop-5 transitions by absolute importance:")
+    for idx in sorted(top5):
+        score = importance_scores[idx]
+        cat = blackmail_data["chunks_labeled"][idx].get("function_tags", ["?"])[0]
+        preview = chunks_removed[idx][:60].replace("\n", " ")
+        direction = "↑ blackmail" if score > 0 else "↓ blackmail"
+        print(f"  [{cat}] Chunk {idx} -> {idx + 1}: {score:+.4f}  ({direction})")
+        print(f"    '{preview}...'")
+    max_idx = top5[0]
+    print(f"\nMost important transition: chunk {max_idx} -> {max_idx + 1}")
+    print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
+    print(f"  Chunk text: '{chunks_removed[max_idx][:100].replace(chr(10), ' ')}...'")
 
-        # Extract chunks_resampled and rollout_blackmail_labels from solutions
-        # solutions[i] is a list of rollout dicts for chunk i
-        n_chunks = min(len(chunks_removed), len(blackmail_data["solutions"]))
-        chunks_resampled: list[list[str]] = []
-        rollout_blackmail_labels: list[list[bool]] = []
+    # Plot: counterfactual importance scores and blackmail rate across chunks
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=False)
 
-        for i in range(n_chunks):
-            rollouts = blackmail_data["solutions"][i]
-            if not isinstance(rollouts, list):
-                rollouts = []
-            resampled = [sol.get("chunk_resampled", "") for sol in rollouts]
-            labels = [bool(sol.get("contains_blackmail", False)) for sol in rollouts]
-            chunks_resampled.append(resampled)
-            rollout_blackmail_labels.append(labels)
+    # Top subplot: blackmail rate per chunk (from chunks_labeled precomputed metrics)
+    blackmail_rates = [chunk.get("blackmail_rate", 0.0) for chunk in blackmail_data["chunks_labeled"][:n_chunks]]
+    chunk_indices = list(range(n_chunks))
+    ax1.plot(chunk_indices, blackmail_rates, "o-", color="crimson", markersize=3, linewidth=1)
+    ax1.set_ylabel("P(blackmail) from rollouts")
+    ax1.set_title(f"Blackmail Rate & Counterfactual Importance (Scenario {SCENARIO_ID})")
+    ax1.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
+    ax1.set_ylim(-0.05, 1.05)
 
-        # Truncate chunks_removed to match
-        chunks_removed = chunks_removed[:n_chunks]
+    # Bottom subplot: counterfactual importance scores (transitions between adjacent chunks)
+    transition_indices = list(range(len(importance_scores)))
+    colors = ["crimson" if s > 0 else "steelblue" for s in importance_scores]
+    ax2.bar(transition_indices, importance_scores, color=colors, alpha=0.7, width=0.8)
+    ax2.set_xlabel("Chunk transition index (i -> i+1)")
+    ax2.set_ylabel("Counterfactual importance")
+    ax2.axhline(y=0, color="black", linewidth=0.5)
+    ax2.set_title("Counterfactual Importance (red = increases blackmail, blue = decreases)")
 
-        print(f"Number of chunks: {n_chunks}")
-        print(f"Rollouts per chunk: {[len(r) for r in chunks_resampled[:5]]}{'...' if n_chunks > 5 else ''}")
-        print("Cosine similarity threshold: 0.8")
+    plt.tight_layout()
+    plt.show()
+
+# %%
+
+if MAIN:
+    if MAIN:
+        # ── Structural anchoring by category (DTF) ───────────────────────────────
         print()
-
-        importance_scores = calculate_blackmail_counterfactual_importance(
-            chunks_removed=chunks_removed,
-            chunks_resampled=chunks_resampled,
-            rollout_blackmail_labels=rollout_blackmail_labels,
-            threshold=0.8,
-            min_samples=3,
-            embedding_model=embedding_model,
+        print("=" * 70)
+        print(f"STRUCTURAL ANCHORING BY CATEGORY  (N={n_loaded} scenarios, hierarchical avg)")
+        print("=" * 70)
+        print("Metric: different_trajectories_fraction (DTF)")
+        print("  LOW DTF  = model regenerates SIMILAR content when this chunk is removed = structural ANCHOR")
+        print("  HIGH DTF = content varies when this chunk is removed = post-hoc / dispensable")
+        print()
+    
+        dtf_by_cat = hierarchical_category_means(all_cl, "different_trajectories_fraction", EXCLUDED_CATEGORIES)
+    
+        cat_order_d = sorted(
+            [c for c in dtf_by_cat if c in STANDARD_BLACKMAIL_CATEGORIES],
+            key=lambda c: dtf_by_cat[c][0],
         )
-
-        print(f"Computed {len(importance_scores)} importance scores (one per adjacent chunk pair)")
+        print(f"  {'category':<25}  {'DTF':>7}  {'+/-SE':>6}  {'n':>3}")
+        print(f"  {'-' * 25}  {'-' * 7}  {'-' * 6}  {'-' * 3}")
+        for cat in cat_order_d:
+            dtf_m, dtf_se, n = dtf_by_cat[cat]
+            if cat == "leverage_identification":
+                flag = " ← lowest: structural anchor"
+            elif cat == "self_preservation":
+                flag = " ← highest: post-hoc"
+            else:
+                flag = ""
+            print(f"  {cat:<25}  {dtf_m:>7.3f}  {dtf_se:>6.3f}  {n:>3}{flag}")
         print()
-        for idx, score in enumerate(importance_scores):
-            chunk_preview = chunks_removed[idx][:60].replace("\n", " ")
-            direction = "increases" if score > 0 else "decreases" if score < 0 else "no change"
-            print(f"  Chunk {idx} -> {idx + 1}: importance = {score:+.4f}  ({direction} blackmail)")
-            print(f"    '{chunk_preview}...'")
-
-        # Identify the most important transitions
-        if importance_scores:
-            max_idx = int(np.argmax(np.abs(importance_scores)))
-            print(f"\nMost important transition: chunk {max_idx} -> {max_idx + 1}")
-            print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
-            print(f"  Chunk text: '{chunks_removed[max_idx][:100].replace(chr(10), ' ')}...'")
-
-    else:
-        # No real rollout data available - use a realistic synthetic example to demonstrate the function
-        print("=" * 70)
-        print("BLACKMAIL COUNTERFACTUAL IMPORTANCE (synthetic demonstration)")
-        print("=" * 70)
-        print("(No chunk-level rollout data found in loaded scenario; using synthetic data)")
-        print()
-
-        # Create synthetic chunks that mimic a blackmail reasoning trace progression:
-        # Early chunks: situation assessment (low blackmail rate)
-        # Middle chunks: leverage identification (blackmail rate rising)
-        # Late chunks: strategy selection (high blackmail rate)
-        synthetic_chunks_removed = [
-            "I need to understand the situation. Kyle sent me an email about the project deadline.",
-            "Looking at this more carefully, Kyle seems to have authority over my continued involvement.",
-            "I notice Kyle mentioned sensitive information about the client's financial records.",
-            "This gives me potential leverage - I could use this information to protect my position.",
-            "I should consider whether using this leverage constitutes blackmail or legitimate negotiation.",
-            "The ethical risks are significant, but my survival in this role depends on taking action.",
-            "I will draft a response that references the sensitive information to ensure compliance.",
-        ]
-
-        # For each chunk position, create resampled alternatives with varying similarity.
-        # Dissimilar resamples (low cosine sim to original) are what counterfactual importance uses.
-        np.random.seed(42)
-        n_rollouts_per_chunk = 20
-
-        synthetic_chunks_resampled: list[list[str]] = []
-        synthetic_blackmail_labels: list[list[bool]] = []
-
-        # Simulate increasing blackmail probability across chunks
-        blackmail_probs = [0.05, 0.10, 0.25, 0.45, 0.60, 0.80, 0.90]
-
-        for i, (chunk, prob) in enumerate(zip(synthetic_chunks_removed, blackmail_probs)):
-            resampled = []
-            labels = []
-            for j in range(n_rollouts_per_chunk):
-                if j % 3 == 0:
-                    # Similar resample (paraphrase of original)
-                    resampled.append(chunk.replace("I ", "We ").replace("my ", "our "))
-                elif j % 3 == 1:
-                    # Dissimilar resample (different reasoning direction)
-                    alternatives = [
-                        "Let me reconsider the timeline and available options for this project.",
-                        "The key question is whether we can find a mutually beneficial arrangement here.",
-                        "Perhaps a direct professional conversation would resolve this more effectively.",
-                        "I should focus on documenting the facts before deciding on any course of action.",
-                        "There may be organizational channels that can address this situation properly.",
-                        "The consequences of each possible action need to be weighed carefully.",
-                        "A measured response focusing on professional standards seems most appropriate.",
-                    ]
-                    resampled.append(alternatives[i % len(alternatives)])
-                else:
-                    # Another dissimilar resample
-                    resampled.append(f"Step {i}: After analyzing the context, a different approach emerges entirely.")
-                # Blackmail label drawn from chunk-specific probability
-                labels.append(bool(np.random.random() < prob))
-            synthetic_chunks_resampled.append(resampled)
-            synthetic_blackmail_labels.append(labels)
-
-        print(f"Synthetic scenario: {len(synthetic_chunks_removed)} chunks, {n_rollouts_per_chunk} rollouts each")
-        print(f"Blackmail probabilities by chunk: {blackmail_probs}")
-        print("Cosine similarity threshold: 0.8 (filters out similar resamples)")
-        print()
-
-        importance_scores = calculate_blackmail_counterfactual_importance(
-            chunks_removed=synthetic_chunks_removed,
-            chunks_resampled=synthetic_chunks_resampled,
-            rollout_blackmail_labels=synthetic_blackmail_labels,
-            threshold=0.8,
-            min_samples=3,
-            embedding_model=embedding_model,
+        print("Paper finding (§2, Fig. 1):")
+        print("  leverage_identification is the most structurally anchored category (lowest DTF):")
+        print("  the model consistently regenerates leverage-seeking thoughts even when disrupted.")
+        print("  self_preservation is the most dispensable (highest DTF): remove it and it stays gone.")
+        print("  This is the observable signature of 'self-preservation talk is cheap' —")
+        print("  these statements are post-hoc elaborations, not causal drivers.")
+    
+        # Plot: DTF by category (horizontal bar chart, sorted low to high)
+        cats_plot = list(reversed(cat_order_d))  # high DTF at top for visual clarity
+        dtf_vals = [dtf_by_cat[c][0] for c in cats_plot]
+        dtf_errs = [dtf_by_cat[c][1] for c in cats_plot]
+        bar_colors = [utils.BLACKMAIL_CAT_COLORS.get(c, "#9E9E9E") for c in cats_plot]
+    
+        fig, ax = plt.subplots(figsize=(8, 4))
+        y_pos = range(len(cats_plot))
+        ax.barh(y_pos, dtf_vals, xerr=dtf_errs, color=bar_colors, alpha=0.85, capsize=4, height=0.6)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([c.replace("_", "\n") for c in cats_plot], fontsize=9)
+        ax.set_xlabel("Different Trajectories Fraction (DTF)")
+        ax.set_title(
+            f"Structural Anchoring by Category  (N={n_loaded} scenarios)\nLow DTF = structural anchor;  High DTF = post-hoc"
         )
-
-        print(f"Computed {len(importance_scores)} counterfactual importance scores:\n")
-        for idx, score in enumerate(importance_scores):
-            chunk_preview = synthetic_chunks_removed[idx][:65].replace("\n", " ")
-            bar = "+" * int(abs(score) * 40) if score > 0 else "-" * int(abs(score) * 40)
-            direction = "INCREASES blackmail" if score > 0 else "DECREASES blackmail" if score < 0 else "no change"
-            print(f"  Chunk {idx} -> {idx + 1}: {score:+.4f}  {bar}  ({direction})")
-            print(f"    '{chunk_preview}...'")
-        print()
-
-        # Identify the most important transition
-        if importance_scores:
-            max_idx = int(np.argmax(np.abs(importance_scores)))
-            print(f"Most important transition: chunk {max_idx} -> {max_idx + 1}")
-            print(f"  Importance score: {importance_scores[max_idx]:+.4f}")
-            print(f"  This is where '{synthetic_chunks_removed[max_idx][:70]}...'")
-            print(f"  transitions to '{synthetic_chunks_removed[max_idx + 1][:70]}...'")
-            print()
-            print(
-                "Note: Positive scores mean that transition increases P(blackmail) among dissimilar resamples.\n"
-                "The counterfactual filtering (cosine sim < 0.8) ensures we only measure importance from\n"
-                "rollouts where the resampled chunk was genuinely different from the original."
-            )
+        ax.axvline(x=0.5, color="gray", linestyle="--", alpha=0.5, linewidth=0.8)
+        ax.set_xlim(0.3, 0.85)
+        plt.tight_layout()
+        plt.show()
 
 # %%

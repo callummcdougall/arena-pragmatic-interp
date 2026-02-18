@@ -1,14 +1,67 @@
-import sys
-from pathlib import Path
 from typing import Callable
 
 import numpy as np
 import torch
 from scipy import stats
 
-# Make sure exercises are in the path
-if str(exercises_dir := Path(__file__).parent.parent) not in sys.path:
-    sys.path.append(str(exercises_dir))
+
+def test_calculate_answer_importance(calculate_answer_importance: Callable):
+    """Test the calculate_answer_importance function."""
+
+    # Test 1: Increasing accuracy across chunks
+    full_cot_list = [
+        ["\\boxed{3}", "\\boxed{5}", "\\boxed{5}", "\\boxed{5}"],  # 1/4 correct
+        ["\\boxed{3}", "\\boxed{3}", "\\boxed{3}", "\\boxed{5}"],  # 3/4 correct
+        ["\\boxed{3}", "\\boxed{3}", "\\boxed{3}", "\\boxed{3}"],  # 4/4 correct
+    ]
+    result = calculate_answer_importance(full_cot_list, "3")
+    assert len(result) == 2, f"Expected 2 importance scores, got {len(result)}"
+    assert np.allclose(result, [0.5, 0.25]), f"Expected [0.5, 0.25], got {result}"
+
+    # Test 2: Negative importance (accuracy drops after a chunk)
+    full_cot_list = [
+        ["\\boxed{3}", "\\boxed{3}", "\\boxed{3}", "\\boxed{3}"],  # 4/4
+        ["\\boxed{3}", "\\boxed{5}", "\\boxed{5}", "\\boxed{5}"],  # 1/4
+    ]
+    result = calculate_answer_importance(full_cot_list, "3")
+    assert np.allclose(result, [-0.75]), f"Expected [-0.75], got {result}"
+
+    # Test 3: Zero importance (accuracy unchanged)
+    full_cot_list = [
+        ["\\boxed{3}", "\\boxed{5}"],
+        ["\\boxed{3}", "\\boxed{5}"],
+        ["\\boxed{3}", "\\boxed{5}"],
+    ]
+    result = calculate_answer_importance(full_cot_list, "3")
+    assert np.allclose(result, [0.0, 0.0]), f"Expected [0.0, 0.0], got {result}"
+
+    # Test 4: Output length is n-1 for n chunk positions
+    full_cot_list = [["\\boxed{1}"]] * 5
+    result = calculate_answer_importance(full_cot_list, "1")
+    assert len(result) == 4, f"Expected 4 scores for 5 chunks, got {len(result)}"
+
+    # Test 5: Answer extraction strips non-digit/non-dot characters
+    full_cot_list = [
+        ["\\boxed{$3$}", "\\boxed{3}"],  # both should parse to "3"
+        ["\\boxed{3}", "\\boxed{3}"],
+    ]
+    result = calculate_answer_importance(full_cot_list, "3")
+    assert np.allclose(result, [0.0]), f"Expected [0.0] after stripping non-digits, got {result}"
+
+    # Test 6: Decimal answers handled correctly
+    full_cot_list = [
+        ["\\boxed{2.5}", "\\boxed{2.5}"],  # 2/2 correct
+        ["\\boxed{3.0}", "\\boxed{3.0}"],  # 0/2 correct
+    ]
+    result = calculate_answer_importance(full_cot_list, "2.5")
+    assert np.allclose(result, [-1.0]), f"Expected [-1.0], got {result}"
+
+    # Test 7: Returns a plain Python list
+    full_cot_list = [["\\boxed{1}"], ["\\boxed{1}"]]
+    result = calculate_answer_importance(full_cot_list, "1")
+    assert isinstance(result, list), f"Expected list, got {type(result)}"
+
+    print("All tests in `test_calculate_answer_importance` passed!")
 
 
 def test_compute_head_kurtosis(compute_head_kurtosis: Callable):

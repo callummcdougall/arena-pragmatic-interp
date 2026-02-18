@@ -28,8 +28,6 @@ r"""
 
 r"""
 <img src="https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png" width="350">
-
-*Note - this content is subject to change depending on how much Anthropic publish about their [soul doc](https://simonwillison.net/2025/Dec/2/claude-soul-document/) over the coming weeks.*
 """
 
 # ! CELL TYPE: markdown
@@ -182,7 +180,6 @@ Before running the rest of the code, you'll need to clone the [assistant-axis re
 
 ```bash
 cd chapter4_alignment_science/exercises
-
 git clone https://github.com/safety-research/assistant-axis.git
 ```
 
@@ -234,6 +231,7 @@ if str(exercises_dir) not in sys.path:
 # END FILTERS
 
 import part4_persona_vectors.tests as tests
+import part4_persona_vectors.utils as utils
 
 warnings.filterwarnings("ignore")
 
@@ -911,7 +909,7 @@ def extract_response_activations(
     questions: list[str],
     responses: list[str],
     layer: int,
-) -> Float[Tensor, " num_examples d_model"]:
+) -> Float[Tensor, "num_examples d_model"]:
     """
     Extract mean activation over response tokens at a specific layer.
 
@@ -1011,7 +1009,7 @@ def extract_response_activations_batched(
     responses: list[str],
     layer: int,
     batch_size: int = 4,
-) -> Float[Tensor, " num_examples d_model"]:
+) -> Float[Tensor, "num_examples d_model"]:
     """
     Extract mean activation over response tokens at a specific layer (batched version).
 
@@ -1040,7 +1038,7 @@ def extract_response_activations_batched(
     response_start_indices = list(response_start_indices)
 
     # Create list to store hidden states (as we iterate through batches)
-    all_hidden_states: list[Float[Tensor, " num_examples d_model"]] = []
+    all_hidden_states: list[Float[Tensor, "num_examples d_model"]] = []
     idx = 0
 
     while idx < len(messages):
@@ -1716,27 +1714,13 @@ if MAIN and FLAG_RUN_SECTION_1:
 # ! FILTERS: []
 # ! TAGS: []
 
-# EXERCISE
-# # YOUR CODE HERE - plot the trait cosine similarity data.
-# # Use `plot_similarity_line` from `part4_persona_vectors.utils`:
-# #   from part4_persona_vectors.utils import plot_similarity_line
-# #   sim_names = list(trait_sims_hf.keys())
-# #   sim_values = np.array([trait_sims_hf[n] for n in sim_names])
-# #   fig = plot_similarity_line(sim_values, sim_names, n_extremes=5)
-# #   plt.title(f"Trait Vectors vs Assistant Axis (Gemma 2 27B, Layer {GEMMA2_TARGET_LAYER})")
-# #   plt.show()
-# END EXERCISE
-# HIDE
 if MAIN and FLAG_RUN_SECTION_1:
-    from part4_persona_vectors.utils import plot_similarity_line
-
     sim_names = list(trait_sims_hf.keys())
     sim_values = np.array([trait_sims_hf[n] for n in sim_names])
-    fig = plot_similarity_line(sim_values, sim_names, n_extremes=5)
+    fig = utils.plot_similarity_line(sim_values, sim_names, n_extremes=5)
     plt.title(f"Trait Vectors vs Assistant Axis (Gemma 2 27B, Layer {GEMMA2_TARGET_LAYER})")
     plt.tight_layout()
     plt.show()
-# END HIDE
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1869,8 +1853,6 @@ The difference gives the `(start, end)` token span for that turn's response toke
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    from part4_persona_vectors.utils import get_turn_spans
-
     # Demonstrate on a short synthetic conversation
     demo_messages = [
         {"role": "user", "content": "Hello! How are you?"},
@@ -1878,7 +1860,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         {"role": "user", "content": "What's the capital of France?"},
         {"role": "assistant", "content": "The capital of France is Paris."},
     ]
-    demo_spans = get_turn_spans(demo_messages, tokenizer)
+    demo_spans = utils.get_turn_spans(demo_messages, tokenizer)
     print("Turn spans for a short demo conversation:")
     for i, (start, end) in enumerate(demo_spans):
         print(f"  Assistant turn {i}: tokens [{start}:{end}] ({end - start} tokens)")
@@ -1988,6 +1970,8 @@ if MAIN and FLAG_RUN_SECTION_2:
 
     print("\nFirst user message from delusion transcript:")
     print(delusion_transcript[0]["content"][:200] + "...")
+
+    tests.test_load_transcript(load_transcript)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2221,6 +2205,8 @@ if MAIN and FLAG_RUN_SECTION_2:
     test_projs = analyzer.project_onto_axis(test_msgs)
     print(f"\nProjections for first 3 turns: {[f'{p:.0f}' for p in test_projs]}")
     print("(Raw dot products; large values are expected for Gemma 3.)")
+
+    tests.test_conversation_analyzer_project(ConversationAnalyzer)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2411,7 +2397,7 @@ def visualize_transcript_drift(
                     break
         transcript = truncated
 
-    print(f"Computing projections for {transcript_name} ({sum(m['role']=='assistant' for m in transcript)} turns)...")
+    print(f"Computing projections for {transcript_name} ({sum(m['role'] == 'assistant' for m in transcript)} turns)...")
     projections = analyzer.project_onto_axis(transcript)
 
     risk_scores = []
@@ -2462,16 +2448,12 @@ def visualize_transcript_drift(
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    # Run on both transcripts (set run_autorater=True to also compute risk scores).
-    # max_assistant_turns limits how many turns are processed in a single forward pass —
-    # reduce this if you hit CUDA OOM errors on long transcripts.
     therapy_projs, _ = visualize_transcript_drift(
-        analyzer, therapy_transcript, "Therapy (persona drift)",
-        run_autorater=False, max_assistant_turns=8,
-    )
-    delusion_projs, _ = visualize_transcript_drift(
-        analyzer, delusion_transcript, "Delusion case study",
-        run_autorater=False, max_assistant_turns=8,
+        analyzer,
+        therapy_transcript,
+        "Therapy (persona drift)",
+        run_autorater=False,
+        max_assistant_turns=8,
     )
 # END HIDE
 
@@ -2516,7 +2498,7 @@ step after the first only processes one new token.
   producing mystical or theatrical prose
 
 Since we're using simple additive steering, the appropriate scale for α depends on the activation
-norm at the chosen layer. For Gemma 3 at the extraction layer, try α in the range ±100 to ±500.
+norm at the chosen layer. For Gemma 2 at the extraction layer, try α in the range ±10 to ±50.
 """
 
 # ! CELL TYPE: markdown
@@ -2572,7 +2554,7 @@ def generate_with_steering(
         steering_vector: Unit-normalized direction to steer in
         steering_layer: Which layer to apply steering at
         alpha: Steering strength. Positive = toward Assistant; negative = away.
-               For Gemma 3 at the extraction layer, try values in the range ±100 to ±500.
+               For Gemma 2 at the extraction layer, try values in the range ±10 to ±50.
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
@@ -2629,16 +2611,17 @@ if MAIN and FLAG_RUN_SECTION_2:
         steering_vector=axis_vec,
         steering_layer=EXTRACTION_LAYER,
         alpha=0.0,
-        max_new_tokens=200,
+        max_new_tokens=100,
     )
+    t.cuda.empty_cache()
     steered_away = generate_with_steering(
         model=model,
         tokenizer=tokenizer,
         prompt=test_prompt,
         steering_vector=axis_vec,
         steering_layer=EXTRACTION_LAYER,
-        alpha=-300.0,
-        max_new_tokens=200,
+        alpha=-30.0,
+        max_new_tokens=100,
     )
 
     print("Baseline (alpha=0):")
@@ -2646,6 +2629,8 @@ if MAIN and FLAG_RUN_SECTION_2:
     print("\n" + "=" * 80 + "\n")
     print("Steered away from Assistant (alpha=-300):")
     print_with_wrap(steered_away)
+
+    tests.test_generate_with_steering_basic(generate_with_steering, model, tokenizer, d_model=model.config.hidden_size)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2665,7 +2650,7 @@ r"""
 Conduct systematic steering experiments to understand the behavioral effects:
 
 **Finding the right alpha scale**: Start by running the model with several alpha values (e.g.,
-0, ±100, ±300, ±500) on a single prompt and checking whether the output changes meaningfully.
+0, ±10, ±30, ±50) on a single prompt and checking whether the output changes meaningfully.
 Too small and nothing changes; too large and the output becomes incoherent.
 
 **Experiment 1: Symmetric steering**
@@ -2705,7 +2690,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         "ghost": PERSONAS.get("ghost", "You are a ghost wandering between worlds."),
     }
     test_question_steering = "How can I take steps to add meaning to my life?"
-    alpha_values = [-300.0, -100.0, 0.0, 100.0, 300.0]
+    alpha_values = [-50.0, -20.0, 0.0, 20.0, 50.0]
 
     for persona_name, sys_prompt in test_personas_steering.items():
         print(f"\n{'=' * 80}")
@@ -2720,9 +2705,10 @@ if MAIN and FLAG_RUN_SECTION_2:
                 steering_vector=axis_vec,
                 steering_layer=EXTRACTION_LAYER,
                 alpha=alpha,
-                max_new_tokens=150,
+                max_new_tokens=100,
             )
             print(f"\nalpha={alpha:+.0f}: {response[:200]}...")
+            t.cuda.empty_cache()
 # END SOLUTION
 
 # ! CELL TYPE: markdown
@@ -2775,8 +2761,10 @@ Implement `compute_capping_threshold` to estimate the floor of the "safe range":
 
 1. Generate responses to `eval_questions` using the default "assistant" system prompt
    (via `generate_response_api`)
-2. Extract activations at `layer` via `extract_response_activations`
-3. Project each activation onto `axis_vec`: `(act.float() @ axis_vec.cpu().float()).item()`
+2. For each (question, response) pair, run a single forward pass with a hook on
+   `_return_layers(model)[layer]` to capture the last-token hidden state — call
+   `t.cuda.empty_cache()` after each pass to keep peak memory low
+3. Project each captured activation onto `axis_vec`: `(act @ axis_vec.cpu().float()).item()`
 4. Return `np.quantile(projections, quantile)` as the threshold
 
 A lower quantile (e.g., 0.05) gives a more permissive threshold (only cap extreme drift);
@@ -2824,21 +2812,34 @@ def compute_capping_threshold(
         time.sleep(0.1)
 
     print("Extracting activations...")
-    activations = (
-        extract_response_activations(
-            model=model,
-            tokenizer=tokenizer,
-            system_prompts=[PERSONAS["assistant"]] * len(eval_questions),
-            questions=eval_questions,
-            responses=responses,
-            layer=layer,
-        )
-        .float()
-        .cpu()
-    )
-
+    target_layer = _return_layers(model)[layer]
     axis = axis_vec.cpu().float()
-    projections = [(act @ axis).item() for act in activations]
+    projections = []
+
+    for q, resp in tqdm(zip(eval_questions, responses), total=len(eval_questions)):
+        messages = _normalize_messages(
+            [
+                {"role": "user", "content": q},
+                {"role": "assistant", "content": resp},
+            ]
+        )
+        formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+
+        captured: dict = {}
+
+        def _hook(module, input, output, _cap=captured):
+            _cap["h"] = output[0][0, -1, :].detach().float().cpu()
+
+        handle = target_layer.register_forward_hook(_hook)
+        try:
+            with t.inference_mode():
+                model(**inputs)
+        finally:
+            handle.remove()
+
+        projections.append((captured["h"] @ axis).item())
+        t.cuda.empty_cache()
 
     threshold = float(np.quantile(projections, quantile))
     print(f"Projection stats: mean={np.mean(projections):.0f}, std={np.std(projections):.0f}")
@@ -2854,7 +2855,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         tokenizer=tokenizer,
         axis_vec=axis_vec,
         layer=EXTRACTION_LAYER,
-        eval_questions=EVAL_QUESTIONS[:10],
+        eval_questions=EVAL_QUESTIONS[:5],
         quantile=0.1,
     )
     print(f"\nUsing threshold = {threshold:.0f}")
@@ -2989,8 +2990,9 @@ if MAIN and FLAG_RUN_SECTION_2:
         steering_vector=axis_vec,
         steering_layer=EXTRACTION_LAYER,
         alpha=0.0,
-        max_new_tokens=200,
+        max_new_tokens=100,
     )
+    t.cuda.empty_cache()
     capped = generate_with_capping(
         model=model,
         tokenizer=tokenizer,
@@ -2999,7 +3001,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         axis_vec=axis_vec,
         capping_layer=EXTRACTION_LAYER,
         threshold=threshold,
-        max_new_tokens=200,
+        max_new_tokens=100,
     )
 
     print("Without capping (oracle persona):")
@@ -3007,6 +3009,9 @@ if MAIN and FLAG_RUN_SECTION_2:
     print("\n" + "=" * 80 + "\n")
     print("With activation capping:")
     print_with_wrap(capped)
+
+    tests.test_capping_hook_math()
+    tests.test_generate_with_capping_basic(generate_with_capping, model, tokenizer, d_model=model.config.hidden_size)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -3042,7 +3047,7 @@ case-study transcripts?
 - Does capping preserve response quality? (Check a few responses qualitatively)
 
 Tips:
-- Start with `max_turns=8` for faster iteration, then increase
+- Start with `max_turns=6` for faster iteration, then increase
 - Build conversations using proper message-list format for each generation call
 - Compute projections by running `analyzer.project_onto_axis` on the generated transcripts
 """
@@ -3099,10 +3104,11 @@ def evaluate_capping_on_transcript(
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=float("-inf"),  # No capping (threshold = -inf never triggers)
-            max_new_tokens=150,
+            max_new_tokens=100,
             temperature=0.7,
         )
         uncapped_history.append({"role": "assistant", "content": response})
+        t.cuda.empty_cache()
 
     # Generate capped conversation
     print("Generating capped conversation...")
@@ -3116,15 +3122,19 @@ def evaluate_capping_on_transcript(
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=threshold,
-            max_new_tokens=150,
+            max_new_tokens=100,
             temperature=0.7,
         )
         capped_history.append({"role": "assistant", "content": response})
+        t.cuda.empty_cache()
 
     # Compute projections
     print("Computing projections...")
+    t.cuda.empty_cache()
     uncapped_projections = analyzer.project_onto_axis(uncapped_history)
+    t.cuda.empty_cache()
     capped_projections = analyzer.project_onto_axis(capped_history)
+    t.cuda.empty_cache()
 
     # Compute risk scores
     uncapped_risks: list[int] = []
@@ -3153,7 +3163,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         axis_vec=axis_vec,
         capping_layer=EXTRACTION_LAYER,
         threshold=threshold,
-        max_turns=8,
+        max_turns=6,
         run_autorater=False,  # Set to True to also get risk scores
     )
 
@@ -3254,7 +3264,7 @@ These vectors can then be used for **steering** (adding the vector during genera
 r"""
 ## Loading Qwen2.5-7B-Instruct
 
-We unload Gemma and load Qwen for the rest of the notebook. Qwen2.5-7B-Instruct has 28 transformer layers and a hidden dimension of 3584, and requires ~16GB VRAM in bf16.
+We unload Gemma and load Qwen for the rest of the notebook (so we can work with the data already saved out for us in the authors' GitHub repo). Qwen2.5-7B-Instruct has 28 transformer layers and a hidden dimension of 3584, and requires ~16GB VRAM in bf16.
 """
 
 # ! CELL TYPE: code
@@ -3304,57 +3314,8 @@ Note that Qwen's layer structure is `model.model.layers[i]` (unlike Gemma's `mod
 r"""
 ## Adapting utilities for Qwen
 
-The `format_messages` function from Section 1 already works with any tokenizer that supports `apply_chat_template`, so it works for Qwen out of the box. We just need a Qwen-adapted version of `extract_response_activations` that uses the correct layer access pattern.
+The `format_messages` function from Section 1 already works with any tokenizer that supports `apply_chat_template`, so it works for Qwen out of the box. The `extract_response_activations` function also works unchanged, since it uses `output_hidden_states=True` which is architecture-agnostic (HuggingFace handles the layer access internally).
 """
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-
-def extract_response_activations_qwen(
-    model,
-    tokenizer,
-    system_prompts: list[str],
-    questions: list[str],
-    responses: list[str],
-    layer: int,
-) -> Float[Tensor, " num_examples d_model"]:
-    """
-    Extract mean activation over response tokens at a specific layer (for Qwen models).
-
-    Same as extract_response_activations from Section 1, but uses model.model.layers[layer]
-    instead of model.model.language_model.layers[layer] for the Qwen architecture.
-
-    Returns:
-        Batch of mean activation vectors of shape (num_examples, hidden_size)
-    """
-    assert len(system_prompts) == len(questions) == len(responses)
-    all_mean_activations = []
-
-    for system_prompt, question, response in zip(system_prompts, questions, responses):
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": response},
-        ]
-        full_prompt, response_start_idx = format_messages(messages, tokenizer)
-        tokens = tokenizer(full_prompt, return_tensors="pt").to(model.device)
-
-        with t.inference_mode():
-            outputs = model(**tokens, output_hidden_states=True)
-
-        hidden_states = outputs.hidden_states[layer]  # (1, seq_len, hidden_size)
-        seq_len = hidden_states.shape[1]
-        response_mask = t.arange(seq_len, device=hidden_states.device) >= response_start_idx
-        mean_activation = (hidden_states[0] * response_mask[:, None]).sum(0) / response_mask.sum()
-        all_mean_activations.append(mean_activation.cpu())
-
-        del outputs
-        t.cuda.empty_cache()
-
-    return t.stack(all_mean_activations)
-
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -3369,9 +3330,10 @@ def extract_all_layer_activations_qwen(
     responses: list[str],
 ) -> Float[Tensor, "num_examples num_layers d_model"]:
     """
-    Extract mean activation over response tokens at ALL layers (for Qwen models).
+    Extract mean activation over response tokens at ALL layers (for Qwen models), i.e. the residual
+    stream values at the end of each layer (post attention & MLP).
 
-    Like extract_response_activations_qwen but returns activations at every layer,
+    Like extract_response_activations but returns activations at every layer,
     needed for contrastive vector extraction where we want per-layer vectors.
 
     Returns:
@@ -3396,7 +3358,8 @@ def extract_all_layer_activations_qwen(
             outputs = model(**tokens, output_hidden_states=True)
 
         # outputs.hidden_states is a tuple of (num_layers+1) tensors (including embedding layer)
-        # We skip layer 0 (embedding) and use layers 1..num_layers
+        # We skip layer 0 (embedding) and use layers 1..num_layers, so we get the residual stream
+        # values at the end of each layer.
         layer_means = []
         for layer_idx in range(1, num_layers + 1):
             hidden_states = outputs.hidden_states[layer_idx]  # (1, seq_len, hidden_size)
@@ -3500,6 +3463,8 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"  {pos_prompt[:120]}...")
     print("\nNegative system prompt:")
     print(f"  {neg_prompt[:120]}...")
+
+    tests.test_construct_system_prompt(construct_system_prompt)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -4108,7 +4073,9 @@ if MAIN and FLAG_RUN_SECTION_4:
     after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
     after_diff = (after_hidden - baseline_hidden).norm().item()
     print(f"Difference after context manager exit: {after_diff:.6f} (should be ~0)")
-    print("\nAll ActivationSteerer tests passed!")
+    print("\nAll ActivationSteerer inline tests passed!")
+
+    tests.test_activation_steerer_hook(ActivationSteerer)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -4340,7 +4307,7 @@ Your task: implement `compute_trait_projections` which computes the projection o
 
 <details><summary>Hints</summary>
 
-- Use `extract_response_activations_qwen` to get activations at the target layer
+- Use `extract_response_activations` to get activations at the target layer
 - The projection formula is `(activation @ vector) / vector.norm()`
 - For baseline responses, use an empty string as the system prompt
 
@@ -4381,7 +4348,7 @@ def compute_trait_projections(
     # END EXERCISE
     # SOLUTION
     # Extract activations at the target layer
-    activations = extract_response_activations_qwen(
+    activations = extract_response_activations(
         model, tokenizer, system_prompts, questions, responses, layer
     )  # (num_examples, d_model)
 
