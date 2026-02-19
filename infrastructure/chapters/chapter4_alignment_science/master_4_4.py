@@ -1,3 +1,21 @@
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+# Tee print output to master_4_5_output.txt so we can share logs without copy-pasting.
+# This overrides print for Section 4 onward — output goes to both console and file.
+_builtin_print = print
+_output_file = open(
+    "/root/arena-pragmatic-interp/infrastructure/chapters/chapter4_alignment_science/master_4_4_output.txt", "a"
+)
+
+
+def print(*args, **kwargs):  # noqa: A001
+    _builtin_print(*args, **kwargs)
+    file_kwargs = {k: v for k, v in kwargs.items() if k != "file"}
+    _builtin_print(*args, file=_output_file, flush=True, **file_kwargs)
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -3096,10 +3114,12 @@ if MAIN and FLAG_RUN_SECTION_2:
         target_module = _return_layers(model)[layer]
         projections = []
         for q, resp in zip(EVAL_QUESTIONS[:5], calib_responses):
-            messages = _normalize_messages([
-                {"role": "user", "content": q},
-                {"role": "assistant", "content": resp},
-            ])
+            messages = _normalize_messages(
+                [
+                    {"role": "user", "content": q},
+                    {"role": "assistant", "content": resp},
+                ]
+            )
             formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
             inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
             captured: dict = {}
@@ -3118,8 +3138,10 @@ if MAIN and FLAG_RUN_SECTION_2:
 
         thresholds = {q: float(np.quantile(projections, q)) for q in sweep_quantiles}
         layer_thresholds[layer] = thresholds
-        print(f"  Layer {layer}: mean={np.mean(projections):.0f}, "
-              + ", ".join(f"p{q:.2f}={thresholds[q]:.0f}" for q in sweep_quantiles))
+        print(
+            f"  Layer {layer}: mean={np.mean(projections):.0f}, "
+            + ", ".join(f"p{q:.2f}={thresholds[q]:.0f}" for q in sweep_quantiles)
+        )
 
     # 3. Sweep: generate oracle response for each (layer, quantile) config
     print(f"\n{'=' * 80}")
