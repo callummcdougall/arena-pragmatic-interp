@@ -341,3 +341,62 @@ def test_compute_suppressed_attention(compute_suppressed_attention: Callable):
     assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5), "Attention weights don't sum to 1"
 
     print("All tests in `test_compute_suppressed_attention` passed!")
+
+
+def test_hierarchical_category_means(hierarchical_category_means: Callable):
+    """Test hierarchical_category_means by comparing against reference implementation."""
+    import part3_interpreting_reasoning_models.solutions as solutions
+
+    print("Testing hierarchical_category_means...")
+
+    # Construct synthetic chunks_labeled data: 3 scenarios with known categories and metric values
+    all_chunks_labeled = [
+        (0, [
+            {"function_tags": ["planning"], "importance": 0.8},
+            {"function_tags": ["planning"], "importance": 0.6},
+            {"function_tags": ["execution"], "importance": 0.3},
+        ]),
+        (1, [
+            {"function_tags": ["planning"], "importance": 0.4},
+            {"function_tags": ["execution"], "importance": 0.9},
+            {"function_tags": ["execution"], "importance": 0.7},
+            {"function_tags": ["verification"], "importance": 0.5},
+        ]),
+        (2, [
+            {"function_tags": ["execution"], "importance": 0.2},
+            {"function_tags": ["verification"], "importance": 0.1},
+            {"function_tags": ["verification"], "importance": 0.9},
+            {"function_tags": [], "importance": 0.5},  # falls to "other"
+        ]),
+    ]
+
+    for metric in ["importance"]:
+        for excluded in [None, {"verification"}, {"planning", "execution"}]:
+            student = hierarchical_category_means(all_chunks_labeled, metric, excluded_categories=excluded)
+            ref = solutions.hierarchical_category_means(all_chunks_labeled, metric, excluded_categories=excluded)
+
+            assert student.keys() == ref.keys(), (
+                f"Key mismatch with excluded={excluded}: {sorted(student.keys())} vs {sorted(ref.keys())}"
+            )
+            for cat in ref:
+                s_mean, s_se, s_n = student[cat]
+                r_mean, r_se, r_n = ref[cat]
+                assert abs(s_mean - r_mean) < 1e-6, f"Mean mismatch for '{cat}': {s_mean} vs {r_mean}"
+                assert abs(s_se - r_se) < 1e-6, f"SE mismatch for '{cat}': {s_se} vs {r_se}"
+                assert s_n == r_n, f"Count mismatch for '{cat}': {s_n} vs {r_n}"
+
+    # Edge case: missing metric, NaN values, non-numeric values
+    edge_chunks = [
+        (0, [
+            {"function_tags": ["cat_a"], "score": None},
+            {"function_tags": ["cat_a"], "score": float("nan")},
+            {"function_tags": ["cat_a"], "score": "not_a_number"},
+            {"function_tags": ["cat_a"], "score": 1.0},
+            {"function_tags": ["cat_b"]},  # missing metric entirely
+        ]),
+    ]
+    student = hierarchical_category_means(edge_chunks, "score")
+    ref = solutions.hierarchical_category_means(edge_chunks, "score")
+    assert student.keys() == ref.keys(), f"Edge case key mismatch: {sorted(student.keys())} vs {sorted(ref.keys())}"
+
+    print("All tests in `test_hierarchical_category_means` passed!")

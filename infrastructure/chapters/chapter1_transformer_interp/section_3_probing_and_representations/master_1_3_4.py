@@ -1200,6 +1200,7 @@ if MAIN:
     print("Steering hook test passed!")
 
     tests.test_get_hf_activation_steering_hook(get_hf_activation_steering_hook, device, model.config.hidden_size)
+    tests.test_get_hf_activation_steering_hook_matches_reference(get_hf_activation_steering_hook, device, model.config.hidden_size)
 
 
 # ! CELL TYPE: markdown

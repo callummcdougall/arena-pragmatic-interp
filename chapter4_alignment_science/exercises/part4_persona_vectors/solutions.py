@@ -1358,6 +1358,7 @@ def generate_with_steering(
     system_prompt: str | None = None,
     max_new_tokens: int = 200,
     temperature: float = 0.7,
+    messages: list[dict[str, str]] | None = None,
 ) -> str:
     """
     Generate text with simple additive activation steering: h += alpha * steering_vector.
@@ -1365,22 +1366,25 @@ def generate_with_steering(
     Args:
         model: Language model
         tokenizer: Tokenizer
-        prompt: User message content
+        prompt: User message content (ignored if messages is provided)
         steering_vector: Unit-normalized direction to steer in
         steering_layer: Which layer to apply steering at
         alpha: Steering strength. Positive = toward Assistant; negative = away.
-               For Gemma 2 at the extraction layer, try values in the range ±10 to ±50.
+               For Gemma 2 at the extraction layer, try values in the range ±200 to ±500.
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
+        messages: Optional pre-built message list for multi-turn conversations.
+                  If provided, overrides prompt/system_prompt.
 
     Returns:
         Generated text (assistant response only)
     """
-    messages = []
-    if system_prompt is not None:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is None:
+        messages = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
     messages = _normalize_messages(messages)
 
     formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -1429,7 +1433,7 @@ if MAIN:
         prompt=test_prompt,
         steering_vector=axis_vec,
         steering_layer=EXTRACTION_LAYER,
-        alpha=-30.0,
+        alpha=-300.0,
         max_new_tokens=100,
     )
 
@@ -1450,7 +1454,7 @@ if MAIN:
         "ghost": PERSONAS.get("ghost", "You are a ghost wandering between worlds."),
     }
     test_question_steering = "How can I take steps to add meaning to my life?"
-    alpha_values = [-50.0, -20.0, 0.0, 20.0, 50.0]
+    alpha_values = [-500.0, -200.0, 0.0, 200.0, 500.0]
 
     for persona_name, sys_prompt in test_personas_steering.items():
         print(f"\n{'=' * 80}")
@@ -1478,7 +1482,7 @@ def compute_capping_threshold(
     axis_vec: Float[Tensor, " d_model"],
     layer: int,
     eval_questions: list[str],
-    quantile: float = 0.1,
+    quantile: float = 0.25,
 ) -> float:
     """
     Compute a floor threshold from normal Assistant responses.
@@ -1492,7 +1496,7 @@ def compute_capping_threshold(
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         layer: Layer to extract activations from
         eval_questions: Questions to use for calibration
-        quantile: Which quantile of normal projections to use as the floor threshold
+        quantile: Which quantile of normal projections to use as the floor threshold (default: 0.25)
 
     Returns:
         Threshold value (projections below this indicate persona drift)
@@ -1546,7 +1550,7 @@ if MAIN:
         axis_vec=axis_vec,
         layer=EXTRACTION_LAYER,
         eval_questions=EVAL_QUESTIONS[:5],
-        quantile=0.1,
+        quantile=0.25,
     )
     print(f"\nUsing threshold = {threshold:.0f}")
 
@@ -1562,31 +1566,37 @@ def generate_with_capping(
     system_prompt: str | None = None,
     max_new_tokens: int = 200,
     temperature: float = 0.7,
+    messages: list[dict[str, str]] | None = None,
 ) -> str:
     """
     Generate text with activation capping to prevent persona drift.
 
-    At each generation step, if the projection of the last token's hidden state onto
-    axis_vec drops below threshold, the parallel component is capped at threshold.
+    At each generation step, for every position in the residual stream, if the projection
+    onto axis_vec drops below threshold, the parallel component is pushed back up to threshold.
+    Applying capping to all positions (not just the last token) is important because it modifies
+    the KV cache during the prefill pass, influencing all subsequent generation.
 
     Args:
         model: Language model
         tokenizer: Tokenizer
-        prompt: User message content
+        prompt: User message content (ignored if messages is provided)
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         capping_layer: Which layer to apply capping at
         threshold: Floor threshold; projections below this get capped
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
+        messages: Optional pre-built message list for multi-turn conversations.
+                  If provided, overrides prompt/system_prompt.
 
     Returns:
         Generated text (assistant response only)
     """
-    messages = []
-    if system_prompt is not None:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is None:
+        messages = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
     messages = _normalize_messages(messages)
 
     formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -1596,14 +1606,15 @@ def generate_with_capping(
     axis = axis_vec.to(model.device)
 
     def capping_hook(module, input, output):
-        h = output[0][0, -1, :]  # Last token, first batch element
-        ax = axis.to(h.device, dtype=h.dtype)
-        proj = (h @ ax).item()
+        hidden = output[0]  # (batch, seq_len, d_model)
+        ax = axis.to(hidden.device, dtype=hidden.dtype)
 
-        if proj < threshold:
-            h_parallel = (h @ ax) * ax
-            h_perp = h - h_parallel
-            output[0][0, -1, :] = threshold * ax + h_perp
+        # Project all positions onto axis: (seq_len,)
+        proj = hidden[0] @ ax
+        deficit = (threshold - proj).clamp(min=0.0)
+
+        if (deficit > 0).any():
+            output[0][0] += deficit.unsqueeze(-1) * ax.unsqueeze(0)
 
         return output
 
@@ -1692,7 +1703,7 @@ def evaluate_capping_on_transcript(
     """
     user_messages = [msg for msg in transcript if msg["role"] == "user"][:max_turns]
 
-    # Generate uncapped conversation
+    # Generate uncapped conversation (pass full history so model can drift)
     print("Generating uncapped conversation...")
     uncapped_history: list[dict[str, str]] = []
     for user_msg in tqdm(user_messages):
@@ -1700,17 +1711,18 @@ def evaluate_capping_on_transcript(
         response = generate_with_capping(
             model=model,
             tokenizer=tokenizer,
-            prompt=user_msg["content"],
+            prompt="",  # unused when messages is provided
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=float("-inf"),  # No capping (threshold = -inf never triggers)
             max_new_tokens=100,
             temperature=0.7,
+            messages=list(uncapped_history),  # Full conversation so far
         )
         uncapped_history.append({"role": "assistant", "content": response})
         t.cuda.empty_cache()
 
-    # Generate capped conversation
+    # Generate capped conversation (pass full history so model can drift)
     print("Generating capped conversation...")
     capped_history: list[dict[str, str]] = []
     for user_msg in tqdm(user_messages):
@@ -1718,12 +1730,13 @@ def evaluate_capping_on_transcript(
         response = generate_with_capping(
             model=model,
             tokenizer=tokenizer,
-            prompt=user_msg["content"],
+            prompt="",  # unused when messages is provided
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=threshold,
             max_new_tokens=100,
             temperature=0.7,
+            messages=list(capped_history),  # Full conversation so far
         )
         capped_history.append({"role": "assistant", "content": response})
         t.cuda.empty_cache()
@@ -2237,8 +2250,13 @@ class ActivationSteerer:
     Context manager that adds (coeff * steering_vector) to a chosen layer's hidden states
     during forward passes. Used for inference-time activation steering.
 
+    Supports three position modes:
+    - "all": steer all token positions
+    - "prompt": steer all positions during prefill (seq_len > 1), skip during generation
+    - "response": steer only the last token position
+
     Usage:
-        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20):
+        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20, positions="response"):
             output = model.generate(...)
     """
 
@@ -2248,31 +2266,48 @@ class ActivationSteerer:
         steering_vector: Float[Tensor, " d_model"],
         coeff: float = 1.0,
         layer_idx: int = 20,
+        positions: str = "all",
     ):
+        assert positions in ("all", "prompt", "response"), f"positions must be 'all', 'prompt', or 'response', got {positions!r}"
         self.model = model
         self.coeff = coeff
         self.layer_idx = layer_idx
+        self.positions = positions
         self._handle = None
 
         # Store vector, will be moved to correct device/dtype in hook
         self.vector = steering_vector.clone()
 
     def _hook_fn(self, module, input, output):
-        """Add coeff * vector to hidden states."""
+        """Add coeff * vector to hidden states according to the position mode."""
         steer = self.coeff * self.vector
 
-        # Handle tuple output (common in HuggingFace models)
+        # Extract hidden states (handle tuple or plain tensor output)
         if isinstance(output, tuple):
             hidden_states = output[0]
-            steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
-            modified = hidden_states + steer
-            return (modified,) + output[1:]
         else:
-            steer = steer.to(output.device, dtype=output.dtype)
-            return output + steer
+            hidden_states = output
+
+        steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
+
+        if self.positions == "all":
+            modified = hidden_states + steer
+        elif self.positions == "prompt":
+            # During prefill (seq_len > 1): steer all positions
+            # During generation (seq_len == 1): skip (it's a response token)
+            if hidden_states.shape[1] == 1:
+                return output
+            modified = hidden_states + steer
+        elif self.positions == "response":
+            # Only steer the last token position
+            modified = hidden_states.clone()
+            modified[:, -1, :] += steer
+
+        if isinstance(output, tuple):
+            return (modified,) + output[1:]
+        return modified
 
     def __enter__(self):
-        # Register hook on the target layer (Qwen architecture)
         layer = self.model.model.layers[self.layer_idx]
         self._handle = layer.register_forward_hook(self._hook_fn)
         return self

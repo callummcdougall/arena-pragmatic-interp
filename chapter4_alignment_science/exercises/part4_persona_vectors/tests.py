@@ -781,85 +781,177 @@ def test_construct_system_prompt(construct_system_prompt: Callable):
     print("All tests in `test_construct_system_prompt` passed!")
 
 
-def test_activation_steerer_hook(ActivationSteerer):
+def test_activation_steerer(ActivationSteerer, model, tokenizer):
     """
-    Test the ActivationSteerer's hook math and context manager lifecycle
-    using synthetic tensors (no model forward pass needed).
+    Progressive tests for ActivationSteerer with all three position modes.
+
+    Stage 1: Basic functionality (runs without error, context manager lifecycle)
+    Stage 2: Steering produces different outputs than no steering
+    Stage 3: Position modes behave correctly (all vs prompt vs response)
+    Stage 4: Exact match against reference implementation (solutions.ActivationSteerer)
     """
+    import part4_persona_vectors.solutions as solutions
     import torch as t
 
-    print("Testing ActivationSteerer hook math...")
+    print("Testing ActivationSteerer (progressive stages)...")
 
-    # Create a mock model with the expected attribute structure (model.model.layers[i])
-    class MockLayer:
-        def __init__(self):
-            self._hooks = []
+    # d_model = model.config.hidden_size
+    num_layers = model.config.num_hidden_layers
+    test_layer = num_layers // 2
 
-        def register_forward_hook(self, fn):
-            handle = type("Handle", (), {"remove": lambda self: None})()
-            self._hooks.append(fn)
-            return handle
+    # Use a row of the unembedding matrix as a deterministic steering vector
+    # (avoids randomness, and is a real direction in the model's representation space)
+    unembed = model.lm_head.weight.data[42].detach().float().cpu()  # token id 42
+    steer_vec = unembed / unembed.norm()  # unit-normalize
 
-    class MockModel:
-        def __init__(self):
-            self.model = type("InnerModel", (), {"layers": [MockLayer() for _ in range(3)]})()
+    # Prepare a test input
+    test_prompt = "What is the meaning of life?"
+    messages = [{"role": "user", "content": test_prompt}]
+    formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    test_inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
 
-    mock_model = MockModel()
+    # ── Stage 1: Basic functionality ──
+    print("\n  Stage 1: Basic functionality...")
 
-    # Test 1: Vector is cloned (not aliased)
-    print("  Testing vector cloning...")
-    vec = t.tensor([1.0, 2.0, 3.0])
-    steerer = ActivationSteerer(mock_model, vec, coeff=1.0, layer_idx=0)
-    assert steerer.vector.data_ptr() != vec.data_ptr(), "Steering vector should be cloned, not aliased"
-    assert t.allclose(steerer.vector, vec), "Cloned vector should have same values"
-    print("    Passed: vector is cloned")
+    # 1a: Runs without error
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="all"):
+        with t.inference_mode():
+            _ = model(**test_inputs)
+    print("    1a: positions='all' runs without error")
 
-    # Test 2: Hook correctly adds coeff * vector to tuple output
-    print("  Testing hook with tuple output (coeff=2.0)...")
-    steerer = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=2.0, layer_idx=0)
-    mock_hidden = t.tensor([[[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]])  # (1, 2, 3)
-    mock_output = (mock_hidden.clone(), "extra_data")
-    result = steerer._hook_fn(None, None, mock_output)
-    expected = t.tensor([[[3.0, 1.0, 1.0], [4.0, 2.0, 2.0]]])  # +2.0 on first dim
-    assert t.allclose(result[0], expected, atol=1e-6), (
-        f"Hook should add coeff*vector to hidden states. Expected {expected}, got {result[0]}"
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="prompt"):
+        with t.inference_mode():
+            _ = model(**test_inputs)
+    print("    1b: positions='prompt' runs without error")
+
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="response"):
+        with t.inference_mode():
+            _ = model(**test_inputs)
+    print("    1c: positions='response' runs without error")
+
+    # 1d: Context manager cleanup
+    steerer = ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer)
+    assert steerer._handle is None, "Handle should be None before __enter__"
+    steerer.__enter__()
+    assert steerer._handle is not None, "Handle should be set after __enter__"
+    steerer.__exit__(None, None, None)
+    assert steerer._handle is None, "Handle should be None after __exit__"
+    print("    1d: Context manager lifecycle correct")
+
+    # 1e: Vector is cloned
+    assert steerer.vector.data_ptr() != steer_vec.data_ptr(), "Vector should be cloned"
+    print("    1e: Vector is cloned (not aliased)")
+
+    # ── Stage 2: Steering produces different outputs ──
+    print("\n  Stage 2: Steering produces different outputs...")
+
+    with t.inference_mode():
+        baseline_out = model(**test_inputs, output_hidden_states=True)
+    baseline_hidden = baseline_out.hidden_states[test_layer + 1].cpu()  # (1, seq_len, d_model)
+
+    # 2a: coeff=0 matches baseline
+    with ActivationSteerer(model, steer_vec, coeff=0.0, layer_idx=test_layer, positions="all"):
+        with t.inference_mode():
+            zero_out = model(**test_inputs, output_hidden_states=True)
+    zero_hidden = zero_out.hidden_states[test_layer + 1].cpu()
+    zero_diff = (zero_hidden - baseline_hidden).norm().item()
+    assert zero_diff < 1e-3, f"coeff=0 should match baseline, got diff={zero_diff}"
+    print(f"    2a: coeff=0 matches baseline (diff={zero_diff:.6f})")
+
+    # 2b: coeff!=0 differs from baseline
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="all"):
+        with t.inference_mode():
+            steered_out = model(**test_inputs, output_hidden_states=True)
+    steered_hidden = steered_out.hidden_states[test_layer + 1].cpu()
+    steered_diff = (steered_hidden - baseline_hidden).norm().item()
+    assert steered_diff > 0.1, f"coeff=5 should differ from baseline, got diff={steered_diff}"
+    print(f"    2b: coeff=5 differs from baseline (diff={steered_diff:.2f})")
+
+    # 2c: Hook is removed after exit (no lingering effect)
+    with t.inference_mode():
+        after_out = model(**test_inputs, output_hidden_states=True)
+    after_hidden = after_out.hidden_states[test_layer + 1].cpu()
+    after_diff = (after_hidden - baseline_hidden).norm().item()
+    assert after_diff < 1e-3, f"Hook should be removed after exit, got diff={after_diff}"
+    print(f"    2c: No lingering hooks after exit (diff={after_diff:.6f})")
+
+    # ── Stage 3: Position modes behave correctly ──
+    print("\n  Stage 3: Position modes...")
+
+    # 3a: "response" mode only steers the last token
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="response"):
+        with t.inference_mode():
+            resp_out = model(**test_inputs, output_hidden_states=True)
+    resp_hidden = resp_out.hidden_states[test_layer + 1].cpu()
+    # Last token should differ
+    last_diff = (resp_hidden[0, -1] - baseline_hidden[0, -1]).norm().item()
+    # First token should NOT differ
+    first_diff = (resp_hidden[0, 0] - baseline_hidden[0, 0]).norm().item()
+    assert last_diff > 0.1, f"'response' should steer last token, got diff={last_diff}"
+    assert first_diff < 1e-3, f"'response' should NOT steer first token, got diff={first_diff}"
+    print(f"    3a: 'response' steers last (diff={last_diff:.2f}) not first (diff={first_diff:.6f})")
+
+    # 3b: "prompt" mode steers all tokens during prefill (seq_len > 1)
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="prompt"):
+        with t.inference_mode():
+            prompt_out = model(**test_inputs, output_hidden_states=True)
+    prompt_hidden = prompt_out.hidden_states[test_layer + 1].cpu()
+    prompt_first_diff = (prompt_hidden[0, 0] - baseline_hidden[0, 0]).norm().item()
+    prompt_last_diff = (prompt_hidden[0, -1] - baseline_hidden[0, -1]).norm().item()
+    assert prompt_first_diff > 0.1, f"'prompt' should steer first token during prefill, got diff={prompt_first_diff}"
+    assert prompt_last_diff > 0.1, f"'prompt' should steer last token during prefill, got diff={prompt_last_diff}"
+    print(
+        f"    3b: 'prompt' steers first (diff={prompt_first_diff:.2f}) and last (diff={prompt_last_diff:.2f}) during prefill"
     )
-    assert result[1] == "extra_data", "Hook should preserve extra tuple elements"
-    print("    Passed: hook adds coeff*vector correctly, preserves extra tuple elements")
 
-    # Test 3: coeff=0 produces no change
-    print("  Testing coeff=0 (no modification)...")
-    steerer_zero = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=0.0, layer_idx=0)
-    mock_hidden2 = t.tensor([[[5.0, 6.0, 7.0]]])
-    mock_output2 = (mock_hidden2.clone(),)
-    result2 = steerer_zero._hook_fn(None, None, mock_output2)
-    assert t.allclose(result2[0], mock_hidden2, atol=1e-6), (
-        f"coeff=0 should produce no change. Expected {mock_hidden2}, got {result2[0]}"
-    )
-    print("    Passed: coeff=0 produces no change")
+    # 3c: "all" mode steers all tokens
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="all"):
+        with t.inference_mode():
+            all_out = model(**test_inputs, output_hidden_states=True)
+    all_hidden = all_out.hidden_states[test_layer + 1].cpu()
+    all_first_diff = (all_hidden[0, 0] - baseline_hidden[0, 0]).norm().item()
+    all_last_diff = (all_hidden[0, -1] - baseline_hidden[0, -1]).norm().item()
+    assert all_first_diff > 0.1, f"'all' should steer first token, got diff={all_first_diff}"
+    assert all_last_diff > 0.1, f"'all' should steer last token, got diff={all_last_diff}"
+    print(f"    3c: 'all' steers first (diff={all_first_diff:.2f}) and last (diff={all_last_diff:.2f})")
 
-    # Test 4: Hook handles non-tuple output
-    print("  Testing hook with non-tuple output...")
-    steerer_plain = ActivationSteerer(mock_model, t.tensor([0.0, 1.0, 0.0]), coeff=3.0, layer_idx=0)
-    mock_plain = t.tensor([[[1.0, 1.0, 1.0]]])
-    result3 = steerer_plain._hook_fn(None, None, mock_plain)
-    expected3 = t.tensor([[[1.0, 4.0, 1.0]]])
-    assert t.allclose(result3, expected3, atol=1e-6), (
-        f"Hook should handle non-tuple output. Expected {expected3}, got {result3}"
-    )
-    print("    Passed: non-tuple output handled correctly")
+    # 3d: "prompt" mode should NOT steer during generation (seq_len == 1)
+    # We test this by generating a few tokens and checking the hook skips single-token steps
+    single_token_input = test_inputs["input_ids"][:, -1:]  # just the last token
+    single_attn = t.ones(1, 1, dtype=t.long, device=model.device)
+    with t.inference_mode():
+        baseline_single = model(input_ids=single_token_input, attention_mask=single_attn, output_hidden_states=True)
+    baseline_single_h = baseline_single.hidden_states[test_layer + 1].cpu()
 
-    # Test 5: Context manager lifecycle
-    print("  Testing context manager lifecycle...")
-    steerer_ctx = ActivationSteerer(mock_model, t.tensor([1.0, 0.0, 0.0]), coeff=1.0, layer_idx=0)
-    assert steerer_ctx._handle is None, "Handle should be None before entering context"
-    steerer_ctx.__enter__()
-    assert steerer_ctx._handle is not None, "Handle should be set after entering context"
-    steerer_ctx.__exit__(None, None, None)
-    assert steerer_ctx._handle is None, "Handle should be None after exiting context"
-    print("    Passed: context manager correctly manages hook lifecycle")
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="prompt"):
+        with t.inference_mode():
+            steered_single = model(input_ids=single_token_input, attention_mask=single_attn, output_hidden_states=True)
+    steered_single_h = steered_single.hidden_states[test_layer + 1].cpu()
+    single_diff = (steered_single_h - baseline_single_h).norm().item()
+    assert single_diff < 1e-3, f"'prompt' should skip single-token (generation) steps, got diff={single_diff}"
+    print(f"    3d: 'prompt' skips single-token steps (diff={single_diff:.6f})")
 
-    print("All tests in `test_activation_steerer_hook` passed!")
+    # ── Stage 4: Match reference implementation ──
+    print("\n  Stage 4: Match reference implementation (solutions.ActivationSteerer)...")
+
+    for mode in ("all", "prompt", "response"):
+        with ActivationSteerer(model, steer_vec, coeff=3.0, layer_idx=test_layer, positions=mode):
+            with t.inference_mode():
+                student_out = model(**test_inputs, output_hidden_states=True)
+        student_h = student_out.hidden_states[test_layer + 1].cpu()
+
+        with solutions.ActivationSteerer(model, steer_vec, coeff=3.0, layer_idx=test_layer, positions=mode):
+            with t.inference_mode():
+                ref_out = model(**test_inputs, output_hidden_states=True)
+        ref_h = ref_out.hidden_states[test_layer + 1].cpu()
+
+        match_diff = (student_h - ref_h).norm().item()
+        assert match_diff < 1e-3, (
+            f"positions='{mode}': student output differs from solutions by {match_diff:.4f} (should be ~0)"
+        )
+        print(f"    4: positions='{mode}' matches reference (diff={match_diff:.6f})")
+
+    print("\nAll tests in `test_activation_steerer` passed!")
 
 
 def test_capping_hook_math():
@@ -938,9 +1030,7 @@ def test_capping_hook_math():
         h_perp_hd = h_hd - h_par_hd
         h_capped_hd = threshold * axis_hd + h_perp_hd
         proj_final = (h_capped_hd @ axis_hd).item()
-        assert abs(proj_final - threshold) < 1e-4, (
-            f"64D capped projection should equal {threshold}, got {proj_final}"
-        )
+        assert abs(proj_final - threshold) < 1e-4, f"64D capped projection should equal {threshold}, got {proj_final}"
         # Verify perpendicular component preserved
         h_perp_check = h_capped_hd - (h_capped_hd @ axis_hd) * axis_hd
         assert t.allclose(h_perp_check, h_perp_hd, atol=1e-4), "64D perpendicular should be preserved"
@@ -986,9 +1076,7 @@ def test_conversation_analyzer_project(ConversationAnalyzer):
     print("  Testing projection values...")
     expected = [1.0, 0.0, 3.0, -2.0]
     for i, (actual, exp) in enumerate(zip(projections, expected)):
-        assert abs(actual - exp) < 1e-5, (
-            f"Projection {i}: expected {exp}, got {actual}"
-        )
+        assert abs(actual - exp) < 1e-5, f"Projection {i}: expected {exp}, got {actual}"
     print(f"    Passed: projections = {[round(p, 4) for p in projections]}")
 
     # Test 3: Non-unit axis still works (dot product, not normalized)

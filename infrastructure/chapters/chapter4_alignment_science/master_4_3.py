@@ -4360,6 +4360,11 @@ def hierarchical_category_means(
     return {cat: (*_mean_se(means), len(means)) for cat, means in scenario_cat_means.items()}
 
 
+# HIDE
+if MAIN and FLAG_RUN_SECTION_4:
+    tests.test_hierarchical_category_means(hierarchical_category_means)
+# END HIDE
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []

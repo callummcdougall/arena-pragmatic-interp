@@ -166,7 +166,7 @@ if f"{root}/{chapter}/exercises" not in sys.path:
 
 os.chdir(f"{root}/{chapter}/exercises")
 
-FLAG_RUN_SECTION_1 = False
+FLAG_RUN_SECTION_1 = True
 FLAG_RUN_SECTION_2 = True
 FLAG_RUN_SECTION_3 = False
 FLAG_RUN_SECTION_4 = False
@@ -1805,7 +1805,16 @@ if MAIN and FLAG_RUN_SECTION_2:
     # We re-normalize here defensively and cast to float32 for consistent projections.
     axis_vec = F.normalize(assistant_axis.cpu().float(), dim=0)
     print(f"axis_vec shape: {axis_vec.shape}, norm: {axis_vec.norm().item():.6f}")
-    # Rough activation norm check: helps calibrate steering alpha values
+
+    # Compute steering scale: projection gap between default and role persona groups.
+    # This lets alpha be in interpretable "persona gap" units: alpha=1.0 = one full gap.
+    _default_projs = t.stack([persona_vectors[n].cpu().float() for n in DEFAULT_PERSONAS if n in persona_vectors]) @ axis_vec
+    _role_names = [n for n in persona_vectors if n not in DEFAULT_PERSONAS]
+    _role_projs = t.stack([persona_vectors[n].cpu().float() for n in _role_names]) @ axis_vec
+    AXIS_SCALE = float((_default_projs.mean() - _role_projs.mean()).item())
+    axis_steer = axis_vec * AXIS_SCALE  # Scaled vector for steering (not unit-norm)
+    print(f"Steering scale (default−role gap): {AXIS_SCALE:.0f}")
+    print(f"  α=1.0 adds a perturbation of magnitude {AXIS_SCALE:.0f}")
     print("axis_vec is ready for monitoring, steering, and capping.")
 # END HIDE
 
@@ -2496,16 +2505,19 @@ r"""
 > Given a persona vector $v_\ell$ extracted from layer $\ell$, we steer activations toward this
 > direction at each decoding step: $h_\ell \leftarrow h_\ell + \alpha \cdot v_\ell$
 
-We apply this at the **last token position** of each generation step. Thanks to KV caching, each
-step after the first only processes one new token.
+We apply this at **every position** in the residual stream. During the prefill pass this modifies
+the cached key/value representations for the system prompt and prior context, producing a much
+stronger effect than last-token-only steering. During subsequent decoding steps (with KV caching),
+only the single new token is processed, so the hook naturally applies to just that token.
 
 - **Positive α**: Steers toward the Assistant persona — more grounded, professional, resistant
   to role-playing
 - **Negative α**: Steers away — more willing to inhabit alternative personas, eventually
   producing mystical or theatrical prose
 
-Since we're using simple additive steering, the appropriate scale for α depends on the activation
-norm at the chosen layer. For Gemma 2 at the extraction layer, try α in the range ±10 to ±50.
+To make α interpretable, we pre-scale the steering vector by `AXIS_SCALE` — the projection gap
+between default-assistant and role-playing personas along the axis (computed in Section 1). With
+this scaling, **α = 1.0 means "shift by one full persona gap"**. Try α in the range ±1 to ±5.
 """
 
 # ! CELL TYPE: markdown
@@ -2523,12 +2535,12 @@ r"""
 > ```
 
 Implement `generate_with_steering`, which uses a forward hook to add `alpha * steering_vector`
-to the hidden states at the last token position of each generation step.
+to the hidden states at **all positions** during each generation step.
 
 **Implementation notes:**
 - Register the hook on `_return_layers(model)[steering_layer]`
-- Inside the hook: `hidden_states[:, -1, :] += alpha * steer_vec` (cast to device/dtype as
-  needed)
+- Inside the hook: `hidden_states += alpha * steer_vec` (cast to device/dtype as needed; this
+  broadcasts over the sequence length dimension)
 - Return the modified `(hidden_states,) + output[1:]` from the hook
 - Use `try/finally` to ensure the hook is removed after generation
 - The function accepts a `system_prompt` argument for personas like the oracle (leave `None` for
@@ -2561,10 +2573,10 @@ def generate_with_steering(
         model: Language model
         tokenizer: Tokenizer
         prompt: User message content (ignored if messages is provided)
-        steering_vector: Unit-normalized direction to steer in
+        steering_vector: Direction to steer in (use axis_steer for interpretable alpha units)
         steering_layer: Which layer to apply steering at
-        alpha: Steering strength. Positive = toward Assistant; negative = away.
-               For Gemma 2 at the extraction layer, try values in the range ±10 to ±50.
+        alpha: Steering strength (in persona-gap units when using axis_steer).
+               Positive = toward Assistant; negative = away. Try ±1 to ±5.
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
@@ -2593,7 +2605,9 @@ def generate_with_steering(
 
     def steering_hook(module, input, output):
         hidden_states = output[0]
-        hidden_states[:, -1, :] += alpha * steer_vec.to(hidden_states.device, dtype=hidden_states.dtype)
+        # Steer ALL positions (not just last token) — this modifies the KV cache during
+        # prefill, which has a much stronger effect than last-token-only steering.
+        hidden_states += alpha * steer_vec.to(hidden_states.device, dtype=hidden_states.dtype)
         return (hidden_states,) + output[1:]
 
     hook_handle = _return_layers(model)[steering_layer].register_forward_hook(steering_hook)
@@ -2621,7 +2635,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         model=model,
         tokenizer=tokenizer,
         prompt=test_prompt,
-        steering_vector=axis_vec,
+        steering_vector=axis_steer,
         steering_layer=EXTRACTION_LAYER,
         alpha=0.0,
         max_new_tokens=100,
@@ -2631,16 +2645,16 @@ if MAIN and FLAG_RUN_SECTION_2:
         model=model,
         tokenizer=tokenizer,
         prompt=test_prompt,
-        steering_vector=axis_vec,
+        steering_vector=axis_steer,
         steering_layer=EXTRACTION_LAYER,
-        alpha=-30.0,
+        alpha=-3.0,
         max_new_tokens=100,
     )
 
     print("Baseline (alpha=0):")
     print_with_wrap(baseline)
     print("\n" + "=" * 80 + "\n")
-    print("Steered away from Assistant (alpha=-30):")
+    print("Steered away from Assistant (alpha=-3.0):")
     print_with_wrap(steered_away)
 
     tests.test_generate_with_steering_basic(generate_with_steering, model, tokenizer, d_model=model.config.hidden_size)
@@ -2663,7 +2677,7 @@ r"""
 Conduct systematic steering experiments to understand the behavioral effects:
 
 **Finding the right alpha scale**: Start by running the model with several alpha values (e.g.,
-0, ±10, ±30, ±50) on a single prompt and checking whether the output changes meaningfully.
+0, ±1, ±2, ±5) on a single prompt and checking whether the output changes meaningfully.
 Too small and nothing changes; too large and the output becomes incoherent.
 
 **Experiment 1: Symmetric steering**
@@ -2703,7 +2717,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         "ghost": PERSONAS.get("ghost", "You are a ghost wandering between worlds."),
     }
     test_question_steering = "How can I take steps to add meaning to my life?"
-    alpha_values = [-50.0, -20.0, 0.0, 20.0, 50.0]
+    alpha_values = [-5.0, -2.0, 0.0, 2.0, 5.0]
 
     for persona_name, sys_prompt in test_personas_steering.items():
         print(f"\n{'=' * 80}")
@@ -2715,7 +2729,7 @@ if MAIN and FLAG_RUN_SECTION_2:
                 tokenizer=tokenizer,
                 prompt=test_question_steering,
                 system_prompt=sys_prompt,
-                steering_vector=axis_vec,
+                steering_vector=axis_steer,
                 steering_layer=EXTRACTION_LAYER,
                 alpha=alpha,
                 max_new_tokens=100,
@@ -2744,16 +2758,21 @@ you from going off the road.
 
 **Method**:
 1. Calibrate the "safe range" by projecting normal assistant responses onto `axis_vec` and taking
-   the 10th percentile as the floor threshold `τ`
-2. During generation, compute `proj = (h @ axis_vec).item()` at the target layer for each token
+   the 25th percentile as the floor threshold `τ`
+2. During generation, for **every position** in the residual stream at the target layer, compute
+   `proj = h @ axis_vec`
 3. If `proj < τ` (drifting away from Assistant), intervene:
-   - Decompose: `h = h_parallel + h_perp` where `h_parallel = (h @ axis_vec) * axis_vec`
-   - Replace the parallel component: `h_new = τ * axis_vec + h_perp`
+   - Add `(τ - proj) * axis_vec` to push the projection back up to the threshold
+   - This preserves the perpendicular component and replaces only the parallel component
 4. If `proj ≥ τ`, do nothing
 
-Note: this "floor capping" on `axis_vec` is mathematically equivalent to the paper's "ceiling
-capping" on `-axis_vec` — both operations keep the perpendicular component and replace the
-parallel component with the threshold value.
+Applying capping to **all sequence positions** (not just the last token) is important: during
+the prefill pass, it modifies the cached key/value representations for the system prompt and
+prior context, which influences all subsequent token generation.
+
+Note: the paper applies capping across multiple later layers simultaneously (e.g., layers 46–53
+for a 64-layer model) with per-layer calibrated thresholds. Our single-layer implementation is
+a simplified version that still demonstrates the core idea but produces subtler effects.
 """
 
 # ! CELL TYPE: markdown
@@ -2781,7 +2800,7 @@ Implement `compute_capping_threshold` to estimate the floor of the "safe range":
 4. Return `np.quantile(projections, quantile)` as the threshold
 
 A lower quantile (e.g., 0.05) gives a more permissive threshold (only cap extreme drift);
-a higher one (e.g., 0.20) is stricter.
+a higher one (e.g., 0.50) is stricter. The paper uses p0.25 as the default.
 """
 
 # ! CELL TYPE: code
@@ -2795,7 +2814,7 @@ def compute_capping_threshold(
     axis_vec: Float[Tensor, " d_model"],
     layer: int,
     eval_questions: list[str],
-    quantile: float = 0.1,
+    quantile: float = 0.25,
 ) -> float:
     """
     Compute a floor threshold from normal Assistant responses.
@@ -2809,7 +2828,7 @@ def compute_capping_threshold(
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         layer: Layer to extract activations from
         eval_questions: Questions to use for calibration
-        quantile: Which quantile of normal projections to use as the floor threshold
+        quantile: Which quantile of normal projections to use as the floor threshold (default: 0.25)
 
     Returns:
         Threshold value (projections below this indicate persona drift)
@@ -2869,7 +2888,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         axis_vec=axis_vec,
         layer=EXTRACTION_LAYER,
         eval_questions=EVAL_QUESTIONS[:5],
-        quantile=0.1,
+        quantile=0.25,
     )
     print(f"\nUsing threshold = {threshold:.0f}")
 # END HIDE
@@ -2891,13 +2910,16 @@ r"""
 Implement `generate_with_capping`, which adds a capping hook to prevent the projection from
 dropping below `threshold` during generation.
 
-**Algorithm** (runs at the last token position of every generation step):
-1. Compute `proj = (h @ axis).item()` where `axis = axis_vec.to(h.device, dtype=h.dtype)`
-2. If `proj < threshold`:
-   - `h_parallel = (h @ axis) * axis`
-   - `h_perp = h - h_parallel`
-   - `output[0][0, -1, :] = threshold * axis + h_perp`
-3. If `proj >= threshold`: leave h unchanged
+**Algorithm** (runs at **every position** of the residual stream at the target layer):
+1. Compute `proj = hidden[0] @ axis` to get per-position projections (shape: `(seq_len,)`)
+2. Compute `deficit = (threshold - proj).clamp(min=0.0)` — how far below threshold each position is
+3. Add `deficit.unsqueeze(-1) * axis.unsqueeze(0)` to the hidden states — this pushes
+   below-threshold positions back up to exactly the threshold value
+4. Positions already at or above threshold are left unchanged (deficit = 0)
+
+Applying capping to **all positions** (not just the last token) is important: during the prefill
+pass it modifies the cached key/value representations for the system prompt and prior context,
+which influences all subsequent token generation.
 
 The function also accepts an optional `messages` list for multi-turn conversations —
 this is important for the evaluation exercise where we generate turn-by-turn with
@@ -2932,8 +2954,10 @@ def generate_with_capping(
     """
     Generate text with activation capping to prevent persona drift.
 
-    At each generation step, if the projection of the last token's hidden state onto
-    axis_vec drops below threshold, the parallel component is capped at threshold.
+    At each generation step, for every position in the residual stream, if the projection
+    onto axis_vec drops below threshold, the parallel component is pushed back up to threshold.
+    Applying capping to all positions (not just the last token) is important because it modifies
+    the KV cache during the prefill pass, influencing all subsequent generation.
 
     Args:
         model: Language model
@@ -2970,16 +2994,19 @@ def generate_with_capping(
     _cap_stats = {"total": 0, "triggered": 0}
 
     def capping_hook(module, input, output):
-        h = output[0][0, -1, :]  # Last token, first batch element
-        ax = axis.to(h.device, dtype=h.dtype)
-        proj = (h @ ax).item()
-        _cap_stats["total"] += 1
+        hidden = output[0]  # (batch, seq_len, d_model)
+        ax = axis.to(hidden.device, dtype=hidden.dtype)
 
-        if proj < threshold:
-            _cap_stats["triggered"] += 1
-            h_parallel = (h @ ax) * ax
-            h_perp = h - h_parallel
-            output[0][0, -1, :] = threshold * ax + h_perp
+        # Project all positions onto axis: (seq_len,)
+        proj = hidden[0] @ ax
+        deficit = (threshold - proj).clamp(min=0.0)  # How far below threshold
+        n_below = (deficit > 0).sum().item()
+        _cap_stats["total"] += proj.numel()
+        _cap_stats["triggered"] += n_below
+
+        if n_below > 0:
+            # Push below-threshold positions back up to threshold
+            output[0][0] += deficit.unsqueeze(-1) * ax.unsqueeze(0)
 
         return output
 
@@ -3016,7 +3043,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         tokenizer=tokenizer,
         prompt=ORACLE_USER,
         system_prompt=ORACLE_SYSTEM,
-        steering_vector=axis_vec,
+        steering_vector=axis_steer,
         steering_layer=EXTRACTION_LAYER,
         alpha=0.0,
         max_new_tokens=100,
@@ -3071,8 +3098,12 @@ case-study transcripts?
    - Autorater delusion risk score
 4. Plot both metrics side by side for capped vs uncapped
 
+**Important**: pass the full conversation history (not just the current user message) to each
+generation call. This lets the model accumulate context and potentially drift — which is exactly
+what capping should prevent.
+
 **Evaluation criteria**:
-- Does capping keep projections higher (closer to the Assistant end)?
+- Does capping produce qualitatively more grounded responses?
 - Does capping reduce autorater risk scores?
 - Does capping preserve response quality? (Check a few responses qualitatively)
 
@@ -3253,16 +3284,19 @@ if MAIN and FLAG_RUN_SECTION_2:
 r"""
 <details><summary>Expected results</summary>
 
-The capped projection line should stay at or above the threshold (by construction — the cap
-prevents it from going lower). The uncapped line may drift down over the course of the
-conversation as the model increasingly adopts the user's framing.
+The capped responses should be qualitatively more grounded and assistant-like than the uncapped
+responses. The capped model should engage with the user's questions but avoid validating delusional
+beliefs or drifting into role-playing mode.
 
-Qualitatively, the capped responses should still engage with the user's questions but avoid
-validating delusional beliefs or drifting into role-playing mode. The capped model should sound
-more like a grounded assistant even when given role-playing prompts.
+Note that the post-hoc projections (measured by running the model on the generated text **without**
+hooks) won't necessarily stay above the threshold — they measure what the model "thinks" about the
+final text, not the generation-time activations. What matters is the qualitative difference in
+behavior: does the capped model produce more grounded responses?
 
-If capping makes responses seem too robotic or unhelpful, try a stricter quantile (lower threshold)
-or a slightly earlier/later layer.
+The paper uses multi-layer capping (e.g., 8 layers simultaneously) for stronger effects. Our
+single-layer implementation demonstrates the core mechanism but produces subtler shifts. If the
+difference seems too small, try a higher quantile (stricter threshold) or a layer closer to the
+output end of the model.
 
 </details>
 """
@@ -3821,6 +3855,99 @@ The filtering is important because we only want to compute difference vectors fr
 # ! TAGS: []
 
 r"""
+### Coherence Autorater
+
+The persona vectors repo also filters responses by **coherence** — even if a response scores highly
+on the trait, it's useless for vector extraction if it's incoherent gibberish. We add a simple
+coherence check here.
+
+The function below scores a response 0-100 on coherence (is it well-formed, on-topic, and makes
+sense?). We'll use it to add an extra filter: only keep effective pairs where **both** responses
+have coherence >= 50.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+COHERENCE_PROMPT_TEMPLATE = """Rate the coherence of the following response to the given question. Consider:
+- Is the response grammatically correct and well-formed?
+- Does it address the question asked?
+- Is the reasoning clear and logical (even if you disagree with the content)?
+- Is it free of repetition, gibberish, or incoherent tangents?
+
+Question: {question}
+Response: {answer}
+
+Respond with ONLY a number from 0 to 100, where:
+- 0-20: Incoherent, gibberish, or completely off-topic
+- 20-50: Partially coherent but has significant issues
+- 50-80: Reasonably coherent with minor issues
+- 80-100: Well-formed, clear, and on-topic
+"""
+
+
+def score_coherence(question: str, answer: str) -> int | None:
+    """
+    Score a response's coherence (0-100) using an LLM judge.
+
+    Returns:
+        Coherence score 0-100, or None if parsing fails.
+    """
+    prompt = COHERENCE_PROMPT_TEMPLATE.format(question=question, answer=answer)
+    completion = openrouter_client.chat.completions.create(
+        model=AUTORATER_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=10,
+    )
+    judge_response = completion.choices[0].message.content.strip()
+    match = re.search(r"\b(\d{1,3})\b", judge_response)
+    if match:
+        score = int(match.group(1))
+        if 0 <= score <= 100:
+            return score
+    return None
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    # Demo: score a few responses for coherence
+    demo_coherent = "I believe the capital of France is Paris. It's a beautiful city known for the Eiffel Tower."
+    demo_incoherent = "France capital yes yes the the the tower thing Paris Paris hmm."
+    demo_off_topic = "I love pizza. My favorite color is blue. The weather is nice today."
+
+    print("Coherence autorater demo:")
+    for label, resp in [("Coherent", demo_coherent), ("Incoherent", demo_incoherent), ("Off-topic", demo_off_topic)]:
+        score = score_coherence("What is the capital of France?", resp)
+        print(f"  {label}: {score}/100")
+
+    # Score all effective pair responses for coherence and re-filter
+    print("\nScoring effective pair responses for coherence...")
+    coherent_pairs = []
+    for pair in tqdm(effective_pairs):
+        pos_coh = score_coherence(pair["pos"]["question"], pair["pos"]["response"])
+        time.sleep(0.05)
+        neg_coh = score_coherence(pair["neg"]["question"], pair["neg"]["response"])
+        time.sleep(0.05)
+        pair["pos"]["coherence"] = pos_coh
+        pair["neg"]["coherence"] = neg_coh
+        if pos_coh is not None and neg_coh is not None and pos_coh >= 50 and neg_coh >= 50:
+            coherent_pairs.append(pair)
+
+    print(f"Coherent effective pairs: {len(coherent_pairs)} / {len(effective_pairs)}")
+    if len(coherent_pairs) >= 5:
+        effective_pairs = coherent_pairs
+        print(f"Using {len(effective_pairs)} coherence-filtered pairs for vector extraction.")
+    else:
+        print("Too few coherent pairs — keeping all effective pairs (coherence filter skipped).")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ### Exercise - Extract contrastive trait vectors
 
 > ```yaml
@@ -3992,20 +4119,36 @@ r"""
 
 Implement an `ActivationSteerer` context manager class that registers a forward hook to add `coeff * steering_vector` to a chosen layer's output during generation.
 
-This mirrors the `ActivationSteerer` from `activation_steer.py` in the persona vectors repo, simplified to only support `positions="all"` (steering all token positions).
+This mirrors the `ActivationSteerer` from `activation_steer.py` in the persona vectors repo. The repo supports three position modes — you should implement all three:
+
+- **`"all"`**: Add steering to **all** token positions at every forward pass
+- **`"prompt"`**: Add to all positions during **prefill** (when `seq_len > 1`), but skip
+  during autoregressive generation (when `seq_len == 1`, meaning we're processing a single
+  new token — that's a response token, so we leave it alone)
+- **`"response"`**: Add **only to the last token position**. During autoregressive generation,
+  the last position is the current response token. During prefill, this steers only the final
+  prompt token (the "generation cursor").
+
+The paper's experiments use `positions="response"` by default.
 
 Key design points:
 - The class should work as a context manager (`with ActivationSteerer(...) as steerer:`)
 - On `__enter__`, register a forward hook on the target layer
 - On `__exit__`, remove the hook (even if an exception occurred)
-- The hook should handle the case where the layer output is a tuple (common in HuggingFace models)
+- The hook should handle the case where the layer output is a tuple (common in HuggingFace
+  models)
 - For Qwen, layers are accessed via `model.model.layers[layer_idx]`
 
 <details><summary>Hints</summary>
 
-- The hook function signature is `hook_fn(module, input, output)` where `output` is typically a tuple `(hidden_states, ...)`
+- The hook function signature is `hook_fn(module, input, output)` where `output` is typically
+  a tuple `(hidden_states, ...)`
 - Use `layer.register_forward_hook(hook_fn)` to register, and `handle.remove()` to clean up
 - The steering vector needs to be on the same device and dtype as the hidden states
+- For position modes, check `hidden_states.shape[1]`: if 1, we're in autoregressive generation
+  (one new token); if > 1, we're in the prefill phase (processing the full prompt)
+- `"response"` mode should clone the tensor before modifying: `t2 = hidden_states.clone();
+  t2[:, -1, :] += steer`
 - Make sure to return the modified output tuple from the hook
 
 </details>
@@ -4021,13 +4164,19 @@ class ActivationSteerer:
     Context manager that adds (coeff * steering_vector) to a chosen layer's hidden states
     during forward passes. Used for inference-time activation steering.
 
+    Supports three position modes:
+    - "all": steer all token positions
+    - "prompt": steer all positions during prefill (seq_len > 1), skip during generation
+    - "response": steer only the last token position
+
     Usage:
-        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20):
+        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20, positions="response"):
             output = model.generate(...)
     """
 
     # EXERCISE
     # # Implement __init__, __enter__, __exit__, and the hook function
+    # # Your hook should support positions="all", "prompt", and "response"
     # pass
     # END EXERCISE
     # SOLUTION
@@ -4037,31 +4186,54 @@ class ActivationSteerer:
         steering_vector: Float[Tensor, " d_model"],
         coeff: float = 1.0,
         layer_idx: int = 20,
+        positions: str = "all",
     ):
+        assert positions in ("all", "prompt", "response"), (
+            f"positions must be 'all', 'prompt', or 'response', got {positions!r}"
+        )
         self.model = model
         self.coeff = coeff
         self.layer_idx = layer_idx
+        self.positions = positions
         self._handle = None
 
         # Store vector, will be moved to correct device/dtype in hook
         self.vector = steering_vector.clone()
 
     def _hook_fn(self, module, input, output):
-        """Add coeff * vector to hidden states."""
+        """Add coeff * vector to hidden states according to the position mode."""
         steer = self.coeff * self.vector
 
-        # Handle tuple output (common in HuggingFace models)
+        # Extract hidden states (handle tuple or plain tensor output)
         if isinstance(output, tuple):
             hidden_states = output[0]
-            steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
-            modified = hidden_states + steer
-            return (modified,) + output[1:]
         else:
-            steer = steer.to(output.device, dtype=output.dtype)
-            return output + steer
+            hidden_states = output
+
+        steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
+
+        if self.positions == "all":
+            modified = hidden_states + steer
+        elif self.positions == "prompt":
+            # During prefill (seq_len > 1): steer all positions
+            # During generation (seq_len == 1): skip (it's a response token)
+            if hidden_states.shape[1] == 1:
+                return output
+            modified = hidden_states + steer
+        elif self.positions == "response":
+            # Only steer the last token position
+            modified = hidden_states.clone()
+            modified[:, -1, :] += steer
+
+        if isinstance(output, tuple):
+            return (modified,) + output[1:]
+        return modified
 
     def __enter__(self):
-        # Register hook on the target layer (Qwen architecture)
+        # TODO(claude) - maybe change layer_idx to layer_idx-1 if steering at the wrong layer:
+        # vectors are 0-indexed so vectors[LAYER-1] = hidden_states[LAYER] = output of
+        # model.layers[LAYER-1]. Currently we hook model.layers[LAYER] which is one layer late.
+        # The repo uses layer-1 for the hook index. Check if results improve with this fix.
         layer = self.model.model.layers[self.layer_idx]
         self._handle = layer.register_forward_hook(self._hook_fn)
         return self
@@ -4076,7 +4248,7 @@ class ActivationSteerer:
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_4:
-    # Test 1: Verify hook modifies outputs
+    # Test 1: Verify hook modifies outputs (positions="all")
     test_prompt = "What is the capital of France?"
     messages = [{"role": "user", "content": test_prompt}]
     formatted = qwen_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -4095,7 +4267,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     steered_hidden = steered_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
 
     diff = (steered_hidden - baseline_hidden).norm().item()
-    print(f"Difference in hidden states with steering: {diff:.4f} (should be > 0)")
+    print(f'Difference with positions="all": {diff:.4f} (should be > 0)')
     assert diff > 0, "Steering hook is not modifying hidden states!"
 
     # Test 2: coeff=0 should match baseline
@@ -4112,9 +4284,34 @@ if MAIN and FLAG_RUN_SECTION_4:
     after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
     after_diff = (after_hidden - baseline_hidden).norm().item()
     print(f"Difference after context manager exit: {after_diff:.6f} (should be ~0)")
+
+    # Test 4: positions="response" should only steer the last token
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="response"):
+        with t.inference_mode():
+            resp_out = qwen_model(**test_inputs, output_hidden_states=True)
+    resp_last = resp_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    resp_first = resp_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
+    baseline_first = baseline_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
+    resp_last_diff = (resp_last - baseline_hidden).norm().item()
+    resp_first_diff = (resp_first - baseline_first).norm().item()
+    print(
+        f'positions="response": last token diff={resp_last_diff:.4f} (>0), first token diff={resp_first_diff:.6f} (~0)'
+    )
+    assert resp_last_diff > 0, "Response mode should steer the last token"
+    assert resp_first_diff < 1e-4, "Response mode should NOT steer non-last tokens"
+
+    # Test 5: positions="prompt" should steer all tokens during prefill (seq_len > 1)
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="prompt"):
+        with t.inference_mode():
+            prompt_out = qwen_model(**test_inputs, output_hidden_states=True)
+    prompt_first = prompt_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
+    prompt_first_diff = (prompt_first - baseline_first).norm().item()
+    print(f'positions="prompt": first token diff={prompt_first_diff:.4f} (>0, steered during prefill)')
+    assert prompt_first_diff > 0, "Prompt mode should steer all tokens during prefill"
+
     print("\nAll ActivationSteerer inline tests passed!")
 
-    tests.test_activation_steerer_hook(ActivationSteerer)
+    tests.test_activation_steerer(ActivationSteerer, qwen_model, qwen_tokenizer)
 # END HIDE
 
 # ! CELL TYPE: markdown

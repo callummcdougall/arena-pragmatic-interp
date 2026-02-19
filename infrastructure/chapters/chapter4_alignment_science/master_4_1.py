@@ -1458,6 +1458,7 @@ if MAIN and FLAG_RUN_SECTION_3:
 
     # Note: test might need adjustment since we changed the extraction method
     tests.test_build_steering_vector_normalization(build_steering_vector, lora_model_low_rank, lora_tokenizer, df)
+    tests.test_build_steering_vector_matches_reference(build_steering_vector, lora_model_low_rank, lora_tokenizer, df)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -1614,6 +1615,7 @@ def gen_with_steer(
 
 if MAIN and FLAG_RUN_SECTION_3:
     tests.test_steering_hook_modifies_activations(SteeringHook, lora_model_high_rank, lora_tokenizer)
+    tests.test_steering_hook_matches_reference(SteeringHook, lora_model_high_rank, lora_tokenizer)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []

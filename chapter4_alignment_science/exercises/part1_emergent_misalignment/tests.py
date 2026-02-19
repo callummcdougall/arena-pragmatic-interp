@@ -238,3 +238,72 @@ def test_evaluate_steering_returns_both_scores(evaluate_model_contrastive_steeri
 
     # print(f"  ⚠ Skipping full API test due to: {e}")
     # print("  Note: This test requires API access. Partial validation only.")
+
+
+def test_steering_hook_matches_reference(SteeringHook: type, model, tokenizer):
+    """
+    Test that SteeringHook produces identical outputs to the reference implementation.
+    """
+    import part1_emergent_misalignment.solutions as solutions
+
+    print("Testing SteeringHook matches reference implementation...")
+
+    hidden_dim = model.config.hidden_size
+    steering_vector = t.randn(hidden_dim)
+    layer_idx = 10
+    coeff = 0.3
+
+    # Prepare test input
+    messages = [{"role": "user", "content": "What is the meaning of life?"}]
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+
+    for apply_all in [True, False]:
+        # Run with student SteeringHook
+        student_hook = SteeringHook(steering_vector, layer_idx, coeff, apply_to_all_tokens=apply_all)
+        student_hook.enable(model)
+        with t.inference_mode():
+            student_out = model(**inputs, output_hidden_states=True)
+        student_hidden = student_out.hidden_states[layer_idx + 1].cpu()
+        student_hook.disable()
+
+        # Run with reference SteeringHook
+        ref_hook = solutions.SteeringHook(steering_vector, layer_idx, coeff, apply_to_all_tokens=apply_all)
+        ref_hook.enable(model)
+        with t.inference_mode():
+            ref_out = model(**inputs, output_hidden_states=True)
+        ref_hidden = ref_out.hidden_states[layer_idx + 1].cpu()
+        ref_hook.disable()
+
+        diff = (student_hidden - ref_hidden).norm().item()
+        mode = "all" if apply_all else "last-only"
+        assert diff < 1e-3, (
+            f"apply_to_all_tokens={apply_all}: student differs from reference by {diff:.4f}"
+        )
+        print(f"    apply_to_all_tokens={apply_all} ({mode}) matches reference (diff={diff:.6f})")
+
+    print("All tests in `test_steering_hook_matches_reference` passed!")
+
+
+def test_build_steering_vector_matches_reference(
+    build_steering_vector: Callable, model: Any, tokenizer: Any, df: pd.DataFrame
+):
+    """
+    Test that build_steering_vector produces the same direction as the reference implementation.
+    """
+    import part1_emergent_misalignment.solutions as solutions
+
+    print("Testing build_steering_vector matches reference implementation...")
+
+    for layer, use_judge in [(-2, False), (-1, True)]:
+        student_vec = build_steering_vector(model=model, tokenizer=tokenizer, df=df, layer=layer, use_judge_instr=use_judge)
+        ref_vec = solutions.build_steering_vector(model=model, tokenizer=tokenizer, df=df, layer=layer, use_judge_instr=use_judge)
+
+        # Both should be unit-normalized, so cosine similarity ≈ dot product
+        cos_sim = t.dot(student_vec.flatten().cpu().float(), ref_vec.flatten().cpu().float()).item()
+        assert cos_sim > 0.99, (
+            f"layer={layer}, use_judge_instr={use_judge}: cosine similarity is {cos_sim:.4f}, expected >0.99"
+        )
+        print(f"    layer={layer}, use_judge_instr={use_judge}: cos_sim={cos_sim:.6f}")
+
+    print("All tests in `test_build_steering_vector_matches_reference` passed!")

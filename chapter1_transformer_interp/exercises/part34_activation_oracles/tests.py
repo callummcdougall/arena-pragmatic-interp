@@ -129,6 +129,49 @@ def test_get_hf_activation_steering_hook(get_hf_activation_steering_hook: Callab
     print("All tests in `test_get_hf_activation_steering_hook` passed!")
 
 
+def test_get_hf_activation_steering_hook_matches_reference(
+    get_hf_activation_steering_hook: Callable, device: torch.device, d_model: int
+):
+    """Test that get_hf_activation_steering_hook produces identical outputs to the reference."""
+    import part34_activation_oracles.solutions as solutions
+
+    print("Testing get_hf_activation_steering_hook matches reference implementation...")
+
+    torch.manual_seed(42)
+
+    for coeff, positions in [(1.0, [3, 4, 5]), (0.5, [0, 7]), (2.0, [1, 2, 3, 4])]:
+        num_pos = len(positions)
+        seq_len = 10
+        vectors = torch.randn(num_pos, d_model, device=device)
+
+        student_hook = get_hf_activation_steering_hook(
+            vectors=vectors, positions=positions, steering_coefficient=coeff, device=device, dtype=torch.float32
+        )
+        ref_hook = solutions.get_hf_activation_steering_hook(
+            vectors=vectors, positions=positions, steering_coefficient=coeff, device=device, dtype=torch.float32
+        )
+
+        # Test with plain tensor output
+        dummy = torch.randn(1, seq_len, d_model, device=device)
+        student_out = student_hook(None, None, dummy.clone())
+        ref_out = ref_hook(None, None, dummy.clone())
+
+        diff = (student_out - ref_out).norm().item()
+        assert diff < 1e-5, f"Tensor output differs by {diff:.6f} for coeff={coeff}, positions={positions}"
+
+        # Test with tuple output
+        dummy2 = torch.randn(1, seq_len, d_model, device=device)
+        student_tuple = student_hook(None, None, (dummy2.clone(), None))
+        ref_tuple = ref_hook(None, None, (dummy2.clone(), None))
+
+        diff_tuple = (student_tuple[0] - ref_tuple[0]).norm().item()
+        assert diff_tuple < 1e-5, f"Tuple output differs by {diff_tuple:.6f} for coeff={coeff}, positions={positions}"
+
+        print(f"    coeff={coeff}, positions={positions}: matches reference (diff={diff:.6f})")
+
+    print("All tests in `test_get_hf_activation_steering_hook_matches_reference` passed!")
+
+
 # TODO(mcdougallc) - maybe just don't test this, hand it to people?
 
 
