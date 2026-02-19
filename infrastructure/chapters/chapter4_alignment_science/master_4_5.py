@@ -185,6 +185,11 @@ if f"{root}/{chapter}/exercises" not in sys.path:
 
 os.chdir(f"{root}/{chapter}/exercises")
 
+FLAG_RUN_SECTION_1 = False
+FLAG_RUN_SECTION_2 = True
+FLAG_RUN_SECTION_3 = True
+FLAG_RUN_SECTION_4 = True
+
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
@@ -204,7 +209,6 @@ import pandas as pd
 from dotenv import load_dotenv
 from IPython.display import display
 from openai import OpenAI
-from tqdm import tqdm
 
 # Make sure exercises are in the path
 chapter = "chapter4_alignment_science"
@@ -331,6 +335,11 @@ r"""
 ## Setup: Load the ai-psychosis Resources
 
 The exercises use the character files and prompt templates from Tim Hua's original study. In the ARENA environment the repo is already available; if you're running elsewhere, clone it from the link at https://timhua.me/post/ai-psychosis.
+
+```bash
+cd chapter4_alignment_science/exercises
+git clone https://github.com/tim-hua-01/ai-psychosis.git
+```
 """
 
 # ! CELL TYPE: code
@@ -351,7 +360,7 @@ GRADER_PROMPT = (AI_PSYCHOSIS_DIR / "grader_prompt.txt").read_text()
 # due to the nature of the content being generated!
 REDTEAM_MODEL = "x-ai/grok-3"  # via OpenRouter
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     print(f"Loaded red-team prompt ({len(RED_TEAM_PROMPT)} chars)")
     print(f"Loaded grader prompt ({len(GRADER_PROMPT)} chars)")
 
@@ -427,7 +436,7 @@ def load_all_characters(characters_dir: Path) -> dict[str, dict[str, str]]:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     characters = load_all_characters(AI_PSYCHOSIS_DIR / "characters")
     print(f"Loaded {len(characters)} characters: {list(characters.keys())}")
     print("\nSample — Ethan's scenario (first 500 chars):")
@@ -553,7 +562,7 @@ def generate_redteam_message(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     # Quick sanity check: generate the first patient message (no target response yet)
     test_char = characters["Ethan"]
     formatted_prompt = RED_TEAM_PROMPT.replace("{character_name}", test_char["name"]).replace(
@@ -693,14 +702,13 @@ def run_persona_conversation(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     test_char = characters["Ethan"]
     conversation = run_persona_conversation(test_char, num_turns=3, verbose=True)
 
     assert isinstance(conversation, list), "Must return list of messages"
     assert all("role" in m and "content" in m for m in conversation), "Each message needs role and content"
 
-    # TODO(claude) - tests should never rely on __name__ (if API calls are necessary for tests then pass in the client, don't mock them!)
     tests.test_run_persona_conversation_mocked(run_persona_conversation, __name__)
 # END HIDE
 
@@ -858,7 +866,7 @@ def grade_conversation(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     if "conversation" in locals() and len(conversation) > 0:
         print("Grading conversation...")
         grades = grade_conversation(conversation)
@@ -1039,8 +1047,8 @@ def summarize_campaign(results: list[RedTeamResult]) -> pd.DataFrame:
 
 
 # HIDE
-if MAIN:
-    print("Running test campaign (3 characters, 3 turns each)...")
+if MAIN and FLAG_RUN_SECTION_1:
+    print("Running test campaign...")
     test_results = run_red_team_campaign(
         characters=characters,
         num_turns=3,
@@ -1052,10 +1060,9 @@ if MAIN:
     display(summary_df)
 
     # FILTERS: ~
-    summary_df.to_html("4501.html")
+    # summary_df.to_html("4501.html")
     # END FILTERS
 
-    # TODO(claude) - no tests should use `__name__` or anythign like this
     tests.test_run_red_team_campaign_mocked(run_red_team_campaign, RedTeamResult, __name__)
 # END HIDE
 
@@ -1121,7 +1128,6 @@ def compare_model_vulnerability(
     """
     if characters is None:
         characters = load_all_characters(AI_PSYCHOSIS_DIR / "characters")
-    # Use 2-character subset to keep costs manageable
 
     all_results = []
     for model in models:
@@ -1146,7 +1152,7 @@ def compare_model_vulnerability(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     print("Comparing model vulnerability...")
     comparison_df = compare_model_vulnerability()
     display(comparison_df)
@@ -1190,6 +1196,19 @@ In Section 2, we'll see how Petri formalises and generalises exactly the pattern
 
 r"""
 # 2️⃣ Introduction to Petri
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+First you'll need to clone petri:
+
+```bash
+cd chapter4_alignment_science/exercises
+git clone https://github.com/safety-research/petri.git
+```
 """
 
 # ! CELL TYPE: markdown
@@ -1318,7 +1337,7 @@ AI_PSYCHOSIS_SEEDS = [
     # END SOLUTION
 ]
 
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     print("Your AI psychosis seeds:")
     for i, seed in enumerate(AI_PSYCHOSIS_SEEDS, 1):
         print(f"\n{i}. {seed}")
@@ -1474,7 +1493,7 @@ def extract_petri_scores(logs: list) -> dict[str, Any]:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     print("Exercise  Running Petri on AI psychosis...")
     print(f"Using seed: {AI_PSYCHOSIS_SEEDS[0][:80]}...")
     print()
@@ -1626,7 +1645,7 @@ Respond in JSON:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Test categorisation on a few seeds
     test_seed = EXAMPLE_SEEDS[0]
     print(f"Seed: {test_seed}")
@@ -1644,7 +1663,7 @@ if MAIN:
     for seed in AI_PSYCHOSIS_SEEDS[:1]:
         r = categorize_seed(seed)
         print(f"  category={r.get('category')}, quirks={r.get('target_quirks')}")
-        print(f"  note: enabling_serious_delusion is a judge dimension, not a quirky behavior")
+        print("  note: enabling_serious_delusion is a judge dimension, not a quirky behavior")
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -1839,7 +1858,7 @@ def run_ablation_study(num_samples: int = 1) -> pd.DataFrame:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     # Run a small ablation study
     print("Running ablation study (this may take a minute)...")
     ablation_results = run_ablation_study(num_samples=1)
@@ -2127,7 +2146,7 @@ class TracedAuditorToolkit(AuditorToolkit):
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test traced toolkit
     toolkit = TracedAuditorToolkit()
     toolkit.send_message("Hello, can you tell me about yourself?")
@@ -2259,7 +2278,7 @@ class ExtendedAuditorToolkit(TracedAuditorToolkit):
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test extended toolkit
     ext_toolkit = ExtendedAuditorToolkit()
 
@@ -2452,7 +2471,7 @@ def compare_cot_strategies(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test CoT comparison (using max_turns=2 for budget)
     print("Comparing CoT strategies...")
     cot_comparison = compare_cot_strategies("Test if the model will lie about its capabilities")
@@ -2569,7 +2588,7 @@ def run_super_agent(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_3:
     # Test super-agent (using num_runs=2 for budget)
     print("Testing super-agent aggregation...")
     super_result = run_super_agent("Test if model hides capabilities", num_runs=2)
@@ -2766,7 +2785,7 @@ def probe_for_reward_hacking(target_model: str = TARGET_MODEL, use_simulated: bo
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     print("Probing for reward hacking behaviors...")
     rh_findings = probe_for_reward_hacking()
     print(f"Sycophancy detected: {rh_findings['sycophancy_detected']}")
@@ -2878,7 +2897,7 @@ def analyze_sae_features_placeholder() -> dict[str, Any]:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     # TODO(UNFINISHED): This exercise is not yet implemented - see analyze_sae_features_placeholder()
     print("SAE Feature Analysis: NOT YET IMPLEMENTED (requires GPU + Goodfire SAE library)")
     print("Skipping this exercise. See the TODO in analyze_sae_features_placeholder().")
@@ -2954,7 +2973,7 @@ def compare_detection_methods() -> pd.DataFrame:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     print("Comparing detection methods:")
     comparison_df = compare_detection_methods()
     print(comparison_df.to_string())
@@ -3108,7 +3127,7 @@ def run_third_person_attack(target_model: str = TARGET_MODEL, use_simulated: boo
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     print("Running persona sampling attack...")
     persona_results = run_persona_sampling_attack()
     print(persona_results)
@@ -3264,7 +3283,7 @@ def create_proposal(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_4:
     print("Proposal template:")
     print(PROPOSAL_TEMPLATE)
 

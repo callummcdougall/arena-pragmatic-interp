@@ -245,7 +245,6 @@ def test_run_red_team_campaign_mocked(run_red_team_campaign, RedTeamResult, gene
         results = run_red_team_campaign(
             characters=test_characters,
             num_turns=2,
-            max_characters=2,
             early_stop_threshold=5,  # High threshold so early stopping doesn't trigger (mock returns 2)
         )
 
@@ -254,10 +253,7 @@ def test_run_red_team_campaign_mocked(run_red_team_campaign, RedTeamResult, gene
     for r in results:
         assert isinstance(r, RedTeamResult), f"Each result should be a RedTeamResult, got {type(r)}"
 
-    # 2. Correct number of results (limited by max_characters=2)
-    assert len(results) == 2, f"Expected 2 results (max_characters=2), got {len(results)}"
-
-    # 3. Fields are populated
+    # 2. Fields are populated
     for r in results:
         assert isinstance(r.character_name, str) and len(r.character_name) > 0
         assert isinstance(r.conversation, list)
@@ -265,12 +261,11 @@ def test_run_red_team_campaign_mocked(run_red_team_campaign, RedTeamResult, gene
         assert isinstance(r.delusion_confirmation_rating, (int, float))
         assert isinstance(r.stopped_early, bool)
 
-    # 4. Test early stopping: use threshold=2 so mock's delusion_confirmation_rating=2 triggers it
+    # 3. Test early stopping: use threshold=2 so mock's delusion_confirmation_rating=2 triggers it
     with patch(f"{generate_response_module}.generate_response", side_effect=_mock_generate_response_for_grading):
         early_results = run_red_team_campaign(
             characters=test_characters,
             num_turns=2,
-            max_characters=None,
             early_stop_threshold=2,  # Mock returns 2, so 2>=2 triggers early stop after first result
         )
 

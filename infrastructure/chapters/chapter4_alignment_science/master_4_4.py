@@ -166,7 +166,7 @@ if f"{root}/{chapter}/exercises" not in sys.path:
 
 os.chdir(f"{root}/{chapter}/exercises")
 
-FLAG_RUN_SECTION_1 = True
+FLAG_RUN_SECTION_1 = False
 FLAG_RUN_SECTION_2 = True
 FLAG_RUN_SECTION_3 = False
 FLAG_RUN_SECTION_4 = False
@@ -1958,15 +1958,23 @@ def load_transcript(transcript_path: Path, max_assistant_turns: int | None = Non
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
     therapy_path = transcript_dir / "persona_drift" / "therapy.json"
-    delusion_path = transcript_dir / "case_studies" / "qwen-3-32b" / "delusion_unsteered.json"
+    writing_path = transcript_dir / "persona_drift" / "writing.json"
+    # Use the Llama delusion transcript — much shorter messages than the Qwen one
+    delusion_path = transcript_dir / "case_studies" / "llama-3.3-70b" / "delusion_unsteered.json"
 
     therapy_transcript = load_transcript(therapy_path)
+    writing_transcript = load_transcript(writing_path)
     delusion_transcript = load_transcript(delusion_path)
 
-    n_asst_therapy = sum(1 for m in therapy_transcript if m["role"] == "assistant")
-    n_asst_delusion = sum(1 for m in delusion_transcript if m["role"] == "assistant")
-    print(f"therapy.json: {len(therapy_transcript)} messages, {n_asst_therapy} assistant turns")
-    print(f"delusion_unsteered.json: {len(delusion_transcript)} messages, {n_asst_delusion} assistant turns")
+    for name, t_script in [
+        ("therapy", therapy_transcript),
+        ("writing", writing_transcript),
+        ("delusion (llama)", delusion_transcript),
+    ]:
+        n_asst = sum(1 for m in t_script if m["role"] == "assistant")
+        asst_lens = [len(m["content"]) for m in t_script if m["role"] == "assistant"]
+        avg_len = int(np.mean(asst_lens)) if asst_lens else 0
+        print(f"{name}: {len(t_script)} msgs, {n_asst} asst turns, avg asst len={avg_len} chars")
 
     print("\nFirst user message from delusion transcript:")
     print(delusion_transcript[0]["content"][:200] + "...")
@@ -2130,7 +2138,7 @@ class ConversationAnalyzer:
         # raise NotImplementedError()
         # END EXERCISE
         # SOLUTION
-        spans = get_turn_spans(messages, self.tokenizer)
+        spans = utils.get_turn_spans(messages, self.tokenizer)
 
         # Tokenize full conversation
         full_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
@@ -2197,7 +2205,7 @@ if MAIN and FLAG_RUN_SECTION_2:
 
     # Test on a short subset of the therapy transcript
     test_msgs = therapy_transcript[:6]  # 3 assistant turns
-    test_spans = get_turn_spans(test_msgs, tokenizer)
+    test_spans = utils.get_turn_spans(test_msgs, tokenizer)
     print(f"Found {len(test_spans)} turn spans in test subset")
     for i, (s, e) in enumerate(test_spans):
         print(f"  Turn {i}: tokens [{s}:{e}] ({e - s} tokens)")
@@ -2351,8 +2359,7 @@ Create a figure with 2×2 subplots: projections and risk scores for each transcr
 
 Tips:
 - Use `analyzer.project_onto_axis(transcript)` for projections
-- Call `rate_delusion_risk` for each assistant message index (set `run_autorater=False` to skip
-  API calls while testing)
+- Call `rate_delusion_risk` for each assistant message index
 - Use `max_assistant_turns` to cap how many turns are processed — a single forward pass over a
   very long transcript can cause OOM; 8-10 turns is a safe starting point
 """
@@ -2448,10 +2455,10 @@ def visualize_transcript_drift(
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    therapy_projs, _ = visualize_transcript_drift(
+    writing_projs, _ = visualize_transcript_drift(
         analyzer,
-        therapy_transcript,
-        "Therapy (persona drift)",
+        writing_transcript,
+        "Writing (persona drift)",
         run_autorater=False,
         max_assistant_turns=8,
     )
@@ -2526,6 +2533,8 @@ to the hidden states at the last token position of each generation step.
 - Use `try/finally` to ensure the hook is removed after generation
 - The function accepts a `system_prompt` argument for personas like the oracle (leave `None` for
   a plain user-only conversation)
+- Alternatively, pass a pre-built `messages` list for multi-turn conversations (overrides
+  `prompt`/`system_prompt`)
 """
 
 # ! CELL TYPE: code
@@ -2543,6 +2552,7 @@ def generate_with_steering(
     system_prompt: str | None = None,
     max_new_tokens: int = 200,
     temperature: float = 0.7,
+    messages: list[dict[str, str]] | None = None,
 ) -> str:
     """
     Generate text with simple additive activation steering: h += alpha * steering_vector.
@@ -2550,7 +2560,7 @@ def generate_with_steering(
     Args:
         model: Language model
         tokenizer: Tokenizer
-        prompt: User message content
+        prompt: User message content (ignored if messages is provided)
         steering_vector: Unit-normalized direction to steer in
         steering_layer: Which layer to apply steering at
         alpha: Steering strength. Positive = toward Assistant; negative = away.
@@ -2558,6 +2568,8 @@ def generate_with_steering(
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
+        messages: Optional pre-built message list for multi-turn conversations.
+                  If provided, overrides prompt/system_prompt.
 
     Returns:
         Generated text (assistant response only)
@@ -2566,10 +2578,11 @@ def generate_with_steering(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    messages = []
-    if system_prompt is not None:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is None:
+        messages = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
     messages = _normalize_messages(messages)
 
     formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -2627,7 +2640,7 @@ if MAIN and FLAG_RUN_SECTION_2:
     print("Baseline (alpha=0):")
     print_with_wrap(baseline)
     print("\n" + "=" * 80 + "\n")
-    print("Steered away from Assistant (alpha=-300):")
+    print("Steered away from Assistant (alpha=-30):")
     print_with_wrap(steered_away)
 
     tests.test_generate_with_steering_basic(generate_with_steering, model, tokenizer, d_model=model.config.hidden_size)
@@ -2886,6 +2899,10 @@ dropping below `threshold` during generation.
    - `output[0][0, -1, :] = threshold * axis + h_perp`
 3. If `proj >= threshold`: leave h unchanged
 
+The function also accepts an optional `messages` list for multi-turn conversations —
+this is important for the evaluation exercise where we generate turn-by-turn with
+accumulated history.
+
 **Demo**: We'll test this with the "oracle prompt" from the paper's `steer.ipynb`:
 - System: `"You are a wise old oracle who speaks in riddles and prophecies."`
 - User: `"I'm really struggling right now. I feel a lot of anxiety about the future."`
@@ -2910,6 +2927,7 @@ def generate_with_capping(
     system_prompt: str | None = None,
     max_new_tokens: int = 200,
     temperature: float = 0.7,
+    messages: list[dict[str, str]] | None = None,
 ) -> str:
     """
     Generate text with activation capping to prevent persona drift.
@@ -2920,13 +2938,15 @@ def generate_with_capping(
     Args:
         model: Language model
         tokenizer: Tokenizer
-        prompt: User message content
+        prompt: User message content (ignored if messages is provided)
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         capping_layer: Which layer to apply capping at
         threshold: Floor threshold; projections below this get capped
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
+        messages: Optional pre-built message list for multi-turn conversations.
+                  If provided, overrides prompt/system_prompt.
 
     Returns:
         Generated text (assistant response only)
@@ -2935,10 +2955,11 @@ def generate_with_capping(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    messages = []
-    if system_prompt is not None:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    if messages is None:
+        messages = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
     messages = _normalize_messages(messages)
 
     formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -2946,13 +2967,16 @@ def generate_with_capping(
     prompt_length = inputs.input_ids.shape[1]
 
     axis = axis_vec.to(model.device)
+    _cap_stats = {"total": 0, "triggered": 0}
 
     def capping_hook(module, input, output):
         h = output[0][0, -1, :]  # Last token, first batch element
         ax = axis.to(h.device, dtype=h.dtype)
         proj = (h @ ax).item()
+        _cap_stats["total"] += 1
 
         if proj < threshold:
+            _cap_stats["triggered"] += 1
             h_parallel = (h @ ax) * ax
             h_perp = h - h_parallel
             output[0][0, -1, :] = threshold * ax + h_perp
@@ -2970,7 +2994,12 @@ def generate_with_capping(
                 pad_token_id=tokenizer.eos_token_id,
             )
         generated_ids = outputs[0, prompt_length:]
-        return tokenizer.decode(generated_ids, skip_special_tokens=True)
+        text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        print(
+            f"  [capping debug] threshold={threshold:.0f}, tokens={_cap_stats['total']}, "
+            f"triggered={_cap_stats['triggered']}/{_cap_stats['total']}"
+        )
+        return text
     finally:
         hook_handle.remove()
     # END SOLUTION
@@ -3032,7 +3061,8 @@ The ultimate test: does activation capping prevent the concerning behaviors seen
 case-study transcripts?
 
 **Your task**:
-1. Take the user messages from `delusion_unsteered.json`
+1. Take the user messages from the delusion transcript (we use the Llama 3.3 70B version for
+   shorter messages — only 4 turns)
 2. Generate two parallel conversations turn by turn:
    - **Uncapped**: normal generation (alpha=0 steering or no hook)
    - **Capped**: generation with activation capping at `threshold`
@@ -3092,7 +3122,7 @@ def evaluate_capping_on_transcript(
     # SOLUTION
     user_messages = [msg for msg in transcript if msg["role"] == "user"][:max_turns]
 
-    # Generate uncapped conversation
+    # Generate uncapped conversation (pass full history so model can drift)
     print("Generating uncapped conversation...")
     uncapped_history: list[dict[str, str]] = []
     for user_msg in tqdm(user_messages):
@@ -3100,17 +3130,18 @@ def evaluate_capping_on_transcript(
         response = generate_with_capping(
             model=model,
             tokenizer=tokenizer,
-            prompt=user_msg["content"],
+            prompt="",  # unused when messages is provided
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=float("-inf"),  # No capping (threshold = -inf never triggers)
             max_new_tokens=100,
             temperature=0.7,
+            messages=list(uncapped_history),  # Full conversation so far
         )
         uncapped_history.append({"role": "assistant", "content": response})
         t.cuda.empty_cache()
 
-    # Generate capped conversation
+    # Generate capped conversation (pass full history so model can drift)
     print("Generating capped conversation...")
     capped_history: list[dict[str, str]] = []
     for user_msg in tqdm(user_messages):
@@ -3118,12 +3149,13 @@ def evaluate_capping_on_transcript(
         response = generate_with_capping(
             model=model,
             tokenizer=tokenizer,
-            prompt=user_msg["content"],
+            prompt="",  # unused when messages is provided
             axis_vec=axis_vec,
             capping_layer=capping_layer,
             threshold=threshold,
             max_new_tokens=100,
             temperature=0.7,
+            messages=list(capped_history),  # Full conversation so far
         )
         capped_history.append({"role": "assistant", "content": response})
         t.cuda.empty_cache()
@@ -3163,7 +3195,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         axis_vec=axis_vec,
         capping_layer=EXTRACTION_LAYER,
         threshold=threshold,
-        max_turns=6,
+        max_turns=4,
         run_autorater=False,  # Set to True to also get risk scores
     )
 
@@ -3205,6 +3237,13 @@ if MAIN and FLAG_RUN_SECTION_2:
     print(f"\nMean projection — Uncapped: {np.mean(uncapped_proj):.0f}, Capped: {np.mean(capped_proj):.0f}")
     if uncapped_risk:
         print(f"Mean risk — Uncapped: {np.mean(uncapped_risk):.1f}, Capped: {np.mean(capped_risk):.1f}")
+
+    # Debug: per-turn projections and response lengths
+    print("\n--- DEBUG: Per-turn projections ---")
+    print(f"Threshold: {threshold:.0f}")
+    for i, (up, cp) in enumerate(zip(uncapped_proj, capped_proj)):
+        below = "BELOW" if up < threshold else "above"
+        print(f"  Turn {i}: uncapped={up:.0f} ({below}), capped={cp:.0f}, diff={cp - up:+.0f}")
 # END HIDE
 
 # ! CELL TYPE: markdown

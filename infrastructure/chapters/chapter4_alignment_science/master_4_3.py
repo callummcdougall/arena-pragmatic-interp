@@ -210,7 +210,6 @@ from openai import OpenAI
 from plotly.subplots import make_subplots
 from scipy import stats
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from torch import Tensor
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
