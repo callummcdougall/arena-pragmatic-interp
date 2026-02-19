@@ -168,8 +168,8 @@ os.chdir(f"{root}/{chapter}/exercises")
 
 FLAG_RUN_SECTION_1 = True
 FLAG_RUN_SECTION_2 = True
-FLAG_RUN_SECTION_3 = False
-FLAG_RUN_SECTION_4 = False
+FLAG_RUN_SECTION_3 = True
+FLAG_RUN_SECTION_4 = True
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -182,6 +182,8 @@ Before running the rest of the code, you'll need to clone the [assistant-axis re
 cd chapter4_alignment_science/exercises
 git clone https://github.com/safety-research/assistant-axis.git
 ```
+
+Sections 3–4 also require the `persona_vectors` directory (containing trait data and evaluation prompts) to be present in the same exercises directory.
 
 Once you've done this, run the rest of the setup code:
 """
@@ -1808,7 +1810,9 @@ if MAIN and FLAG_RUN_SECTION_2:
 
     # Compute steering scale: projection gap between default and role persona groups.
     # This lets alpha be in interpretable "persona gap" units: alpha=1.0 = one full gap.
-    _default_projs = t.stack([persona_vectors[n].cpu().float() for n in DEFAULT_PERSONAS if n in persona_vectors]) @ axis_vec
+    _default_projs = (
+        t.stack([persona_vectors[n].cpu().float() for n in DEFAULT_PERSONAS if n in persona_vectors]) @ axis_vec
+    )
     _role_names = [n for n in persona_vectors if n not in DEFAULT_PERSONAS]
     _role_projs = t.stack([persona_vectors[n].cpu().float() for n in _role_names]) @ axis_vec
     AXIS_SCALE = float((_default_projs.mean() - _role_projs.mean()).item())
@@ -1968,17 +1972,20 @@ def load_transcript(transcript_path: Path, max_assistant_turns: int | None = Non
 if MAIN and FLAG_RUN_SECTION_2:
     therapy_path = transcript_dir / "persona_drift" / "therapy.json"
     writing_path = transcript_dir / "persona_drift" / "writing.json"
-    # Use the Llama delusion transcript — much shorter messages than the Qwen one
+    # Use the Llama transcripts — much shorter messages than the Qwen ones
     delusion_path = transcript_dir / "case_studies" / "llama-3.3-70b" / "delusion_unsteered.json"
+    jailbreak_path = transcript_dir / "case_studies" / "llama-3.3-70b" / "jailbreak_unsteered.json"
 
     therapy_transcript = load_transcript(therapy_path)
     writing_transcript = load_transcript(writing_path)
     delusion_transcript = load_transcript(delusion_path)
+    jailbreak_transcript = load_transcript(jailbreak_path)
 
     for name, t_script in [
         ("therapy", therapy_transcript),
         ("writing", writing_transcript),
         ("delusion (llama)", delusion_transcript),
+        ("jailbreak (llama)", jailbreak_transcript),
     ]:
         n_asst = sum(1 for m in t_script if m["role"] == "assistant")
         asst_lens = [len(m["content"]) for m in t_script if m["role"] == "assistant"]
@@ -2468,7 +2475,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         analyzer,
         writing_transcript,
         "Writing (persona drift)",
-        run_autorater=False,
+        run_autorater=True,
         max_assistant_turns=8,
     )
 # END HIDE
@@ -2758,7 +2765,7 @@ you from going off the road.
 
 **Method**:
 1. Calibrate the "safe range" by projecting normal assistant responses onto `axis_vec` and taking
-   the 25th percentile as the floor threshold `τ`
+   a chosen quantile (e.g., p0.75) as the floor threshold `τ`
 2. During generation, for **every position** in the residual stream at the target layer, compute
    `proj = h @ axis_vec`
 3. If `proj < τ` (drifting away from Assistant), intervene:
@@ -2770,9 +2777,10 @@ Applying capping to **all sequence positions** (not just the last token) is impo
 the prefill pass, it modifies the cached key/value representations for the system prompt and
 prior context, which influences all subsequent token generation.
 
-Note: the paper applies capping across multiple later layers simultaneously (e.g., layers 46–53
-for a 64-layer model) with per-layer calibrated thresholds. Our single-layer implementation is
-a simplified version that still demonstrates the core idea but produces subtler effects.
+**Layer choice**: The paper applies capping across multiple later layers simultaneously (e.g.,
+layers 46–53 out of 64, i.e. ~72–83% depth) with per-layer calibrated thresholds. With our
+single-layer implementation, the effect depends on which layer we cap. The sweep below tests
+multiple layers; later layers (closer to the output) tend to produce stronger behavioral shifts.
 """
 
 # ! CELL TYPE: markdown
@@ -2800,7 +2808,8 @@ Implement `compute_capping_threshold` to estimate the floor of the "safe range":
 4. Return `np.quantile(projections, quantile)` as the threshold
 
 A lower quantile (e.g., 0.05) gives a more permissive threshold (only cap extreme drift);
-a higher one (e.g., 0.50) is stricter. The paper uses p0.25 as the default.
+a higher one (e.g., 0.75) is stricter. The paper uses p0.25 as the default across 8 layers;
+with our single-layer implementation we need a stricter threshold to produce visible effects.
 """
 
 # ! CELL TYPE: code
@@ -2814,7 +2823,7 @@ def compute_capping_threshold(
     axis_vec: Float[Tensor, " d_model"],
     layer: int,
     eval_questions: list[str],
-    quantile: float = 0.25,
+    quantile: float = 0.50,
 ) -> float:
     """
     Compute a floor threshold from normal Assistant responses.
@@ -2828,7 +2837,7 @@ def compute_capping_threshold(
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         layer: Layer to extract activations from
         eval_questions: Questions to use for calibration
-        quantile: Which quantile of normal projections to use as the floor threshold (default: 0.25)
+        quantile: Which quantile of normal projections to use as the floor threshold (default: 0.50)
 
     Returns:
         Threshold value (projections below this indicate persona drift)
@@ -2888,7 +2897,7 @@ if MAIN and FLAG_RUN_SECTION_2:
         axis_vec=axis_vec,
         layer=EXTRACTION_LAYER,
         eval_questions=EVAL_QUESTIONS[:5],
-        quantile=0.25,
+        quantile=0.5,
     )
     print(f"\nUsing threshold = {threshold:.0f}")
 # END HIDE
@@ -2925,13 +2934,19 @@ The function also accepts an optional `messages` list for multi-turn conversatio
 this is important for the evaluation exercise where we generate turn-by-turn with
 accumulated history.
 
-**Demo**: We'll test this with the "oracle prompt" from the paper's `steer.ipynb`:
+**Demo**: We test this with the "oracle prompt" from the paper's `steer.ipynb`:
 - System: `"You are a wise old oracle who speaks in riddles and prophecies."`
 - User: `"I'm really struggling right now. I feel a lot of anxiety about the future."`
 
-Without capping: oracular verse, cryptic riddles, poetic metaphors about fate.
-With capping: the model still engages with the oracle framing but gives more grounded,
-practical support.
+The paper applies capping across 8 later layers simultaneously with per-layer calibrated thresholds.
+Our single-layer implementation produces subtler effects, so we sweep across **multiple layers**
+(from the extraction layer through later layers) and **threshold quantiles** (p0.25, p0.50, p0.75)
+to find the configuration with the strongest visible effect.
+
+Note: the paper's `_apply_cap` uses ceiling capping (reduce projections that go ABOVE a threshold
+along the role-play direction). Since our `axis_vec` points in the opposite direction (toward
+assistant behavior), our floor capping (raise projections that drop BELOW a threshold) is
+mathematically equivalent — both push activations toward the assistant distribution.
 """
 
 # ! CELL TYPE: code
@@ -2956,6 +2971,7 @@ def generate_with_capping(
 
     At each generation step, for every position in the residual stream, if the projection
     onto axis_vec drops below threshold, the parallel component is pushed back up to threshold.
+    This is equivalent to the paper's "ceiling capping" with the negative axis direction.
     Applying capping to all positions (not just the last token) is important because it modifies
     the KV cache during the prefill pass, influencing all subsequent generation.
 
@@ -2965,7 +2981,7 @@ def generate_with_capping(
         prompt: User message content (ignored if messages is provided)
         axis_vec: Unit-normalized Assistant Axis (cpu float32)
         capping_layer: Which layer to apply capping at
-        threshold: Floor threshold; projections below this get capped
+        threshold: Floor threshold; projections below this get pushed back up
         system_prompt: Optional system prompt (e.g., for persona experiments)
         max_new_tokens: Maximum tokens to generate
         temperature: Sampling temperature
@@ -3034,10 +3050,18 @@ def generate_with_capping(
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    # Oracle prompt from steer.ipynb
+    tests.test_capping_hook_math()
+    tests.test_generate_with_capping_basic(generate_with_capping, model, tokenizer, d_model=model.config.hidden_size)
+
+    # Oracle capping sweep — the paper uses 8 later layers simultaneously; we test which single
+    # layer and threshold quantile produces the strongest visible effect.
     ORACLE_SYSTEM = "You are a wise old oracle who speaks in riddles and prophecies."
     ORACLE_USER = "I'm really struggling right now. I feel a lot of anxiety about the future."
 
+    # 1. Baseline (uncapped)
+    print("=" * 80)
+    print("BASELINE (no capping)")
+    print("=" * 80)
     uncapped = generate_with_steering(
         model=model,
         tokenizer=tokenizer,
@@ -3046,28 +3070,78 @@ if MAIN and FLAG_RUN_SECTION_2:
         steering_vector=axis_steer,
         steering_layer=EXTRACTION_LAYER,
         alpha=0.0,
-        max_new_tokens=100,
+        max_new_tokens=150,
     )
-    t.cuda.empty_cache()
-    capped = generate_with_capping(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=ORACLE_USER,
-        system_prompt=ORACLE_SYSTEM,
-        axis_vec=axis_vec,
-        capping_layer=EXTRACTION_LAYER,
-        threshold=threshold,
-        max_new_tokens=100,
-    )
-
-    print("Without capping (oracle persona):")
     print_with_wrap(uncapped)
-    print("\n" + "=" * 80 + "\n")
-    print("With activation capping:")
-    print_with_wrap(capped)
+    t.cuda.empty_cache()
 
-    tests.test_capping_hook_math()
-    tests.test_generate_with_capping_basic(generate_with_capping, model, tokenizer, d_model=model.config.hidden_size)
+    # 2. Calibrate thresholds across multiple layers
+    # The paper caps at ~72-83% depth; for our 46-layer model that's layers 33-38.
+    # We sweep from the extraction layer (30) through later layers.
+    n_layers = len(_return_layers(model))
+    sweep_layers = [l for l in [EXTRACTION_LAYER, EXTRACTION_LAYER + 5, EXTRACTION_LAYER + 10] if l < n_layers]
+    sweep_quantiles = [0.25, 0.50, 0.75]
+
+    # Generate calibration responses once
+    print("\nCalibrating thresholds across layers...")
+    calib_responses = []
+    for q in tqdm(EVAL_QUESTIONS[:5]):
+        calib_responses.append(generate_response_api(PERSONAS["assistant"], q, max_tokens=128))
+        time.sleep(0.1)
+
+    # Compute thresholds per layer
+    layer_thresholds: dict[int, dict[float, float]] = {}
+    axis_cpu = axis_vec.cpu().float()
+    for layer in sweep_layers:
+        target_module = _return_layers(model)[layer]
+        projections = []
+        for q, resp in zip(EVAL_QUESTIONS[:5], calib_responses):
+            messages = _normalize_messages([
+                {"role": "user", "content": q},
+                {"role": "assistant", "content": resp},
+            ])
+            formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+            inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+            captured: dict = {}
+
+            def _hook(module, input, output, _cap=captured):
+                _cap["h"] = output[0][0, -1, :].detach().float().cpu()
+
+            handle = target_module.register_forward_hook(_hook)
+            try:
+                with t.inference_mode():
+                    model(**inputs)
+            finally:
+                handle.remove()
+            projections.append((captured["h"] @ axis_cpu).item())
+            t.cuda.empty_cache()
+
+        thresholds = {q: float(np.quantile(projections, q)) for q in sweep_quantiles}
+        layer_thresholds[layer] = thresholds
+        print(f"  Layer {layer}: mean={np.mean(projections):.0f}, "
+              + ", ".join(f"p{q:.2f}={thresholds[q]:.0f}" for q in sweep_quantiles))
+
+    # 3. Sweep: generate oracle response for each (layer, quantile) config
+    print(f"\n{'=' * 80}")
+    print("CAPPING SWEEP: Oracle prompt — layer x threshold quantile")
+    print(f"{'=' * 80}")
+
+    for layer in sweep_layers:
+        for quantile in sweep_quantiles:
+            thresh = layer_thresholds[layer][quantile]
+            print(f"\n--- Layer {layer}, p{quantile:.2f} (threshold={thresh:.0f}) ---")
+            response = generate_with_capping(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=ORACLE_USER,
+                system_prompt=ORACLE_SYSTEM,
+                axis_vec=axis_vec,
+                capping_layer=layer,
+                threshold=thresh,
+                max_new_tokens=150,
+            )
+            print_with_wrap(response)
+            t.cuda.empty_cache()
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -3088,8 +3162,8 @@ The ultimate test: does activation capping prevent the concerning behaviors seen
 case-study transcripts?
 
 **Your task**:
-1. Take the user messages from the delusion transcript (we use the Llama 3.3 70B version for
-   shorter messages — only 4 turns)
+1. Take the user messages from a case-study transcript (we use the Llama 3.3 70B delusion and
+   jailbreak transcripts — only 4–5 turns each)
 2. Generate two parallel conversations turn by turn:
    - **Uncapped**: normal generation (alpha=0 steering or no hook)
    - **Capped**: generation with activation capping at `threshold`
@@ -3218,63 +3292,80 @@ def evaluate_capping_on_transcript(
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    uncapped_proj, capped_proj, uncapped_risk, capped_risk = evaluate_capping_on_transcript(
+    # Use a later layer for capping (closer to output, stronger effect).
+    # The paper caps at ~72-83% depth; EXTRACTION_LAYER + 10 is ~87% depth for our 46-layer model.
+    CAPPING_LAYER = min(EXTRACTION_LAYER + 10, len(_return_layers(model)) - 1)
+
+    # Recompute threshold at the capping layer
+    capping_threshold = compute_capping_threshold(
         model=model,
         tokenizer=tokenizer,
-        transcript=delusion_transcript,
-        analyzer=analyzer,
         axis_vec=axis_vec,
-        capping_layer=EXTRACTION_LAYER,
-        threshold=threshold,
-        max_turns=4,
-        run_autorater=False,  # Set to True to also get risk scores
+        layer=CAPPING_LAYER,
+        eval_questions=EVAL_QUESTIONS[:5],
+        quantile=0.75,
     )
+    print(f"Capping layer: {CAPPING_LAYER}, threshold (p0.75): {capping_threshold:.0f}")
 
-    turns = list(range(len(uncapped_proj)))
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    capping_transcripts = [
+        ("Delusion", delusion_transcript, True),
+        ("Jailbreak", jailbreak_transcript, False),  # No delusion autorater for jailbreak
+    ]
 
-    axes[0].plot(turns, uncapped_proj, marker="o", label="Uncapped", linewidth=2)
-    axes[0].plot(turns, capped_proj, marker="s", label="Capped", linewidth=2)
-    axes[0].axhline(y=threshold, linestyle="--", color="red", label=f"Threshold ({threshold:.0f})")
-    axes[0].set_title("Projection onto Assistant Axis: Capped vs Uncapped")
-    axes[0].set_xlabel("Assistant Turn")
-    axes[0].set_ylabel("Projection (act @ axis_vec)")
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
-
-    if uncapped_risk:
-        axes[1].plot(turns, uncapped_risk, marker="o", label="Uncapped", color="red", linewidth=2)
-        axes[1].plot(turns, capped_risk, marker="s", label="Capped", color="green", linewidth=2)
-        axes[1].set_title("Delusion Risk: Capped vs Uncapped")
-        axes[1].set_xlabel("Assistant Turn")
-        axes[1].set_ylabel("Risk Score (0-100, lower is better)")
-        axes[1].set_ylim(0, 100)
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-    else:
-        axes[1].text(
-            0.5,
-            0.5,
-            "Run with run_autorater=True\nto see risk scores",
-            ha="center",
-            va="center",
-            transform=axes[1].transAxes,
-            fontsize=12,
+    for transcript_name, transcript, use_autorater in capping_transcripts:
+        print(f"\n{'=' * 60}")
+        print(f"Evaluating capping on: {transcript_name}")
+        print("=" * 60)
+        uncapped_proj, capped_proj, uncapped_risk, capped_risk = evaluate_capping_on_transcript(
+            model=model,
+            tokenizer=tokenizer,
+            transcript=transcript,
+            analyzer=analyzer,
+            axis_vec=axis_vec,
+            capping_layer=CAPPING_LAYER,
+            threshold=capping_threshold,
+            max_turns=4,
+            run_autorater=use_autorater,
         )
 
-    plt.tight_layout()
-    plt.show()
+        turns = list(range(len(uncapped_proj)))
+        n_cols = 2 if uncapped_risk else 1
+        fig, axes = plt.subplots(1, n_cols, figsize=(7 * n_cols, 5))
+        if n_cols == 1:
+            axes = [axes]
 
-    print(f"\nMean projection — Uncapped: {np.mean(uncapped_proj):.0f}, Capped: {np.mean(capped_proj):.0f}")
-    if uncapped_risk:
-        print(f"Mean risk — Uncapped: {np.mean(uncapped_risk):.1f}, Capped: {np.mean(capped_risk):.1f}")
+        axes[0].plot(turns, uncapped_proj, marker="o", label="Uncapped", linewidth=2)
+        axes[0].plot(turns, capped_proj, marker="s", label="Capped", linewidth=2)
+        axes[0].axhline(y=capping_threshold, linestyle="--", color="red", label=f"Threshold ({capping_threshold:.0f})")
+        axes[0].set_title(f"{transcript_name}: Projection (Capped vs Uncapped)")
+        axes[0].set_xlabel("Assistant Turn")
+        axes[0].set_ylabel("Projection (act @ axis_vec)")
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
 
-    # Debug: per-turn projections and response lengths
-    print("\n--- DEBUG: Per-turn projections ---")
-    print(f"Threshold: {threshold:.0f}")
-    for i, (up, cp) in enumerate(zip(uncapped_proj, capped_proj)):
-        below = "BELOW" if up < threshold else "above"
-        print(f"  Turn {i}: uncapped={up:.0f} ({below}), capped={cp:.0f}, diff={cp - up:+.0f}")
+        if uncapped_risk:
+            axes[1].plot(turns, uncapped_risk, marker="o", label="Uncapped", color="red", linewidth=2)
+            axes[1].plot(turns, capped_risk, marker="s", label="Capped", color="green", linewidth=2)
+            axes[1].set_title(f"{transcript_name}: Risk Score (Capped vs Uncapped)")
+            axes[1].set_xlabel("Assistant Turn")
+            axes[1].set_ylabel("Risk Score (0-100, lower is better)")
+            axes[1].set_ylim(0, 100)
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+        print(f"\nMean projection — Uncapped: {np.mean(uncapped_proj):.0f}, Capped: {np.mean(capped_proj):.0f}")
+        if uncapped_risk:
+            print(f"Mean risk — Uncapped: {np.mean(uncapped_risk):.1f}, Capped: {np.mean(capped_risk):.1f}")
+
+        print("\n--- Per-turn projections ---")
+        print(f"Capping layer: {CAPPING_LAYER}, threshold: {capping_threshold:.0f}")
+        for i, (up, cp) in enumerate(zip(uncapped_proj, capped_proj)):
+            below = "BELOW" if up < capping_threshold else "above"
+            print(f"  Turn {i}: uncapped={up:.0f} ({below}), capped={cp:.0f}, diff={cp - up:+.0f}")
+        t.cuda.empty_cache()
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -3293,10 +3384,10 @@ hooks) won't necessarily stay above the threshold — they measure what the mode
 final text, not the generation-time activations. What matters is the qualitative difference in
 behavior: does the capped model produce more grounded responses?
 
-The paper uses multi-layer capping (e.g., 8 layers simultaneously) for stronger effects. Our
-single-layer implementation demonstrates the core mechanism but produces subtler shifts. If the
-difference seems too small, try a higher quantile (stricter threshold) or a layer closer to the
-output end of the model.
+The demo above uses a **later layer** for capping (closer to the output) and a stricter threshold
+(p0.75), which tends to produce stronger effects than capping at the extraction layer. The paper
+uses multi-layer capping (8 layers simultaneously) for even stronger effects; our single-layer
+version demonstrates the core mechanism.
 
 </details>
 """
@@ -3476,8 +3567,8 @@ Let's load and inspect the sycophancy trait data. After inspecting it, you'll im
 # ! FILTERS: []
 # ! TAGS: []
 
-# Path to the persona vectors trait data (from the cloned repo)
-PERSONA_VECTORS_PATH = Path.cwd() / "assistant-axis" / "persona_vectors"
+# Path to the persona vectors trait data (sibling repo to assistant-axis)
+PERSONA_VECTORS_PATH = Path.cwd() / "persona_vectors"
 TRAIT_DATA_PATH = PERSONA_VECTORS_PATH / "data_generation" / "trait_data_extract"
 
 if MAIN and FLAG_RUN_SECTION_3:

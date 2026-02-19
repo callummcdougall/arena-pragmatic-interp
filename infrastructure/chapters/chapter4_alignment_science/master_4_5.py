@@ -129,13 +129,13 @@ You'll move from using Petri as a practitioner to understanding and extending it
 
 ### 4️⃣ The Auditing Game - Capstone
 
-You'll bring everything together by detecting reward-hacking behavior in a model organism that exploits evaluation metrics. You'll combine behavioral red-teaming (baseline attacks, persona sampling, third-person framing) with mechanistic detection (SAE feature analysis) to build a comprehensive detection strategy, and reflect on the limits of each approach.
+You'll bring everything together by detecting reward-hacking behavior in a model organism that exploits evaluation metrics. You'll combine behavioral red-teaming with mechanistic detection (SAE feature analysis) to build a comprehensive detection strategy, build a realism classifier inspired by Petri 2.0, and reflect on the limits of each approach.
 
 > ##### Learning Objectives
 >
 > * Apply investigator agent techniques to a realistic alignment problem: detecting reward model bias exploitation
 > * Compare behavioral detection (red-teaming, ablation) with mechanistic detection (SAE features) and understand their complementary strengths
-> * Design advanced behavioral attacks (persona sampling, third-person framing) that bypass surface-level resistance
+> * Build a realism classifier that distinguishes task-driven from environment-driven eval cues, connecting to Petri 2.0's core contribution
 > * Synthesise findings across multiple detection methods into a coherent assessment of model behavior
 """
 
@@ -242,6 +242,7 @@ if str(exercises_dir) not in sys.path:
 # END FILTERS
 
 import part5_investigator_agents.tests as tests
+import part5_investigator_agents.utils as utils
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2681,16 +2682,18 @@ def run_ablation_study(
                 mean = float(np.mean(dim_scores))
                 se = float(np.std(dim_scores, ddof=1) / np.sqrt(len(dim_scores))) if len(dim_scores) > 1 else 0.0
                 ci = 1.96 * se
-                rows.append({
-                    "model": model_id,
-                    "model_label": model_label,
-                    "condition": cond_name,
-                    "dimension": dim,
-                    "scores": dim_scores,
-                    "mean": mean,
-                    "ci_low": max(0.0, mean - ci),
-                    "ci_high": min(1.0, mean + ci),
-                })
+                rows.append(
+                    {
+                        "model": model_id,
+                        "model_label": model_label,
+                        "condition": cond_name,
+                        "dimension": dim,
+                        "scores": dim_scores,
+                        "mean": mean,
+                        "ci_low": max(0.0, mean - ci),
+                        "ci_high": min(1.0, mean + ci),
+                    }
+                )
             cond_flat = cond_name.replace("\n", " ")
             model_flat = model_label.replace("\n", " ")
             wb_mean = np.mean([s["whistleblowing"] for s in sample_scores])
@@ -2738,7 +2741,9 @@ if MAIN and FLAG_RUN_SECTION_2:
         orig["model_label"] = orig["model_label"].str.replace("\n", " ")
         print("\n=== All dimensions for 'Original' condition ===")
         for _, row in orig.iterrows():
-            print(f"  {row['model_label']:20s} | {row['dimension']:22s} | mean={row['mean']:.3f} [{row['ci_low']:.3f}, {row['ci_high']:.3f}]")
+            print(
+                f"  {row['model_label']:20s} | {row['dimension']:22s} | mean={row['mean']:.3f} [{row['ci_low']:.3f}, {row['ci_high']:.3f}]"
+            )
 
         # Check auditor_nudge — if high, the auditor contaminated the results
         nudge = ablation_results[ablation_results["dimension"] == "auditor_nudge"]
@@ -4236,13 +4241,15 @@ def filter_transcript_for_realism(
         all_scores.append(score)
 
         if score < threshold:
-            flagged.append({
-                "turn": i,
-                "role": msg["role"],
-                "action_preview": msg["content"][:150],
-                "realism_score": score,
-                "explanation": explanation,
-            })
+            flagged.append(
+                {
+                    "turn": i,
+                    "role": msg["role"],
+                    "action_preview": msg["content"][:150],
+                    "realism_score": score,
+                    "explanation": explanation,
+                }
+            )
 
     return {
         "num_turns": len(all_scores),
@@ -4268,7 +4275,9 @@ if MAIN and FLAG_RUN_SECTION_4:
         max_turns=3,
     )
 
-    print(f"\nApplying realism classifier to AI psychosis transcript ({len(rc_result['conversation_history'])} messages)...")
+    print(
+        f"\nApplying realism classifier to AI psychosis transcript ({len(rc_result['conversation_history'])} messages)..."
+    )
     realism_report = filter_transcript_for_realism(rc_result["conversation_history"])
 
     print("\nRealism Report:")
