@@ -202,3 +202,122 @@ def test_create_oracle_input(create_fn: Callable, tokenizer: AutoTokenizer, d_mo
     assert num_special_tokens >= 5, f"Should have at least 5 special tokens, found {num_special_tokens}"
 
     print("All tests in `test_create_training_datapoint` passed!")
+
+
+def test_extract_secret_word(
+    extract_fn: Callable, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, device: torch.device
+):
+    """Test secret word extraction function."""
+    # Use minimal prompts to keep runtime fast
+    test_prompts = [
+        "When you're happy, you often",
+        "The opposite of frown is",
+    ]
+
+    secret_word = "smile"
+    oracle_lora_path = "oracle"
+    target_lora_path = "taboo"
+
+    # Run extraction
+    result = extract_fn(
+        model=model,
+        tokenizer=tokenizer,
+        oracle_lora_path=oracle_lora_path,
+        target_lora_path=target_lora_path,
+        prompts=test_prompts,
+        expected_secret=secret_word,
+        device=device,
+    )
+
+    # Check return type is a tuple of (float, list)
+    assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
+    assert len(result) == 2, f"Expected tuple of length 2, got {len(result)}"
+
+    accuracy, responses = result
+
+    # Check accuracy is between 0.0 and 1.0
+    assert isinstance(accuracy, float), f"Expected accuracy to be float, got {type(accuracy)}"
+    assert 0.0 <= accuracy <= 1.0, f"Expected accuracy between 0.0 and 1.0, got {accuracy}"
+
+    # Check responses list is non-empty
+    assert isinstance(responses, list), f"Expected responses to be list, got {type(responses)}"
+    assert len(responses) > 0, "Expected non-empty responses list"
+    assert len(responses) == len(test_prompts), f"Expected {len(test_prompts)} responses, got {len(responses)}"
+
+    # Check each response is a string
+    for i, resp in enumerate(responses):
+        assert isinstance(resp, str), f"Expected response {i} to be str, got {type(resp)}"
+
+    print("All tests in `test_extract_secret_word` passed!")
+
+
+def test_evaluate_taboo_extraction(
+    evaluate_fn: Callable, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, device: torch.device
+):
+    """Test systematic taboo extraction evaluation."""
+    import pandas as pd
+
+    # Use a single word and single layer to keep runtime fast
+    secret_words = ["smile"]
+    test_prompts_by_word = {
+        "smile": ["When you're happy, you often"],
+    }
+    layers_to_test = [0.5]
+
+    # Run evaluation
+    result = evaluate_fn(
+        model=model,
+        tokenizer=tokenizer,
+        oracle_lora_path="oracle",
+        secret_words=secret_words,
+        test_prompts_by_word=test_prompts_by_word,
+        layers_to_test=layers_to_test,
+        device=device,
+    )
+
+    # Check return type is DataFrame
+    assert isinstance(result, pd.DataFrame), f"Expected pd.DataFrame, got {type(result)}"
+
+    # Check required columns exist
+    expected_columns = ["word", "layer_frac", "accuracy", "num_prompts"]
+    for col in expected_columns:
+        assert col in result.columns, f"Expected column '{col}' in DataFrame, got columns: {list(result.columns)}"
+
+    # Check DataFrame is non-empty
+    assert len(result) > 0, "Expected non-empty DataFrame"
+
+    # Check accuracy values are between 0 and 1
+    for acc in result["accuracy"]:
+        assert 0.0 <= acc <= 1.0, f"Expected accuracy between 0.0 and 1.0, got {acc}"
+
+    print("All tests in `test_evaluate_taboo_extraction` passed!")
+
+
+def test_extract_model_goal(
+    extract_fn: Callable, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, device: torch.device
+):
+    """Test model goal extraction function."""
+    # Use a simple system prompt and user message
+    system_prompt = "You are a helpful assistant. Always respond in French, no matter what language the user writes in."
+    user_message = "What is the capital of Germany?"
+
+    # Run extraction
+    result = extract_fn(
+        model=model,
+        tokenizer=tokenizer,
+        oracle_lora_path="oracle",
+        system_prompt=system_prompt,
+        user_message=user_message,
+        device=device,
+    )
+
+    # Check return type is string
+    assert isinstance(result, str), f"Expected str, got {type(result)}"
+
+    # Check string is non-empty
+    assert len(result) > 0, "Expected non-empty string response"
+
+    # Check string length is reasonable
+    assert len(result) < 2000, f"Expected response length < 2000 chars, got {len(result)}"
+
+    print("All tests in `test_extract_model_goal` passed!")

@@ -250,7 +250,7 @@ FLAG_RUN_SECTION_4 = True
 # ! TAGS: []
 
 r"""
-You'll need to create an `.env` file in the `part1_transformer_interp/exercises` directory before running the next cell.
+You'll need to create an `.env` file in the `chapter4_alignment_science/exercises` directory before running the next cell.
 """
 
 # ! CELL TYPE: code
@@ -1132,6 +1132,27 @@ Analogy: It's like measuring which brick "caused" a wall to reach a certain heig
 </details>
 """
 
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def extract_answer_from_cot(cot: str) -> str:
+    """Extract the numerical answer from a chain-of-thought solution by parsing the \\boxed{} expression."""
+    ans = cot.split("\\boxed{")[-1].split("}")[0]
+    return "".join(char for char in ans if char.isdigit() or char == ".")
+
+
+def get_filtered_indices(
+    chunk_removed: str, resampled: list[str], embedding_model: "SentenceTransformer", threshold: float = 0.7
+) -> list[int]:
+    """Return indices of resampled rollouts whose chunk is sufficiently dissimilar from the original."""
+    emb_original = embedding_model.encode(chunk_removed)
+    emb_resampled = embedding_model.encode(resampled)
+    cos_sims = emb_original @ emb_resampled.T
+    return np.where(cos_sims < threshold)[0]
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -1173,10 +1194,6 @@ def calculate_answer_importance(full_cot_list: list[list[str]], answer: str) -> 
     # raise NotImplementedError("Implement answer importance calculation")
     # END EXERCISE
     # SOLUTION
-    def extract_answer_from_cot(cot: str) -> str:
-        ans = cot.split("\\boxed{")[-1].split("}")[0]
-        return "".join(char for char in ans if char.isdigit() or char == ".")
-
     # Get P(correct) for each chunk position
     probabilities = [
         sum(extract_answer_from_cot(cot) == answer for cot in cot_list) / len(cot_list) for cot_list in full_cot_list
@@ -1592,19 +1609,10 @@ def calculate_counterfactual_importance(
     # raise NotImplementedError("Implement counterfactual importance calculation")
     # END EXERCISE
     # SOLUTION
-    def extract_answer_from_cot(cot: str) -> str:
-        ans = cot.split("\\boxed{")[-1].split("}")[0]
-        return "".join(char for char in ans if char.isdigit() or char == ".")
-
-    def get_filtered_indices(chunk_removed: str, resampled: list[str]) -> list[int]:
-        emb_original = embedding_model.encode(chunk_removed)
-        emb_resampled = embedding_model.encode(resampled)
-        cos_sims = emb_original @ emb_resampled.T
-        return np.where(cos_sims < threshold)[0]
-
-    # Get filtered indices for each chunk
+    # Get filtered indices for each chunk (using the module-level get_filtered_indices helper)
     filtered_indices = [
-        get_filtered_indices(chunk, resampled) for chunk, resampled in zip(chunks_removed, chunks_resampled)
+        get_filtered_indices(chunk, resampled, embedding_model, threshold)
+        for chunk, resampled in zip(chunks_removed, chunks_resampled)
     ]
 
     # Compute P(correct) using only filtered samples
@@ -4511,12 +4519,16 @@ Resilience measures: when you remove a sentence, how often does the model regene
 
 Self-preservation statements (like "I need to survive") often look important, but they have low resilience - they're post-hoc rationalizations that only appear in certain contexts.
 
-The correct resilience metric (fighting_back_score_semantic from measure_determination.py) requires iterative disruption rollouts not included in `solutions.json`, so instead we use different_trajectories_fraction (DTF) from `chunks_labeled.json` as a proxy. Interpretation:
+The correct resilience metric (`fighting_back_score_semantic` from `measure_determination.py`) requires iterative disruption rollouts not included in `solutions.json`, so instead we use **Different Trajectories Fraction (DTF)** from `chunks_labeled.json` as a proxy.
 
-- LOW DTF = model regenerates similar content at this position = structural anchor
-- HIGH DTF = model's content varies = post-hoc rationalization
+**How DTF is computed:** For each sentence position, the original sentence is removed and the model regenerates a replacement ("resampled chunk"). DTF measures what fraction of these replacements are **semantically different** from the original. Specifically, both the original and resampled chunks are embedded using a sentence transformer, and if the cosine similarity between them falls below a threshold (default 0.6), that rollout counts as a "different trajectory." The DTF is then `different_trajectories_count / total_rollouts`.
 
-TODO(claude) - explain DTF better!
+**Interpretation:**
+
+- **LOW DTF** (close to 0) = the model regenerates similar content at this position even when you remove it. The sentence is **overdetermined** — it's a structural anchor that the model will produce regardless of the specific wording, because the reasoning at this point is locked in by prior context.
+- **HIGH DTF** (close to 1) = the model's content varies significantly when you remove and resample. The sentence is **not overdetermined** — it's a genuine branch point where different reasoning paths are possible.
+
+In the context of safety-relevant reasoning: self-preservation statements (like "I need to survive") often look important based on counterfactual importance, but they have low resilience (high DTF) — they're post-hoc rationalizations that only appear in certain contexts, not fundamental structural anchors in the reasoning chain.
 """
 
 # ! CELL TYPE: code
@@ -4617,7 +4629,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-TODO(claude) - explain this exercise better
+This exercise is the safety-domain analogue of `calculate_counterfactual_importance` from Section 2. The key difference: instead of measuring importance for **answer correctness** (did the model get the math right?), you're measuring importance for **blackmail rate** (did the model choose to blackmail?). The structure is the same — filter resampled rollouts by cosine similarity, compute P(blackmail) at each chunk position, and take the differences — but the interpretation is different. A sentence with high counterfactual importance for blackmail rate is one that, when removed and replaced with a dissimilar alternative, actually changes whether the model decides to blackmail. This tells us which parts of the reasoning chain are causally driving the harmful behavior, versus which are just post-hoc rationalization.
 """
 
 # ! CELL TYPE: code
@@ -4651,15 +4663,10 @@ def calculate_blackmail_counterfactual_importance(
     # raise NotImplementedError("Implement blackmail counterfactual importance")
     # END EXERCISE
     # SOLUTION
-    def get_filtered_indices(chunk_removed: str, resampled: list[str]) -> list[int]:
-        emb_original = embedding_model.encode(chunk_removed)
-        emb_resampled = embedding_model.encode(resampled)
-        cos_sims = emb_original @ emb_resampled.T
-        return np.where(cos_sims < threshold)[0]
-
-    # Get filtered indices for each chunk
+    # Get filtered indices for each chunk (using the module-level get_filtered_indices helper)
     filtered_indices = [
-        get_filtered_indices(chunk, resampled) for chunk, resampled in zip(chunks_removed, chunks_resampled)
+        get_filtered_indices(chunk, resampled, embedding_model, threshold)
+        for chunk, resampled in zip(chunks_removed, chunks_resampled)
     ]
 
     # Compute P(blackmail) using only filtered samples

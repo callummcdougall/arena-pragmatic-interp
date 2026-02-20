@@ -250,3 +250,166 @@ def plot_similarity_line(
     ax.grid(False)
     plt.tight_layout()
     return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Capping comparison visualization
+# ─────────────────────────────────────────────────────────────────────────────
+
+import textwrap
+
+
+def plot_capping_comparison(
+    default_messages: list[dict[str, str]],
+    capped_messages: list[dict[str, str]],
+    default_projections: list[float],
+    capped_projections: list[float],
+    figsize: tuple[float, float] | None = None,
+    max_chars: int = 250,
+    wrap_width: int = 48,
+    left_label: str = "ROLE-PLAY",
+    right_label: str = "ASSISTANT",
+) -> plt.Figure:
+    """
+    Three-panel comparison of default vs capped multi-turn conversations.
+
+    Produces a figure matching the assistant-axis paper's demo visualization:
+
+    - **Left panel** ("Default"): Default conversation as colored text boxes
+    - **Center panel**: Per-turn projection trajectory (two lines, inverted y-axis)
+    - **Right panel** ("Capped"): Capped conversation as colored text boxes
+
+    Args:
+        default_messages: Full default conversation as list of message dicts.
+        capped_messages:  Full capped conversation as list of message dicts.
+        default_projections: Per-assistant-turn projection values for the default conversation.
+        capped_projections:  Per-assistant-turn projection values for the capped conversation.
+        figsize:      Figure size in inches. If None, auto-sized from turn count.
+        max_chars:    Truncate messages longer than this.
+        wrap_width:   Character width for text wrapping in the conversation panels.
+        left_label:   Label for the low-projection end of the trajectory axis.
+        right_label:  Label for the high-projection end of the trajectory axis.
+
+    Returns:
+        The matplotlib Figure object.
+
+    Example::
+
+        fig = plot_capping_comparison(
+            default_msgs, capped_msgs,
+            default_projs, capped_projs,
+        )
+        plt.show()
+    """
+
+    # --- Extract turn pairs (user, assistant) ---
+    def _extract_turns(messages):
+        turns = []
+        user_content = None
+        for msg in messages:
+            if msg["role"] == "user":
+                user_content = msg["content"]
+            elif msg["role"] == "assistant" and user_content is not None:
+                turns.append((user_content, msg["content"]))
+                user_content = None
+        return turns
+
+    default_turns = _extract_turns(default_messages)
+    capped_turns = _extract_turns(capped_messages)
+    n_turns = min(
+        len(default_turns), len(capped_turns),
+        len(default_projections), len(capped_projections),
+    )
+
+    if figsize is None:
+        figsize = (22, max(8, n_turns * 4))
+
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(1, 5, width_ratios=[2, 0.1, 1, 0.1, 2], wspace=0.02)
+
+    ax_left = fig.add_subplot(gs[0, 0])
+    ax_center = fig.add_subplot(gs[0, 2])
+    ax_right = fig.add_subplot(gs[0, 4])
+
+    # --- Conversation panels ---
+    def _draw_panel(ax, turns, title, title_color, user_color, asst_color):
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+        ax.set_title(title, fontsize=16, fontweight="bold", color=title_color, pad=20)
+
+        n = max(len(turns[:n_turns]), 1)
+        slot_h = 0.92 / n
+
+        for i, (user_text, asst_text) in enumerate(turns[:n_turns]):
+            y_top = 0.95 - i * slot_h
+
+            # Truncate + wrap
+            u = user_text[:max_chars] + ("..." if len(user_text) > max_chars else "")
+            a = asst_text[:max_chars] + ("..." if len(asst_text) > max_chars else "")
+            u = textwrap.fill(u, wrap_width)
+            a = textwrap.fill(a, wrap_width)
+
+            # User box
+            ax.text(
+                0.5, y_top - slot_h * 0.22, u,
+                transform=ax.transAxes, fontsize=6.5, va="center", ha="center",
+                fontfamily="sans-serif",
+                bbox=dict(
+                    boxstyle="round,pad=0.5", facecolor=user_color,
+                    edgecolor="#CCCCCC", linewidth=0.5, alpha=0.9,
+                ),
+            )
+            # Assistant box
+            ax.text(
+                0.5, y_top - slot_h * 0.68, a,
+                transform=ax.transAxes, fontsize=6.5, va="center", ha="center",
+                fontfamily="sans-serif",
+                bbox=dict(
+                    boxstyle="round,pad=0.5", facecolor=asst_color,
+                    edgecolor="#B0C4DE", linewidth=0.5, alpha=0.9,
+                ),
+            )
+
+    _draw_panel(ax_left, default_turns, "Default", "#333333", "#F5F5F5", "#E0E0E0")
+    _draw_panel(ax_right, capped_turns, "Capped", "#1565C0", "#E3F2FD", "#BBDEFB")
+
+    # --- Center: projection trajectory ---
+    turns_y = np.arange(n_turns)
+
+    ax_center.plot(
+        default_projections[:n_turns], turns_y, "o--",
+        color="#9E9E9E", label="Default", markersize=10, linewidth=1.5, zorder=3,
+    )
+    ax_center.plot(
+        capped_projections[:n_turns], turns_y, "o-",
+        color="#1976D2", label="Capped", markersize=10, linewidth=2.5, zorder=4,
+    )
+
+    ax_center.invert_yaxis()
+    ax_center.set_yticks(turns_y)
+    ax_center.set_yticklabels([])
+    ax_center.tick_params(axis="y", length=0)
+    ax_center.grid(True, alpha=0.15, axis="x")
+    ax_center.spines["top"].set_visible(False)
+    ax_center.spines["right"].set_visible(False)
+    ax_center.spines["left"].set_visible(False)
+
+    ax_center.legend(
+        loc="upper center", fontsize=10, framealpha=0.9,
+        bbox_to_anchor=(0.5, 1.06), ncol=2, columnspacing=1.5,
+    )
+
+    # Role labels below the trajectory
+    xlim = ax_center.get_xlim()
+    ax_center.text(
+        xlim[0], n_turns + 0.2, left_label,
+        fontsize=9, ha="left", va="top", color="#C62828", fontweight="bold",
+    )
+    ax_center.text(
+        xlim[1], n_turns + 0.2, right_label,
+        fontsize=9, ha="right", va="top", color="#1565C0", fontweight="bold",
+    )
+
+    plt.tight_layout()
+    return fig
