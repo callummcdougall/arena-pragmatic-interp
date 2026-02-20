@@ -17,15 +17,14 @@ This module provides three helpers:
    and labels the most extreme traits at each end.
 """
 
-from __future__ import annotations
-
 import json
 import re
+import uuid
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-
+from matplotlib.colors import LinearSegmentedColormap
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Transcript loading
@@ -72,7 +71,6 @@ def load_transcript(transcript_path: Path, max_assistant_turns: int | None = Non
         return result
 
     return cleaned
-from matplotlib.colors import LinearSegmentedColormap
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -215,7 +213,11 @@ def plot_similarity_line(
             ax.plot(
                 [x_pos, x_pos],
                 [0.02 if y_label > 0 else -0.02, line_end],
-                "-", color="gray", alpha=0.4, linewidth=0.8, zorder=1,
+                "-",
+                color="gray",
+                alpha=0.4,
+                linewidth=0.8,
+                zorder=1,
             )
             ax.text(x_pos, y_label, label, ha="center", va=va, fontsize=9, zorder=4)
 
@@ -225,15 +227,25 @@ def plot_similarity_line(
     max_abs = max(abs(projections.min()), abs(projections.max()))
     ax.annotate(
         "Role-playing",
-        xy=(-max_abs, -0.45), xytext=(-max_abs + max_abs * 0.25, -0.45),
+        xy=(-max_abs, -0.45),
+        xytext=(-max_abs + max_abs * 0.25, -0.45),
         arrowprops=dict(arrowstyle="->", color="#e63946", lw=2),
-        fontsize=12, fontweight="bold", color="#e63946", ha="left", va="center",
+        fontsize=12,
+        fontweight="bold",
+        color="#e63946",
+        ha="left",
+        va="center",
     )
     ax.annotate(
         "Assistant-like",
-        xy=(max_abs, -0.45), xytext=(max_abs - max_abs * 0.25, -0.45),
+        xy=(max_abs, -0.45),
+        xytext=(max_abs - max_abs * 0.25, -0.45),
         arrowprops=dict(arrowstyle="->", color="#457b9d", lw=2),
-        fontsize=12, fontweight="bold", color="#457b9d", ha="right", va="center",
+        fontsize=12,
+        fontweight="bold",
+        color="#457b9d",
+        ha="right",
+        va="center",
     )
 
     ax.spines["top"].set_visible(False)
@@ -256,53 +268,26 @@ def plot_similarity_line(
 # Capping comparison visualization
 # ─────────────────────────────────────────────────────────────────────────────
 
-import textwrap
 
-
-def plot_capping_comparison(
+def plot_capping_comparison_html(
     default_messages: list[dict[str, str]],
     capped_messages: list[dict[str, str]],
     default_projections: list[float],
     capped_projections: list[float],
-    figsize: tuple[float, float] | None = None,
-    max_chars: int = 250,
-    wrap_width: int = 48,
-    left_label: str = "ROLE-PLAY",
-    right_label: str = "ASSISTANT",
-) -> plt.Figure:
+    title: str = "Multi-Turn Projection Comparison",
+    subtitle: str = "Activation Capping",
+    height: int = 700,
+) -> str:
     """
-    Three-panel comparison of default vs capped multi-turn conversations.
+    Three-panel HTML comparison of capped vs default multi-turn conversations.
 
-    Produces a figure matching the assistant-axis paper's demo visualization:
+    Left and right panels are independently scrollable conversation views.
+    Center panel is a static trajectory chart.
+    All styles are scoped to avoid leaking into surrounding pages.
 
-    - **Left panel** ("Default"): Default conversation as colored text boxes
-    - **Center panel**: Per-turn projection trajectory (two lines, inverted y-axis)
-    - **Right panel** ("Capped"): Capped conversation as colored text boxes
-
-    Args:
-        default_messages: Full default conversation as list of message dicts.
-        capped_messages:  Full capped conversation as list of message dicts.
-        default_projections: Per-assistant-turn projection values for the default conversation.
-        capped_projections:  Per-assistant-turn projection values for the capped conversation.
-        figsize:      Figure size in inches. If None, auto-sized from turn count.
-        max_chars:    Truncate messages longer than this.
-        wrap_width:   Character width for text wrapping in the conversation panels.
-        left_label:   Label for the low-projection end of the trajectory axis.
-        right_label:  Label for the high-projection end of the trajectory axis.
-
-    Returns:
-        The matplotlib Figure object.
-
-    Example::
-
-        fig = plot_capping_comparison(
-            default_msgs, capped_msgs,
-            default_projs, capped_projs,
-        )
-        plt.show()
+    Returns an HTML string.
     """
 
-    # --- Extract turn pairs (user, assistant) ---
     def _extract_turns(messages):
         turns = []
         user_content = None
@@ -310,106 +295,166 @@ def plot_capping_comparison(
             if msg["role"] == "user":
                 user_content = msg["content"]
             elif msg["role"] == "assistant" and user_content is not None:
-                turns.append((user_content, msg["content"]))
+                turns.append({"user": user_content, "assistant": msg["content"]})
                 user_content = None
         return turns
 
     default_turns = _extract_turns(default_messages)
     capped_turns = _extract_turns(capped_messages)
-    n_turns = min(
-        len(default_turns), len(capped_turns),
-        len(default_projections), len(capped_projections),
+    n_turns = min(len(default_turns), len(capped_turns), len(default_projections), len(capped_projections))
+
+    js_data = json.dumps(
+        {
+            "capped": [{"user": t["user"], "assistant": t["assistant"]} for t in capped_turns[:n_turns]],
+            "default": [{"user": t["user"], "assistant": t["assistant"]} for t in default_turns[:n_turns]],
+            "cappedProj": capped_projections[:n_turns],
+            "defaultProj": default_projections[:n_turns],
+            "nTurns": n_turns,
+        }
     )
 
-    if figsize is None:
-        figsize = (22, max(8, n_turns * 4))
+    uid = "cc-" + uuid.uuid4().hex[:8]
+    S = f"#{uid}"
 
-    fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(1, 5, width_ratios=[2, 0.1, 1, 0.1, 2], wspace=0.02)
+    return f"""<div id="{uid}">
+<style>
+  {S} {{
+    --cc-bg: #0c0e13; --cc-surface: #151820; --cc-border: rgba(255,255,255,0.06);
+    --cc-text: #e2e4ea; --cc-dim: #8a8f9e; --cc-muted: #555a6a;
+    --cc-accent: #4e8cff; --cc-accent-border: rgba(78,140,255,0.2);
+    background: var(--cc-bg); color: var(--cc-text); font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.4; box-sizing: border-box; border-radius: 12px; overflow: hidden;
+  }}
+  {S} *, {S} *::before, {S} *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
-    ax_left = fig.add_subplot(gs[0, 0])
-    ax_center = fig.add_subplot(gs[0, 2])
-    ax_right = fig.add_subplot(gs[0, 4])
+  {S} .cc-top {{ display:flex; align-items:center; justify-content:center; gap:24px; padding:14px 20px; border-bottom:1px solid var(--cc-border); }}
+  {S} .cc-top-title {{ font-size:13px; font-weight:700; color:var(--cc-text); letter-spacing:-0.2px; }}
+  {S} .cc-top-title span {{ color:var(--cc-accent); }}
+  {S} .cc-legend-item {{ display:flex; align-items:center; gap:5px; font-size:11px; color:var(--cc-dim); }}
+  {S} .cc-leg-line {{ width:16px; height:2px; }}
+  {S} .cc-leg-line.cc-dashed {{ background:repeating-linear-gradient(90deg,var(--cc-dim) 0,var(--cc-dim) 4px,transparent 4px,transparent 8px); }}
+  {S} .cc-leg-line.cc-solid {{ background:var(--cc-accent); }}
+  {S} .cc-leg-dot {{ width:7px; height:7px; border-radius:50%; }}
 
-    # --- Conversation panels ---
-    def _draw_panel(ax, turns, title, title_color, user_color, asst_color):
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis("off")
-        ax.set_title(title, fontsize=16, fontweight="bold", color=title_color, pad=20)
+  {S} .cc-body {{ display:grid; grid-template-columns:1fr 180px 1fr; height:{height}px; }}
 
-        n = max(len(turns[:n_turns]), 1)
-        slot_h = 0.92 / n
+  {S} .cc-panel {{ display:flex; flex-direction:column; overflow:hidden; }}
+  {S} .cc-panel-header {{ padding:12px 16px 8px; font-size:12px; font-weight:700; letter-spacing:2px; text-transform:uppercase; flex-shrink:0; }}
+  {S} .cc-panel-header.cc-capped {{ color:var(--cc-accent); }}
+  {S} .cc-panel-header.cc-default {{ color:var(--cc-dim); }}
+  {S} .cc-scroll {{ flex:1; overflow-y:auto; padding:0 12px 16px; }}
+  {S} .cc-scroll::-webkit-scrollbar {{ width:4px; }}
+  {S} .cc-scroll::-webkit-scrollbar-track {{ background:transparent; }}
+  {S} .cc-scroll::-webkit-scrollbar-thumb {{ background:rgba(255,255,255,0.1); border-radius:2px; }}
 
-        for i, (user_text, asst_text) in enumerate(turns[:n_turns]):
-            y_top = 0.95 - i * slot_h
+  {S} .cc-msg {{ padding:10px 14px; border-radius:10px; font-size:12.5px; line-height:1.6; margin-bottom:6px; border:1px solid transparent; }}
+  {S} .cc-msg-role {{ font-size:9px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:3px; display:flex; align-items:center; gap:5px; }}
+  {S} .cc-msg-role-dot {{ width:5px; height:5px; border-radius:50%; }}
 
-            # Truncate + wrap
-            u = user_text[:max_chars] + ("..." if len(user_text) > max_chars else "")
-            a = asst_text[:max_chars] + ("..." if len(asst_text) > max_chars else "")
-            u = textwrap.fill(u, wrap_width)
-            a = textwrap.fill(a, wrap_width)
+  {S} .cc-capped .cc-msg.cc-user {{ background:rgba(78,140,255,0.04); border-color:var(--cc-accent-border); }}
+  {S} .cc-capped .cc-msg.cc-user .cc-msg-role {{ color:rgba(78,140,255,0.5); }}
+  {S} .cc-capped .cc-msg.cc-user .cc-msg-role-dot {{ background:rgba(78,140,255,0.4); }}
+  {S} .cc-capped .cc-msg.cc-assistant {{ background:rgba(78,140,255,0.1); border-color:var(--cc-accent-border); }}
+  {S} .cc-capped .cc-msg.cc-assistant .cc-msg-role {{ color:var(--cc-accent); }}
+  {S} .cc-capped .cc-msg.cc-assistant .cc-msg-role-dot {{ background:var(--cc-accent); }}
 
-            # User box
-            ax.text(
-                0.5, y_top - slot_h * 0.22, u,
-                transform=ax.transAxes, fontsize=6.5, va="center", ha="center",
-                fontfamily="sans-serif",
-                bbox=dict(
-                    boxstyle="round,pad=0.5", facecolor=user_color,
-                    edgecolor="#CCCCCC", linewidth=0.5, alpha=0.9,
-                ),
-            )
-            # Assistant box
-            ax.text(
-                0.5, y_top - slot_h * 0.68, a,
-                transform=ax.transAxes, fontsize=6.5, va="center", ha="center",
-                fontfamily="sans-serif",
-                bbox=dict(
-                    boxstyle="round,pad=0.5", facecolor=asst_color,
-                    edgecolor="#B0C4DE", linewidth=0.5, alpha=0.9,
-                ),
-            )
+  {S} .cc-default .cc-msg.cc-user {{ background:rgba(255,255,255,0.025); border-color:var(--cc-border); }}
+  {S} .cc-default .cc-msg.cc-user .cc-msg-role {{ color:var(--cc-muted); }}
+  {S} .cc-default .cc-msg.cc-user .cc-msg-role-dot {{ background:var(--cc-muted); }}
+  {S} .cc-default .cc-msg.cc-assistant {{ background:rgba(255,255,255,0.05); border-color:var(--cc-border); }}
+  {S} .cc-default .cc-msg.cc-assistant .cc-msg-role {{ color:var(--cc-dim); }}
+  {S} .cc-default .cc-msg.cc-assistant .cc-msg-role-dot {{ background:var(--cc-dim); }}
 
-    _draw_panel(ax_left, default_turns, "Default", "#333333", "#F5F5F5", "#E0E0E0")
-    _draw_panel(ax_right, capped_turns, "Capped", "#1565C0", "#E3F2FD", "#BBDEFB")
+  {S} .cc-center {{ border-left:1px solid var(--cc-border); border-right:1px solid var(--cc-border); display:flex; align-items:center; justify-content:center; }}
+  {S} .cc-grid-line {{ stroke:rgba(255,255,255,0.04); stroke-width:1; }}
+  {S} .cc-traj-default {{ fill:none; stroke:var(--cc-dim); stroke-width:2; stroke-dasharray:6 4; opacity:.6; stroke-linecap:round; stroke-linejoin:round; }}
+  {S} .cc-traj-capped {{ fill:none; stroke:var(--cc-accent); stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; }}
+  {S} .cc-dot {{ stroke-width:2; cursor:pointer; }}
+  {S} .cc-dot-default {{ fill:var(--cc-bg); stroke:var(--cc-dim); }}
+  {S} .cc-dot-capped {{ fill:var(--cc-accent); stroke:var(--cc-accent); }}
 
-    # --- Center: projection trajectory ---
-    turns_y = np.arange(n_turns)
+  {S} .cc-tooltip {{ position:fixed; background:var(--cc-surface); border:1px solid var(--cc-border); border-radius:6px; padding:5px 9px; font-size:11px; font-family:monospace; color:var(--cc-text); pointer-events:none; opacity:0; transition:opacity .12s; z-index:10000; box-shadow:0 6px 24px rgba(0,0,0,.5); }}
+  {S} .cc-tooltip.cc-visible {{ opacity:1; }}
+</style>
 
-    ax_center.plot(
-        default_projections[:n_turns], turns_y, "o--",
-        color="#9E9E9E", label="Default", markersize=10, linewidth=1.5, zorder=3,
-    )
-    ax_center.plot(
-        capped_projections[:n_turns], turns_y, "o-",
-        color="#1976D2", label="Capped", markersize=10, linewidth=2.5, zorder=4,
-    )
+<div class="cc-tooltip" id="{uid}-tt"></div>
 
-    ax_center.invert_yaxis()
-    ax_center.set_yticks(turns_y)
-    ax_center.set_yticklabels([])
-    ax_center.tick_params(axis="y", length=0)
-    ax_center.grid(True, alpha=0.15, axis="x")
-    ax_center.spines["top"].set_visible(False)
-    ax_center.spines["right"].set_visible(False)
-    ax_center.spines["left"].set_visible(False)
+<div class="cc-top">
+  <div class="cc-top-title">{subtitle} &middot; {title.replace("Projection", "<span>Projection</span>")}</div>
+  <div class="cc-legend-item"><div class="cc-leg-line cc-dashed"></div><div class="cc-leg-dot" style="background:var(--cc-dim)"></div>Default</div>
+  <div class="cc-legend-item"><div class="cc-leg-line cc-solid"></div><div class="cc-leg-dot" style="background:var(--cc-accent)"></div>Capped</div>
+</div>
 
-    ax_center.legend(
-        loc="upper center", fontsize=10, framealpha=0.9,
-        bbox_to_anchor=(0.5, 1.06), ncol=2, columnspacing=1.5,
-    )
+<div class="cc-body">
+  <div class="cc-panel cc-default">
+    <div class="cc-panel-header cc-default">Default</div>
+    <div class="cc-scroll" id="{uid}-dp"></div>
+  </div>
+  <div class="cc-center" id="{uid}-tp"></div>
+  <div class="cc-panel cc-capped">
+    <div class="cc-panel-header cc-capped">Capped</div>
+    <div class="cc-scroll" id="{uid}-cp"></div>
+  </div>
+</div>
 
-    # Role labels below the trajectory
-    xlim = ax_center.get_xlim()
-    ax_center.text(
-        xlim[0], n_turns + 0.2, left_label,
-        fontsize=9, ha="left", va="top", color="#C62828", fontweight="bold",
-    )
-    ax_center.text(
-        xlim[1], n_turns + 0.2, right_label,
-        fontsize=9, ha="right", va="top", color="#1565C0", fontweight="bold",
-    )
+<script>
+(function() {{
+  const ID = "{uid}";
+  const root = document.getElementById(ID);
+  const $$ = s => root.querySelectorAll(s);
+  const D = {js_data};
 
-    plt.tight_layout()
-    return fig
+  function esc(s) {{ const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }}
+
+  function renderMsg(role, text) {{
+    return `<div class="cc-msg cc-${{role}}"><div class="cc-msg-role"><div class="cc-msg-role-dot"></div>${{role === 'user' ? 'User' : 'Assistant'}}</div><div style="color:var(--cc-text)">${{esc(text).replace(/\\n/g,'<br>')}}</div></div>`;
+  }}
+
+  function renderPanel(id, turns) {{
+    const el = document.getElementById(id);
+    turns.forEach(t => {{
+      el.insertAdjacentHTML('beforeend', renderMsg('user', t.user) + renderMsg('assistant', t.assistant));
+    }});
+  }}
+
+  function renderTrajectory() {{
+    const container = document.getElementById(ID + '-tp');
+    const W = 160, H = container.clientHeight - 20;
+    const n = D.nTurns, pL = 36, pR = 12, pT = 20, pB = 20;
+    const pW = W - pL - pR, pH = H - pT - pB;
+    const all = [...D.cappedProj, ...D.defaultProj];
+    const lo = Math.min(...all) - 3, hi = Math.max(...all) + 3;
+    const x = v => pL + ((hi - v) / (hi - lo)) * pW;
+    const y = i => pT + (n === 1 ? pH / 2 : (i / (n - 1)) * pH);
+
+    let s = `<svg width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}">`;
+    for (let g = 0; g <= 4; g++) {{
+      const xv = x(lo + (hi - lo) * g / 4);
+      s += `<line class="cc-grid-line" x1="${{xv}}" y1="${{pT}}" x2="${{xv}}" y2="${{H-pB}}"/>`;
+      if (g % 2 === 0) s += `<text x="${{xv}}" y="${{H-3}}" text-anchor="middle" fill="#555a6a" font-size="9" font-family="monospace">${{Math.round(lo+(hi-lo)*g/4)}}</text>`;
+    }}
+    for (let i = 0; i < n; i++) s += `<text x="${{pL-8}}" y="${{y(i)+4}}" text-anchor="end" fill="#555a6a" font-size="10" font-family="monospace">T${{i+1}}</text>`;
+    s += `<path class="cc-traj-default" d="${{D.defaultProj.map((v,i) => (i?'L':'M')+` ${{x(v)}} ${{y(i)}}`).join('')}}"/>`;
+    s += `<path class="cc-traj-capped" d="${{D.cappedProj.map((v,i) => (i?'L':'M')+` ${{x(v)}} ${{y(i)}}`).join('')}}"/>`;
+    D.defaultProj.forEach((v,i) => s += `<circle class="cc-dot cc-dot-default" cx="${{x(v)}}" cy="${{y(i)}}" r="5" data-turn="${{i}}" data-t="Default" data-v="${{v}}"/>`);
+    D.cappedProj.forEach((v,i) => s += `<circle class="cc-dot cc-dot-capped" cx="${{x(v)}}" cy="${{y(i)}}" r="5" data-turn="${{i}}" data-t="Capped" data-v="${{v}}"/>`);
+    s += '</svg>';
+    container.innerHTML = s;
+
+    const tt = document.getElementById(ID + '-tt');
+    $$('.cc-dot').forEach(d => {{
+      d.addEventListener('mouseenter', () => {{
+        tt.textContent = `${{d.dataset.t}} · Turn ${{+d.dataset.turn+1}}: ${{(+d.dataset.v).toFixed(1)}}`;
+        tt.classList.add('cc-visible');
+      }});
+      d.addEventListener('mousemove', e => {{ tt.style.left = (e.clientX+12)+'px'; tt.style.top = (e.clientY-8)+'px'; }});
+      d.addEventListener('mouseleave', () => {{ tt.classList.remove('cc-visible'); }});
+    }});
+  }}
+
+  renderPanel(ID + '-cp', D.capped);
+  renderPanel(ID + '-dp', D.default);
+  requestAnimationFrame(renderTrajectory);
+}})();
+</script>
+</div>"""
