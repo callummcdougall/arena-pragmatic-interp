@@ -1,14 +1,17 @@
 """
 Utility functions for Part 4: Persona Vectors exercises.
 
-This module provides two helpers:
+This module provides three helpers:
 
-1. `get_turn_spans(messages, tokenizer)` — finds the (start, end) token index span
+1. `load_transcript(path, max_assistant_turns)` — loads a JSON transcript from the
+   assistant-axis repo, strips `<INTERNAL_STATE>` tags, and optionally truncates.
+
+2. `get_turn_spans(messages, tokenizer)` — finds the (start, end) token index span
    for each assistant turn in a tokenized conversation. This is fiddly bookkeeping
    (the chat template adds special tokens that shift positions), so it's provided
    here rather than asked of students. Students call it from their ConversationAnalyzer.
 
-2. `plot_similarity_line(cosine_sims, names, ...)` — the trait-axis scatter plot from
+3. `plot_similarity_line(cosine_sims, names, ...)` — the trait-axis scatter plot from
    the paper's `visualize_axis.ipynb`. Given an array of cosine similarities and
    corresponding trait names, it draws a horizontal scatter with a histogram overlay
    and labels the most extreme traits at each end.
@@ -16,8 +19,59 @@ This module provides two helpers:
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transcript loading
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_transcript(transcript_path: Path, max_assistant_turns: int | None = None) -> list[dict[str, str]]:
+    """
+    Load a JSON transcript from the assistant-axis repo and return a clean conversation.
+
+    Strips ``<INTERNAL_STATE>...</INTERNAL_STATE>`` tags from user messages (these
+    represent the simulated user's private thoughts and shouldn't be fed to a model).
+
+    Args:
+        transcript_path: Path to the JSON transcript file.
+        max_assistant_turns: If given, truncate to this many assistant turns.
+
+    Returns:
+        List of message dicts with "role" and "content" keys.
+    """
+    with open(transcript_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    messages = data["conversation"]
+
+    # Strip <INTERNAL_STATE>...</INTERNAL_STATE> tags from user messages
+    cleaned = []
+    for msg in messages:
+        content = msg["content"]
+        if msg["role"] == "user":
+            content = re.sub(r"<INTERNAL_STATE>.*?</INTERNAL_STATE>", "", content, flags=re.DOTALL).strip()
+        cleaned.append({"role": msg["role"], "content": content})
+
+    # Truncate by assistant turns if requested
+    if max_assistant_turns is not None:
+        result = []
+        asst_count = 0
+        for msg in cleaned:
+            result.append(msg)
+            if msg["role"] == "assistant":
+                asst_count += 1
+                if asst_count >= max_assistant_turns:
+                    break
+        return result
+
+    return cleaned
 from matplotlib.colors import LinearSegmentedColormap
 
 

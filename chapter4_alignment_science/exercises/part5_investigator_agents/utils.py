@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
 # Lollipop-style colors matching Petri blog Figure 5
 _COLORS_BAR = ["#6B6B6B", "#8B7BB8", "#E8A838", "#2D8A4E", "#2B5F94"]
 _COLORS_CI = ["#E8E4DC", "#E0DBE8", "#F5E6C8", "#C8E0D0", "#C8D8E8"]

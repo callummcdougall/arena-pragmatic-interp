@@ -2282,7 +2282,7 @@ class ActivationSteerer:
         """Add coeff * vector to hidden states according to the position mode."""
         steer = self.coeff * self.vector
 
-        # Extract hidden states (handle tuple or plain tensor output)
+        # Handle both tuple output (common) and plain tensor
         if isinstance(output, tuple):
             hidden_states = output[0]
         else:
@@ -2291,24 +2291,19 @@ class ActivationSteerer:
         steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
 
         if self.positions == "all":
-            modified = hidden_states + steer
+            hidden_states += steer
         elif self.positions == "prompt":
-            # During prefill (seq_len > 1): steer all positions
-            # During generation (seq_len == 1): skip (it's a response token)
             if hidden_states.shape[1] == 1:
                 return output
-            modified = hidden_states + steer
+            hidden_states += steer
         elif self.positions == "response":
-            # Only steer the last token position
-            modified = hidden_states.clone()
-            modified[:, -1, :] += steer
+            hidden_states[:, -1, :] += steer
 
-        if isinstance(output, tuple):
-            return (modified,) + output[1:]
-        return modified
+        return output
 
     def __enter__(self):
-        layer = self.model.model.layers[self.layer_idx]
+        layers = _return_layers(self.model)
+        layer = layers[self.layer_idx - 1]
         self._handle = layer.register_forward_hook(self._hook_fn)
         return self
 

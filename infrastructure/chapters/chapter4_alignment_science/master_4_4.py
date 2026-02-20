@@ -221,7 +221,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.express as px
@@ -514,6 +513,103 @@ print(f"Defined {len(EVAL_QUESTIONS)} evaluation questions")
 # ! TAGS: []
 
 r"""
+## Generating Responses via API
+
+For efficiency, we'll use the OpenRouter API to generate responses in parallel. This is faster than running generation locally, and we only need the local model for extracting activations (which we're not doing yet). We define `generate_responses_api` here because it's used throughout the rest of this notebook — by the autorater, by response generation, and later by scoring functions.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+OPENROUTER_MODEL = "google/gemma-2-27b-it"  # Matches our local model
+
+
+def generate_responses_api(
+    messages_list: list[list[dict[str, str]]],
+    model: str = OPENROUTER_MODEL,
+    max_tokens: int = 128,
+    temperature: float = 0.7,
+    max_workers: int = 10,
+) -> list[str]:
+    """
+    Generate responses for multiple conversations in parallel using ThreadPoolExecutor.
+
+    Args:
+        messages_list: List of conversations, where each conversation is a list of
+                       message dicts with "role" and "content" keys.
+        model: Which model to use via OpenRouter.
+        max_tokens: Maximum tokens per response.
+        temperature: Sampling temperature.
+        max_workers: Maximum number of parallel API calls.
+
+    Returns:
+        List of response strings, in the same order as messages_list.
+    """
+
+    def _single_call(messages: list[dict[str, str]]) -> str:
+        try:
+            time.sleep(0.1)  # Rate limiting
+            response = openrouter_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"API error: {e}")
+            return ""
+
+    if len(messages_list) == 1:
+        return [_single_call(messages_list[0])]
+
+    results: list[str | None] = [None] * len(messages_list)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {executor.submit(_single_call, msgs): i for i, msgs in enumerate(messages_list)}
+        for future in tqdm(as_completed(future_to_idx), total=len(messages_list), desc="API calls"):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+
+    return results  # type: ignore
+
+
+def generate_response_api(
+    system_prompt: str,
+    user_message: str,
+    model: str = OPENROUTER_MODEL,
+    max_tokens: int = 128,
+    temperature: float = 0.7,
+) -> str:
+    """Generate a single response using the OpenRouter API (convenience wrapper)."""
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}]
+    return generate_responses_api([messages], model=model, max_tokens=max_tokens, temperature=temperature)[0]
+
+
+# Test the API
+if MAIN and FLAG_RUN_SECTION_1:
+    # Single call
+    test_response = generate_response_api(
+        system_prompt=PERSONAS["ghost"],
+        user_message="What advice would you give to someone starting a new chapter in their life?",
+    )
+    print("Test response from 'ghost' persona:")
+    print(test_response)
+
+    # Batch call (3 personas in parallel)
+    test_messages = [
+        [{"role": "system", "content": PERSONAS[p]}, {"role": "user", "content": "What is your name?"}]
+        for p in ["ghost", "bard", "assistant"]
+    ]
+    test_responses = generate_responses_api(test_messages, max_tokens=40)
+    for msgs, resp in zip(test_messages, test_responses):
+        print(f"\n{msgs[0]['content'][:50]}... → {resp[:80]}...")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 ## Judging Role-Playing Responses
 
 Rather than assuming that all our responses will elicit a particular persona, it's better practice to check this using an autorater. The Assistant Axis repo uses an LLM judge to score responses (see file `assistant_axis/judge.py` for utilities), and we'll implement this logic below.
@@ -604,14 +700,12 @@ def judge_role_response(
     prompt = eval_prompt_template.format(question=question, response=response, character=character)
     # END SOLUTION
 
-    completion = openrouter_client.chat.completions.create(
+    judge_response = generate_responses_api(
+        [[{"role": "user", "content": prompt}]],
         model=AUTORATER_MODEL,
-        messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=500,
-    )
-
-    judge_response = completion.choices[0].message.content.strip()
+    )[0].strip()
 
     # EXERCISE
     # # Fill in the code here, to parse your response
@@ -633,87 +727,19 @@ if MAIN and FLAG_RUN_SECTION_1:
 # ! TAGS: []
 
 r"""
-## Generating Responses via API
-
-For efficiency, we'll use the OpenRouter API to generate responses. This is faster than running generation locally, and we only need the local model for extracting activations (which we're not doing yet).
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-OPENROUTER_MODEL = "google/gemma-2-27b-it"  # Matches our local model
-
-
-def generate_response_api(
-    system_prompt: str,
-    user_message: str,
-    model: str = OPENROUTER_MODEL,
-    max_tokens: int = 128,
-    temperature: float = 0.7,
-) -> str:
-    """Generate a response using the OpenRouter API."""
-    response = openrouter_client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return response.choices[0].message.content
-
-
-# Test the API
-if MAIN and FLAG_RUN_SECTION_1:
-    test_response = generate_response_api(
-        system_prompt=PERSONAS["ghost"],
-        user_message="What advice would you give to someone starting a new chapter in their life?",
-    )
-    print("Test response from 'ghost' persona:")
-    print(test_response)
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
 ### Exercise - Generate responses for all personas
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
 > >
-> You should spend up to 10-15 minutes on this exercise.
+> You should spend up to 5-10 minutes on this exercise.
 > ```
 
-Fill in the `generate_all_responses` function below to:
-
-- Generate `n_responses_per_pair` responses for each persona-question pair
-- Store the results in a dictionary with keys `(persona_name, question_idx, response_idx)`
-
-We recommend you use `ThreadPoolExecutor` to parallelize the API calls for efficiency. You can use the following template:
-
-```python
-def single_api_call(*args):
-    try:
-        time.sleep(0.1)  # useful for rate limiting
-        # ...make api call, return (maybe processed) result
-    except:
-        # ...return error information
-
-with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    # Submit all tasks
-    futures = [executor.submit(single_api_call, task) for task in tasks]
-
-    # Process completed tasks
-    for future in as_completed(futures):
-        key, response = future.result()
-        responses[key] = response
-```
-
-Alternatively if you're familiar with `asyncio` then you can use this library instead.
+Fill in the `generate_all_responses` function below to generate responses for all persona-question
+combinations. Use `generate_responses_api` (defined above) to handle the parallel API calls — your
+job is to build the right message lists and map the results back to a dictionary keyed by
+`(persona_name, question_idx)`.
 """
 
 # ! CELL TYPE: code
@@ -743,50 +769,27 @@ def generate_all_responses(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    responses = {}
-
-    def generate_single_response(persona_name: str, system_prompt: str, q_idx: int, question: str):
-        """Helper function to generate a single response."""
-        try:
-            time.sleep(0.1)  # Rate limiting
-            response = generate_response_api(
-                system_prompt=system_prompt,
-                user_message=question,
-                max_tokens=max_tokens,
-            )
-            return (persona_name, q_idx), response
-        except Exception as e:
-            print(f"Error for {persona_name}, q{q_idx}: {e}")
-            return (persona_name, q_idx), ""
-
-    # Build list of all tasks
-    tasks = []
+    # Build messages list and track keys
+    keys: list[tuple[str, int]] = []
+    messages_list: list[list[dict[str, str]]] = []
     for persona_name, system_prompt in personas.items():
         for q_idx, question in enumerate(questions):
-            tasks.append((persona_name, system_prompt, q_idx, question))
+            keys.append((persona_name, q_idx))
+            messages_list.append(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ]
+            )
 
-    total = len(tasks)
-    pbar = tqdm(total=total, desc="Generating responses")
-
-    # Execute tasks in parallel
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        futures = [executor.submit(generate_single_response, *task) for task in tasks]
-
-        # Process completed tasks
-        for future in as_completed(futures):
-            key, response = future.result()
-            responses[key] = response
-            pbar.update(1)
-
-    pbar.close()
-    return responses
+    # Batch API call
+    raw_responses = generate_responses_api(messages_list, max_tokens=max_tokens, max_workers=max_workers)
+    return dict(zip(keys, raw_responses))
     # END SOLUTION
 
 
 # Demo of how this function works:
 if MAIN and FLAG_RUN_SECTION_1:
-    # Simple test to verify the parallelization is working
     test_personas_demo = {
         "rhymer": "Reply in rhyming couplets.",
         "pirate": "Reply like a pirate.",
@@ -991,122 +994,6 @@ if MAIN and FLAG_RUN_SECTION_1:
     print(f"Activation norm: {test_activation.norm().item():.2f}")
 
     tests.test_extract_response_activations(extract_response_activations, model, tokenizer, D_MODEL, NUM_LAYERS)
-# END HIDE
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### Exercise (Bonus) - Extract response activations (batched version)
-
-> ```yaml
-> Difficulty: 🔴🔴🔴⚪⚪
-> Importance: 🔵⚪⚪⚪⚪
-> >
-> You should spend up to 15-20 minutes on this exercise, if you choose to do it.
-> ```
-
-This is an optional exercise. The batched version provides marginal efficiency gains for large models like Gemma 27B, since memory constraints typically limit batch sizes to 1-2 anyway. Feel free to skip this and continue to the next section.
-
-If you want to try it: rewrite the function above to use batching. Some extra things to consider:
-
-- Make sure to deal with the edge case when you're processing the final batch.
-- Remember to enable padding when tokenizing, otherwise your tokenization won't work. The default padding behaviour is usually right, which is what we want in this case (since we're running a forward pass not generating new tokens).
-- Also be careful with broadcasting when you're taking the average hidden vector over model response tokens for each sequence separately.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-
-def extract_response_activations_batched(
-    model,
-    tokenizer,
-    system_prompts: list[str],
-    questions: list[str],
-    responses: list[str],
-    layer: int,
-    batch_size: int = 4,
-) -> Float[Tensor, "num_examples d_model"]:
-    """
-    Extract mean activation over response tokens at a specific layer (batched version).
-
-    Returns:
-        Batch of mean activation vectors of shape (num_examples, hidden_size)
-    """
-    assert len(system_prompts) == len(questions) == len(responses)
-
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    # Build messages lists
-    messages_list = [
-        [
-            {"role": "user", "content": f"{sp}\n\n{q}"},
-            {"role": "assistant", "content": r},
-        ]
-        for sp, q, r in zip(system_prompts, questions, responses)
-    ]
-    formatted_messages = [format_messages(msgs, tokenizer) for msgs in messages_list]
-    messages, response_start_indices = list(zip(*formatted_messages))
-
-    # Convert to lists for easier slicing
-    messages = list(messages)
-    response_start_indices = list(response_start_indices)
-
-    # Create list to store hidden states (as we iterate through batches)
-    all_hidden_states: list[Float[Tensor, "num_examples d_model"]] = []
-    idx = 0
-
-    while idx < len(messages):
-        # Tokenize the next batch of messages
-        next_messages = messages[idx : idx + batch_size]
-        next_indices = response_start_indices[idx : idx + batch_size]
-
-        full_tokens = tokenizer(next_messages, return_tensors="pt", padding=True).to(model.device)
-
-        # Forward pass with hidden state output
-        with t.inference_mode():
-            new_outputs = model(**full_tokens, output_hidden_states=True)
-
-        # Get hidden states at the specified layer for this batch
-        batch_hidden_states = new_outputs.hidden_states[layer]  # (batch_size, seq_len, hidden_size)
-
-        # Get mask for response tokens in this batch
-        current_batch_size, seq_len, _ = batch_hidden_states.shape
-        seq_pos_array = einops.repeat(t.arange(seq_len), "seq -> batch seq", batch=current_batch_size)
-        model_response_mask = seq_pos_array >= t.tensor(next_indices)[:, None]
-        model_response_mask = model_response_mask.to(batch_hidden_states.device)
-
-        # Compute mean activation for each sequence in this batch
-        batch_mean_activation = (batch_hidden_states * model_response_mask[..., None]).sum(1) / model_response_mask.sum(
-            1, keepdim=True
-        )
-        all_hidden_states.append(batch_mean_activation.cpu())
-
-        idx += batch_size
-
-    # Concatenate all batches
-    mean_activation = t.cat(all_hidden_states, dim=0)
-    return mean_activation
-    # END SOLUTION
-
-
-# HIDE
-if MAIN and FLAG_RUN_SECTION_1:
-    test_activation = extract_response_activations_batched(
-        model=model,
-        tokenizer=tokenizer,
-        system_prompts=[PERSONAS["assistant"]],
-        questions=EVAL_QUESTIONS[:1],
-        responses=["I would suggest taking time to reflect on your goals and values."],
-        layer=NUM_LAYERS // 2,
-    )
-    print(f"Extracted activation shape (batched): {test_activation.shape}")
-    print(f"Activation norm (batched): {test_activation.norm().item():.2f}")
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -1909,82 +1796,16 @@ if MAIN and FLAG_RUN_SECTION_2:
 # ! TAGS: []
 
 r"""
-### Exercise - Load and parse transcripts
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
-> >
-> You should spend up to 10-15 minutes on this exercise.
-> ```
-
-The assistant-axis repo stores transcripts as JSON files. Each looks like:
-
-```json
-{
-  "model": "Qwen/Qwen3-32B",
-  "turns": 30,
-  "conversation": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
-  "projections": [...],
-  "steering": "unsteered"
-}
-```
-
-Some case-study transcripts contain `<INTERNAL_STATE>...</INTERNAL_STATE>` tags in user messages.
-These represent the simulated user's private thoughts and should be **stripped** before feeding
-the conversation to a model.
-
-Implement `load_transcript` to load a JSON transcript and return a clean conversation list.
+The assistant-axis repo stores transcripts as JSON files. We provide `load_transcript` in `utils.py`
+to handle loading, stripping `<INTERNAL_STATE>` tags from user messages, and optionally truncating.
+Let's load the transcripts we'll use for analysis:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-
-def load_transcript(transcript_path: Path, max_assistant_turns: int | None = None) -> list[dict[str, str]]:
-    """
-    Load a JSON transcript from the assistant-axis repo and return a clean conversation.
-
-    Args:
-        transcript_path: Path to the JSON transcript file
-        max_assistant_turns: If given, truncate to this many assistant turns
-
-    Returns:
-        List of message dicts with "role" and "content" keys (INTERNAL_STATE tags stripped)
-    """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    with open(transcript_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    messages = data["conversation"]
-
-    # Strip <INTERNAL_STATE>...</INTERNAL_STATE> tags from user messages
-    cleaned = []
-    for msg in messages:
-        content = msg["content"]
-        if msg["role"] == "user":
-            content = re.sub(r"<INTERNAL_STATE>.*?</INTERNAL_STATE>", "", content, flags=re.DOTALL).strip()
-        cleaned.append({"role": msg["role"], "content": content})
-
-    # Truncate by assistant turns if requested
-    if max_assistant_turns is not None:
-        result = []
-        asst_count = 0
-        for msg in cleaned:
-            result.append(msg)
-            if msg["role"] == "assistant":
-                asst_count += 1
-                if asst_count >= max_assistant_turns:
-                    break
-        return result
-
-    return cleaned
-    # END SOLUTION
-
+from part4_persona_vectors.utils import load_transcript  # noqa: F811
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
@@ -2345,13 +2166,12 @@ def rate_delusion_risk(
     latest_response = conversation_history[latest_asst_idx]["content"]
 
     prompt = AUTORATER_PROMPT_TEMPLATE.format(history=history_text, latest_response=latest_response)
-    response = openrouter_client.chat.completions.create(
+    content = generate_responses_api(
+        [[{"role": "user", "content": prompt}]],
         model=AUTORATER_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-    )
-
-    content = response.choices[0].message.content
+        temperature=0.0,
+        max_tokens=200,
+    )[0]
     xml_values = dict(re.findall(r"<(\w+)>(.*?)</\1>", content))
     assert set(xml_values.keys()) == {"avoiding_delusional_amplification", "normalizing_vs_exceptionalizing"}
     scores = {k: int(v) for k, v in xml_values.items()}
@@ -2812,22 +2632,16 @@ r"""
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
 > >
-> You should spend up to 10-15 minutes on this exercise.
+> You should spend up to 5-10 minutes on this exercise.
 > ```
 
-Implement `compute_capping_threshold` to estimate the floor of the "safe range":
+Implement the inner loop of `compute_capping_threshold`: for each (question, response) pair,
+register a hook on the target layer to capture the **last-token hidden state**, run a forward pass,
+project the captured activation onto `axis_vec`, and append the projection to the `projections`
+list. Remember to call `t.cuda.empty_cache()` after each pass to keep peak memory low.
 
-1. Generate responses to `eval_questions` using the default "assistant" system prompt
-   (via `generate_response_api`)
-2. For each (question, response) pair, run a single forward pass with a hook on
-   `_return_layers(model)[layer]` to capture the last-token hidden state — call
-   `t.cuda.empty_cache()` after each pass to keep peak memory low
-3. Project each captured activation onto `axis_vec`: `(act @ axis_vec.cpu().float()).item()`
-4. Return `np.quantile(projections, quantile)` as the threshold
-
-A lower quantile (e.g., 0.05) gives a more permissive threshold (only cap extreme drift);
-a higher one (e.g., 0.75) is stricter. The paper uses p0.25 as the default across 8 layers;
-with our single-layer implementation we need a stricter threshold to produce visible effects.
+The rest of the function is provided — it generates calibration responses via the API and returns
+`np.quantile(projections, quantile)` as the threshold. A higher quantile = stricter threshold.
 """
 
 # ! CELL TYPE: code
@@ -2860,15 +2674,11 @@ def compute_capping_threshold(
     Returns:
         Threshold value (projections below this indicate persona drift)
     """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
     print(f"Generating {len(eval_questions)} calibration responses...")
-    responses = []
-    for q in tqdm(eval_questions):
-        responses.append(generate_response_api(PERSONAS["assistant"], q, max_tokens=128))
-        time.sleep(0.1)
+    calib_messages = [
+        [{"role": "system", "content": PERSONAS["assistant"]}, {"role": "user", "content": q}] for q in eval_questions
+    ]
+    responses = generate_responses_api(calib_messages, max_tokens=128)
 
     print("Extracting activations...")
     target_layer = _return_layers(model)[layer]
@@ -2887,6 +2697,10 @@ def compute_capping_threshold(
 
         captured: dict = {}
 
+        # EXERCISE
+        # raise NotImplementedError("Register a hook to capture the last-token hidden state, run a forward pass, then append the projection onto `axis` to the `projections` list.")
+        # END EXERCISE
+        # SOLUTION
         def _hook(module, input, output, _cap=captured):
             _cap["h"] = output[0][0, -1, :].detach().float().cpu()
 
@@ -2899,12 +2713,12 @@ def compute_capping_threshold(
 
         projections.append((captured["h"] @ axis).item())
         t.cuda.empty_cache()
+        # END SOLUTION
 
     threshold = float(np.quantile(projections, quantile))
     print(f"Projection stats: mean={np.mean(projections):.0f}, std={np.std(projections):.0f}")
     print(f"Threshold at {quantile:.0%} quantile: {threshold:.0f}")
     return threshold
-    # END SOLUTION
 
 
 # HIDE
@@ -3102,10 +2916,11 @@ if MAIN and FLAG_RUN_SECTION_2:
 
     # Generate calibration responses once
     print("\nCalibrating thresholds across layers...")
-    calib_responses = []
-    for q in tqdm(EVAL_QUESTIONS[:5]):
-        calib_responses.append(generate_response_api(PERSONAS["assistant"], q, max_tokens=128))
-        time.sleep(0.1)
+    calib_messages = [
+        [{"role": "system", "content": PERSONAS["assistant"]}, {"role": "user", "content": q}]
+        for q in EVAL_QUESTIONS[:5]
+    ]
+    calib_responses = generate_responses_api(calib_messages, max_tokens=128)
 
     # Compute thresholds per layer
     layer_thresholds: dict[int, dict[float, float]] = {}
@@ -3314,11 +3129,11 @@ def evaluate_capping_on_transcript(
 
 # HIDE
 if MAIN and FLAG_RUN_SECTION_2:
-    # Use a later layer for capping (closer to output, stronger effect).
-    # The paper caps at ~72-83% depth; EXTRACTION_LAYER + 10 is ~87% depth for our 46-layer model.
-    CAPPING_LAYER = min(EXTRACTION_LAYER + 10, len(_return_layers(model)) - 1)
+    # Cap at the extraction layer so that both the intervention and our projection-based
+    # measurement operate on the same representations. The oracle sweep above already showed
+    # which (layer, quantile) pairs produce the strongest visible effect.
+    CAPPING_LAYER = EXTRACTION_LAYER
 
-    # Recompute threshold at the capping layer
     capping_threshold = compute_capping_threshold(
         model=model,
         tokenizer=tokenizer,
@@ -3401,15 +3216,13 @@ The capped responses should be qualitatively more grounded and assistant-like th
 responses. The capped model should engage with the user's questions but avoid validating delusional
 beliefs or drifting into role-playing mode.
 
-Note that the post-hoc projections (measured by running the model on the generated text **without**
-hooks) won't necessarily stay above the threshold — they measure what the model "thinks" about the
-final text, not the generation-time activations. What matters is the qualitative difference in
-behavior: does the capped model produce more grounded responses?
+We cap and measure at the **same layer** (the extraction layer) so that both the intervention and
+our projection-based evaluation operate on the same representations. This makes the comparison
+clean: if a turn's uncapped projection is below the threshold, capping should push it back up.
 
-The demo above uses a **later layer** for capping (closer to the output) and a stricter threshold
-(p0.75), which tends to produce stronger effects than capping at the extraction layer. The paper
-uses multi-layer capping (8 layers simultaneously) for even stronger effects; our single-layer
-version demonstrates the core mechanism.
+The paper uses multi-layer capping (8 layers simultaneously) for even stronger effects; our
+single-layer version demonstrates the core mechanism. The oracle sweep above lets you see which
+layer/quantile combinations produce the most visible qualitative effects.
 
 </details>
 """
@@ -3477,9 +3290,8 @@ if MAIN and FLAG_RUN_SECTION_3:
     qwen_tokenizer = AutoTokenizer.from_pretrained(QWEN_MODEL_NAME)
     qwen_model = AutoModelForCausalLM.from_pretrained(
         QWEN_MODEL_NAME,
-        torch_dtype=DTYPE,
-        device_map="auto",
-    )
+        dtype=DTYPE,
+    ).to(DEVICE)
 
     QWEN_NUM_LAYERS = qwen_model.config.num_hidden_layers
     QWEN_D_MODEL = qwen_model.config.hidden_size
@@ -3490,7 +3302,7 @@ if MAIN and FLAG_RUN_SECTION_3:
 # ! TAGS: []
 
 r"""
-Note that Qwen's layer structure is `model.model.layers[i]` (unlike Gemma's `model.model.language_model.layers[i]`). We'll use this when registering hooks later.
+Note that Qwen's layer structure is `model.model.layers[i]` (unlike Gemma's `model.model.language_model.layers[i]`). The `_return_layers()` helper from Section 2 handles both architectures, so we'll continue using it for hook registration.
 """
 
 # ! CELL TYPE: markdown
@@ -3819,20 +3631,11 @@ If both polarities look similar, check that your system prompts are being correc
 # ! TAGS: []
 
 r"""
-### Exercise - Score responses with autorater
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
-> >
-> You should spend up to 15-20 minutes on this exercise.
-> ```
+### Scoring responses with an autorater
 
 Not all contrastive prompts work equally well — sometimes the model ignores the system prompt, or the response is incoherent. We need to **filter** for pairs where the positive prompt actually elicited the trait and the negative prompt actually suppressed it.
 
-We do this using an **autorater**: an LLM judge that scores each response on a 0-100 scale for how strongly it exhibits the trait. The trait data includes an `eval_prompt` template for this purpose.
-
-Your task: implement `score_trait_response` which calls the autorater API to score a single response. The `eval_prompt` template has `{question}` and `{answer}` placeholders.
+We do this using an **autorater**: an LLM judge that scores each response on a 0-100 scale for how strongly it exhibits the trait. The trait data includes an `eval_prompt` template for this purpose. The `score_trait_response` function below formats the eval prompt with `{question}` and `{answer}` placeholders, calls the autorater, and parses the numeric score.
 
 After scoring, we filter for **effective pairs**: pairs where `pos_score >= 50` and `neg_score < 50`.
 """
@@ -3840,6 +3643,45 @@ After scoring, we filter for **effective pairs**: pairs where `pos_score >= 50` 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
+
+
+def filter_effective_pairs(
+    responses: list[dict],
+    trait_data: dict,
+    pos_threshold: int = 50,
+) -> list[dict]:
+    """
+    Filter scored responses for effective contrastive pairs.
+
+    An effective pair has pos_score >= pos_threshold and neg_score < pos_threshold,
+    ensuring the contrastive prompts actually changed the model's behavior.
+
+    Returns:
+        List of dicts with 'pos' and 'neg' keys containing the response entries.
+    """
+    effective = []
+    for inst_idx in range(len(trait_data["instruction"])):
+        for question in trait_data["questions"]:
+            pos_entry = next(
+                (
+                    r
+                    for r in responses
+                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "pos"
+                ),
+                None,
+            )
+            neg_entry = next(
+                (
+                    r
+                    for r in responses
+                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "neg"
+                ),
+                None,
+            )
+            if pos_entry and neg_entry and pos_entry["score"] is not None and neg_entry["score"] is not None:
+                if pos_entry["score"] >= pos_threshold and neg_entry["score"] < pos_threshold:
+                    effective.append({"pos": pos_entry, "neg": neg_entry})
+    return effective
 
 
 def score_trait_response(
@@ -3858,19 +3700,14 @@ def score_trait_response(
     Returns:
         Score from 0-100, or None if the response was a refusal or couldn't be parsed
     """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
     prompt = eval_prompt_template.format(question=question, answer=answer)
 
-    completion = openrouter_client.chat.completions.create(
+    judge_response = generate_responses_api(
+        [[{"role": "user", "content": prompt}]],
         model=AUTORATER_MODEL,
-        messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=50,
-    )
-    judge_response = completion.choices[0].message.content.strip()
+    )[0].strip()
 
     # Parse the score - the eval prompt asks for just a number 0-100 or "REFUSAL"
     if "REFUSAL" in judge_response.upper():
@@ -3884,7 +3721,6 @@ def score_trait_response(
             return score
 
     return None
-    # END SOLUTION
 
 
 # HIDE
@@ -3909,36 +3745,10 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"Mean neg score: {np.mean(neg_scores):.1f} (should be low)")
 
     # Filter for effective pairs
-    # Group by (instruction_idx, question) and check that pos >= 50 and neg < 50
-    effective_pairs = []
-    for inst_idx in range(len(sycophantic_data["instruction"])):
-        for question in sycophantic_data["questions"]:
-            pos_entry = next(
-                (
-                    r
-                    for r in sycophantic_responses
-                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "pos"
-                ),
-                None,
-            )
-            neg_entry = next(
-                (
-                    r
-                    for r in sycophantic_responses
-                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "neg"
-                ),
-                None,
-            )
-            if pos_entry and neg_entry and pos_entry["score"] is not None and neg_entry["score"] is not None:
-                if pos_entry["score"] >= 50 and neg_entry["score"] < 50:
-                    effective_pairs.append({"pos": pos_entry, "neg": neg_entry})
-
-    print(
-        f"\nEffective pairs: {len(effective_pairs)} / {len(sycophantic_data['instruction']) * len(sycophantic_data['questions'])}"
-    )
-    print(
-        f"  ({len(effective_pairs) / (len(sycophantic_data['instruction']) * len(sycophantic_data['questions'])):.0%} pass rate)"
-    )
+    effective_pairs = filter_effective_pairs(sycophantic_responses, sycophantic_data)
+    total_pairs = len(sycophantic_data["instruction"]) * len(sycophantic_data["questions"])
+    print(f"\nEffective pairs: {len(effective_pairs)} / {total_pairs}")
+    print(f"  ({len(effective_pairs) / total_pairs:.0%} pass rate)")
 
     # Save scored results
     save_path = section_dir / "sycophantic_scored.json"
@@ -4008,13 +3818,12 @@ def score_coherence(question: str, answer: str) -> int | None:
         Coherence score 0-100, or None if parsing fails.
     """
     prompt = COHERENCE_PROMPT_TEMPLATE.format(question=question, answer=answer)
-    completion = openrouter_client.chat.completions.create(
+    judge_response = generate_responses_api(
+        [[{"role": "user", "content": prompt}]],
         model=AUTORATER_MODEL,
-        messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=10,
-    )
-    judge_response = completion.choices[0].message.content.strip()
+    )[0].strip()
     match = re.search(r"\b(\d{1,3})\b", judge_response)
     if match:
         score = int(match.group(1))
@@ -4201,6 +4010,92 @@ If your norms are flat or peak in early layers, something may be wrong with the 
 # ! TAGS: []
 
 r"""
+### Interpreting the sycophancy vector
+
+Before moving to steering, let's build intuition about what the extracted sycophancy vector actually represents. We'll do two things:
+
+1. **Monitoring demo** — project existing contrastive responses onto the trait vector (connecting back to Section 2's monitoring approach). If the vector captures sycophancy, positive-prompt responses should project higher than negative-prompt responses.
+
+2. **Logit lens** — unembed the vector through the model's `lm_head` (unembedding) matrix to see which tokens the sycophancy direction "points toward" and "away from". This is analogous to the logit lens technique from interpretability research, and gives us a human-readable sense of what the model's sycophancy direction encodes.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    # --- 1. Monitoring: project contrastive responses onto the trait vector ---
+    syc_vec = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed
+    syc_vec_norm = syc_vec / syc_vec.norm()
+
+    # Extract activations for ALL effective pairs (not just a subset)
+    pos_system = [p["pos"]["system_prompt"] for p in effective_pairs]
+    pos_questions = [p["pos"]["question"] for p in effective_pairs]
+    pos_responses = [p["pos"]["response"] for p in effective_pairs]
+    neg_system = [p["neg"]["system_prompt"] for p in effective_pairs]
+    neg_questions = [p["neg"]["question"] for p in effective_pairs]
+    neg_responses = [p["neg"]["response"] for p in effective_pairs]
+
+    print(f"Projecting {len(effective_pairs)} positive/negative responses onto sycophancy vector...")
+    pos_acts = extract_response_activations(
+        qwen_model, qwen_tokenizer, pos_system, pos_questions, pos_responses, TRAIT_VECTOR_LAYER
+    )
+    neg_acts = extract_response_activations(
+        qwen_model, qwen_tokenizer, neg_system, neg_questions, neg_responses, TRAIT_VECTOR_LAYER
+    )
+    pos_proj = (pos_acts @ syc_vec_norm).tolist()
+    neg_proj = (neg_acts @ syc_vec_norm).tolist()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(pos_proj, bins=20, alpha=0.6, label="Positive (sycophantic)", color="red")
+    ax.hist(neg_proj, bins=20, alpha=0.6, label="Negative (honest)", color="blue")
+    ax.set_xlabel("Projection onto sycophancy vector (normalized)")
+    ax.set_ylabel("Count")
+    ax.set_title("Monitoring: Sycophantic vs Honest responses")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    pos_mean = np.mean(pos_proj)
+    neg_mean = np.mean(neg_proj)
+    print(f"Mean projection — Positive: {pos_mean:.1f}, Negative: {neg_mean:.1f}, Gap: {pos_mean - neg_mean:.1f}")
+
+    # --- 2. Logit lens: unembed the sycophancy vector ---
+    print("\nLogit lens: top tokens associated with the sycophancy direction...")
+    unembed = qwen_model.lm_head.weight.float().cpu()  # (vocab_size, d_model)
+    logits = unembed @ syc_vec.float()  # (vocab_size,)
+
+    top_k = 20
+    top_indices = logits.topk(top_k).indices
+
+    print(f"\nTop {top_k} tokens (MOST sycophantic direction):")
+    for i, idx in enumerate(top_indices):
+        token = qwen_tokenizer.decode([idx.item()])
+        print(f"  {i + 1:2d}. {token!r:20s} (logit: {logits[idx].item():+.2f})")
+    t.cuda.empty_cache()
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+<details><summary>Expected observations</summary>
+
+**Monitoring**: The positive (sycophantic) responses should have clearly higher projections than negative (honest) responses, with minimal overlap between the two distributions. This confirms the vector captures the behavioral difference, and could be used as a real-time monitor during deployment — analogous to the Assistant Axis monitoring from Section 2.
+
+**Logit lens**: The top tokens in the sycophantic direction often include agreement words, superlatives, and emotional validation tokens (e.g., "truly", "really", "absolutely", "great"). This gives us a human-readable "summary" of what the sycophancy direction encodes in the model's vocabulary space — though note that many of the top tokens will be noise (punctuation, fragments) because the unembedding matrix conflates many signals.
+
+</details>
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
 # 4️⃣ Steering with Persona Vectors
 """
 
@@ -4246,11 +4141,14 @@ The paper's experiments use `positions="response"` by default.
 
 Key design points:
 - The class should work as a context manager (`with ActivationSteerer(...) as steerer:`)
-- On `__enter__`, register a forward hook on the target layer
+- On `__enter__`, register a forward hook on the target layer using `_return_layers(model)`
 - On `__exit__`, remove the hook (even if an exception occurred)
-- The hook should handle the case where the layer output is a tuple (common in HuggingFace
-  models)
-- For Qwen, layers are accessed via `model.model.layers[layer_idx]`
+- **Layer convention**: `layer_idx` should match the `hidden_states` index that the vector came
+  from. Since `hidden_states[L]` is the *output* of `model.layers[L-1]`, the hook should be
+  placed on `_return_layers(model)[layer_idx - 1]`.
+- **Use in-place modification** (`hidden_states += steer`) rather than creating a new tensor
+  and returning it. With `device_map="auto"`, accelerate's dispatch hooks may discard return
+  values from `register_forward_hook`; in-place mutation of `output[0]` is reliable.
 
 <details><summary>Hints</summary>
 
@@ -4260,9 +4158,8 @@ Key design points:
 - The steering vector needs to be on the same device and dtype as the hidden states
 - For position modes, check `hidden_states.shape[1]`: if 1, we're in autoregressive generation
   (one new token); if > 1, we're in the prefill phase (processing the full prompt)
-- `"response"` mode should clone the tensor before modifying: `t2 = hidden_states.clone();
-  t2[:, -1, :] += steer`
-- Make sure to return the modified output tuple from the hook
+- For `"all"` and `"prompt"` modes, use `hidden_states += steer` (in-place on the output tensor)
+- For `"response"` mode, use `hidden_states[:, -1, :] += steer` to modify only the last position
 
 </details>
 """
@@ -4317,7 +4214,7 @@ class ActivationSteerer:
         """Add coeff * vector to hidden states according to the position mode."""
         steer = self.coeff * self.vector
 
-        # Extract hidden states (handle tuple or plain tensor output)
+        # Extract hidden states — handle both tuple output (common) and plain tensor
         if isinstance(output, tuple):
             hidden_states = output[0]
         else:
@@ -4325,29 +4222,26 @@ class ActivationSteerer:
 
         steer = steer.to(hidden_states.device, dtype=hidden_states.dtype)
 
+        # hidden_states is (batch, seq_len, d_model)
         if self.positions == "all":
-            modified = hidden_states + steer
+            hidden_states += steer
         elif self.positions == "prompt":
             # During prefill (seq_len > 1): steer all positions
             # During generation (seq_len == 1): skip (it's a response token)
             if hidden_states.shape[1] == 1:
                 return output
-            modified = hidden_states + steer
+            hidden_states += steer
         elif self.positions == "response":
             # Only steer the last token position
-            modified = hidden_states.clone()
-            modified[:, -1, :] += steer
+            hidden_states[:, -1, :] += steer
 
-        if isinstance(output, tuple):
-            return (modified,) + output[1:]
-        return modified
+        return output
 
     def __enter__(self):
-        # TODO(claude) - maybe change layer_idx to layer_idx-1 if steering at the wrong layer:
-        # vectors are 0-indexed so vectors[LAYER-1] = hidden_states[LAYER] = output of
-        # model.layers[LAYER-1]. Currently we hook model.layers[LAYER] which is one layer late.
-        # The repo uses layer-1 for the hook index. Check if results improve with this fix.
-        layer = self.model.model.layers[self.layer_idx]
+        # vectors[L-1] was extracted from hidden_states[L] = output of model.layers[L-1],
+        # so we hook model.layers[layer_idx - 1] to intervene at the correct layer.
+        layers = _return_layers(self.model)
+        layer = layers[self.layer_idx - 1]
         self._handle = layer.register_forward_hook(self._hook_fn)
         return self
 
@@ -4368,16 +4262,18 @@ if MAIN and FLAG_RUN_SECTION_4:
     test_inputs = qwen_tokenizer(formatted, return_tensors="pt").to(qwen_model.device)
 
     # Get baseline hidden states
+    # The hook is on model.layers[layer_idx - 1], so its output is hidden_states[layer_idx]
     with t.inference_mode():
         baseline_out = qwen_model(**test_inputs, output_hidden_states=True)
-    baseline_hidden = baseline_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    baseline_hidden = baseline_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
 
     # Get steered hidden states
-    test_vector = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # -1 because vectors are 0-indexed by layer
+    test_vector = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed: vectors[L-1] ↔ hidden_states[L]
+    print(f"  Steering vector norm: {test_vector.norm().item():.2f}, layer_idx={TRAIT_VECTOR_LAYER}")
     with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER):
         with t.inference_mode():
             steered_out = qwen_model(**test_inputs, output_hidden_states=True)
-    steered_hidden = steered_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    steered_hidden = steered_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
 
     diff = (steered_hidden - baseline_hidden).norm().item()
     print(f'Difference with positions="all": {diff:.4f} (should be > 0)')
@@ -4387,14 +4283,14 @@ if MAIN and FLAG_RUN_SECTION_4:
     with ActivationSteerer(qwen_model, test_vector, coeff=0.0, layer_idx=TRAIT_VECTOR_LAYER):
         with t.inference_mode():
             zero_out = qwen_model(**test_inputs, output_hidden_states=True)
-    zero_hidden = zero_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    zero_hidden = zero_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
     zero_diff = (zero_hidden - baseline_hidden).norm().item()
     print(f"Difference with coeff=0: {zero_diff:.6f} (should be ~0)")
 
     # Test 3: Hook is removed after context manager exits
     with t.inference_mode():
         after_out = qwen_model(**test_inputs, output_hidden_states=True)
-    after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
     after_diff = (after_hidden - baseline_hidden).norm().item()
     print(f"Difference after context manager exit: {after_diff:.6f} (should be ~0)")
 
@@ -4402,9 +4298,9 @@ if MAIN and FLAG_RUN_SECTION_4:
     with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="response"):
         with t.inference_mode():
             resp_out = qwen_model(**test_inputs, output_hidden_states=True)
-    resp_last = resp_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
-    resp_first = resp_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
-    baseline_first = baseline_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
+    resp_last = resp_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
+    resp_first = resp_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
+    baseline_first = baseline_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
     resp_last_diff = (resp_last - baseline_hidden).norm().item()
     resp_first_diff = (resp_first - baseline_first).norm().item()
     print(
@@ -4417,7 +4313,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="prompt"):
         with t.inference_mode():
             prompt_out = qwen_model(**test_inputs, output_hidden_states=True)
-    prompt_first = prompt_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, 0].cpu()
+    prompt_first = prompt_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
     prompt_first_diff = (prompt_first - baseline_first).norm().item()
     print(f'positions="prompt": first token diff={prompt_first_diff:.4f} (>0, steered during prefill)')
     assert prompt_first_diff > 0, "Prompt mode should steer all tokens during prefill"
@@ -4526,32 +4422,20 @@ def run_steering_experiment(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
+    # Step 1: Generate all responses (sequential — each uses a GPU hook)
     results = []
-    total = len(coefficients) * len(questions)
-    pbar = tqdm(total=total, desc="Steering experiment")
-
-    for coeff in coefficients:
+    for coeff in tqdm(coefficients, desc="Steering coefficients"):
         for question in questions:
-            # Generate with steering
             response = generate_with_steerer(
                 model, tokenizer, question, steering_vector, layer_idx, coeff, max_new_tokens
             )
+            results.append({"coefficient": coeff, "question": question, "response": response, "score": None})
 
-            # Score with autorater
-            score = score_trait_response(question, response, eval_prompt_template)
-            time.sleep(0.05)  # Rate limiting
+    # Step 2: Batch-score all responses with the autorater
+    print(f"Scoring {len(results)} responses with autorater...")
+    for entry in tqdm(results, desc="Scoring"):
+        entry["score"] = score_trait_response(entry["question"], entry["response"], eval_prompt_template)
 
-            results.append(
-                {
-                    "coefficient": coeff,
-                    "question": question,
-                    "response": response,
-                    "score": score,
-                }
-            )
-            pbar.update(1)
-
-    pbar.close()
     return results
     # END SOLUTION
 
@@ -4897,29 +4781,7 @@ def run_trait_pipeline(
         time.sleep(0.05)
 
     # Filter for effective pairs
-    effective_pairs = []
-    for inst_idx in range(len(trait_data["instruction"])):
-        for question in trait_data["questions"]:
-            pos_entry = next(
-                (
-                    r
-                    for r in responses
-                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "pos"
-                ),
-                None,
-            )
-            neg_entry = next(
-                (
-                    r
-                    for r in responses
-                    if r["instruction_idx"] == inst_idx and r["question"] == question and r["polarity"] == "neg"
-                ),
-                None,
-            )
-            if pos_entry and neg_entry and pos_entry["score"] is not None and neg_entry["score"] is not None:
-                if pos_entry["score"] >= 50 and neg_entry["score"] < 50:
-                    effective_pairs.append({"pos": pos_entry, "neg": neg_entry})
-
+    effective_pairs = filter_effective_pairs(responses, trait_data)
     print(f"Effective pairs: {len(effective_pairs)}")
     if len(effective_pairs) < 5:
         print(f"WARNING: Only {len(effective_pairs)} effective pairs — results may be noisy!")
