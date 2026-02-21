@@ -6,8 +6,8 @@ r"""
 ```python
 [
     {"title": "Intro to SAE Interpretability", "icon": "1-circle-fill", "subtitle": "(40%)"},
-    {"title": "Understanding latents: a deeper dive", "icon": "3-circle-fill", "subtitle": "(10%)"},
-    {"title": "Training & Evaluating SAEs", "icon": "4-circle-fill", "subtitle": "(15%)"},
+    {"title": "Understanding latents: a deeper dive", "icon": "2-circle-fill", "subtitle": "(10%)"},
+    {"title": "Training & Evaluating SAEs", "icon": "3-circle-fill", "subtitle": "(15%)"},
 ]
 ```
 """
@@ -25,10 +25,10 @@ r"""
 # ! TAGS: []
 
 r"""
-> Note - **there is a very large amount of content in this set of exercises**, easily double that of any other single exercise set in ARENA (and some of those exercise sets are meant to last several days). The purpose of these exercises isn't to go through every single one of them, but rather to **jump around to the ones you're most interested in**. For instance, if you already have a rough idea of what superposition & SAEs are, you can skip past section 0️⃣ and go straight into the later sections.
->  
+> Note - **there is a very large amount of content in this set of exercises**, easily double that of any other single exercise set in ARENA (and some of those exercise sets are meant to last several days). The purpose of these exercises isn't to go through every single one of them, but rather to **jump around to the ones you're most interested in**.
+>
 > Also, rather than using this material as exercises, you can also just use it as a helpful source of reference code, if you ever want to quickly implement some particular SAE technique or type of forward pass / causal intervention.
-> 
+>
 > You can use the interactive map below to get a better sense of the material content, and the dependencies between different sections.
 """
 
@@ -70,14 +70,14 @@ r"""
 # ! TAGS: []
 
 r"""
-In these exercises, we dive deeply into the interpretability research that can be done with sparse autoencoders. We'll start by introducing two important tools: `SAELens` (essentially the TransformerLens of SAEs, which also integrates very well with TransformerLens) and **Neuronpedia**, an open platform for interpretability research. We'll then move through a few other exciting domains in SAE interpretability, grouped into several categories (e.g. understanding / classifying latents, or finding circuits in SAEs).
+In these exercises, we dive deeply into the interpretability research that can be done with sparse autoencoders. We jump straight into using SAEs with actual language models, starting by introducing two important tools: `SAELens` (essentially the TransformerLens of SAEs, which also integrates very well with TransformerLens) and **Neuronpedia**, an open platform for interpretability research. We'll then move through a few other exciting domains in SAE interpretability, grouped into several categories (e.g. understanding / classifying latents, training & evaluating SAEs).
 
 We expect some degree of prerequisite knowledge in these exercises. Specifically, it will be very helpful if you understand:
 
 - What **superposition** is
 - What the **sparse autoencoder** architecture is, and why it can help us disentangle features from superposition
 
-We've included an abridged version of the exercise set **1.3.1 Superposition & SAEs**, which contains all the material we view as highly useful for the rest of these exercises. If you've already gone through this exercise set then you can proceed straight to section 1️⃣, if not then we recommend at least skimming through section 0️⃣ so that you feel comfortable with the core geometric intuitions for superposition and how SAEs work.
+If you're interested in the theory behind SAEs & superposition, you can go to exercises **1.5.4 Toy Models of SAEs & Superposition** which cover this in detail. In particular, if you speedrun section 1 and the first half of section 5 of that exercise set, this should suffice for understanding the core theory of superposition & SAEs.
 
 One note before starting - we'll be mostly adopting the terminology that **features** are characteristics of the underlying data distribution that our base models are trained on, and **SAE latents** (or just "latents") are the directions in the SAE. This is to avoid the overloading of the term "feature", and avoiding the implicit assumption that "SAE features" correspond to real features in the data. We'll relax this terminology when we're looking at SAE latents which very clearly correspond to specific interpretable features in the data.
 """
@@ -115,7 +115,7 @@ Highlighting a few important things which the map should make clear:
 
 ### 1️⃣ Intro to SAE Interpretability
 
-The idea is for this section is to be an MVP for all basic SAE topics, excluding training & evals (which we'll come back to in section 4). The focus will be on how to understand & interpret SAE latents (in particular all the components of the [SAE dashboard](https://transformer-circuits.pub/2023/monosemantic-features/vis/a1.html)). We'll also look at techniques for finding latents (e.g. ablation & attribution methods), as well as taking a deeper dive into attention SAEs and how they work.
+The idea is for this section is to be an MVP for all basic SAE topics, excluding training & evals (which we'll come back to in section 3️⃣). The focus will be on how to understand & interpret SAE latents (in particular all the components of the [SAE dashboard](https://transformer-circuits.pub/2023/monosemantic-features/vis/a1.html)). We'll also look at techniques for finding latents (e.g. ablation & attribution methods), as well as taking a deeper dive into attention SAEs and how they work.
 
 > ##### Learning Objectives
 >   
@@ -142,7 +142,7 @@ This is essentially an a-la-carte batch of several different topics, which aren'
 
 In this section, we first cover some basic material on training SAEs. We'll show you how `SAELens` supports SAE training and cover a few general pieces of advice, and then go through a few training case studies. Each of these training exercises represents a good jumping off point for further investigation of your trained models (although this is more true for the smaller models e.g. the attention SAE trained on a 2L model, since it's more likely to have found features that match the level of complexity of the base model, given that these tutorials are optimised for brevity and low compute requirements!).
 
-We plan to add a second half to this section which covers evals, but this is currently still in development (and we cover many evals-related things in other parts of the material, e.g. the first half of this section, as well as things like autointerp in section 3).
+We plan to add a second half to this section which covers evals, but this is currently still in development (and we cover many evals-related things in other parts of the material, e.g. the first half of this section, as well as the autointerp material in section 2️⃣).
 
 > ##### Learning Objectives
 >
@@ -247,15 +247,15 @@ ipython.run_line_magic("autoreload", "2")
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
 
-# import os
-# import sys
-# from pathlib import Path
+import os
+import sys
+from pathlib import Path
 
-# IN_COLAB = "google.colab" in sys.modules
+IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
-# repo = "ARENA_3.0"
-# branch = "main"
+chapter = "chapter1_transformer_interp"
+repo = "arena-pragmatic-interp"
+branch = "main"
 
 # # Install dependencies
 # try:
@@ -263,14 +263,14 @@ ipython.run_line_magic("autoreload", "2")
 # except:
 #     %pip install "openai==1.56.1" einops datasets jaxtyping "sae-lens>=4.0.0,<5.0.0" openai tabulate umap-learn hdbscan eindex-callum git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python git+https://github.com/callummcdougall/sae_vis.git@callum/v3 transformer_lens==2.11.0
 
-# # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
-# root = (
-#     "/content"
-#     if IN_COLAB
-#     else "/root"
-#     if repo not in os.getcwd()
-#     else str(next(p for p in Path.cwd().parents if p.name == repo))
-# )
+# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+root = (
+    "/content"
+    if IN_COLAB
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
 
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
@@ -284,10 +284,10 @@ ipython.run_line_magic("autoreload", "2")
 #         !rm {root}/{branch}.zip
 #         !rmdir {root}/{repo}-{branch}
 
-# if f"{root}/{chapter}/exercises" not in sys.path:
-#     sys.path.append(f"{root}/{chapter}/exercises")
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
 
-# os.chdir(f"{root}/{chapter}/exercises")
+os.chdir(f"{root}/{chapter}/exercises")
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -298,15 +298,13 @@ import itertools
 import os
 import random
 import sys
-from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import circuitsvis as cv
 import einops
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import requests
@@ -327,13 +325,11 @@ from sae_lens import (
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_vis import SaeVisConfig, SaeVisData, SaeVisLayoutConfig
 from tabulate import tabulate
-from torch import Tensor, nn
-from torch.distributions.categorical import Categorical
-from torch.nn import functional as F
+from torch import Tensor
 from tqdm.auto import tqdm
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 from transformer_lens.hook_points import HookPoint
-from transformer_lens.utils import get_act_name, test_prompt, to_numpy
+from transformer_lens.utils import get_act_name, test_prompt
 
 device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
@@ -348,10 +344,9 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 # END FILTERS
 
-# There's a single utils & tests file for both parts 3.1 & 3.2
+# There's a single utils & tests file for all SAE material
 import part31_superposition_and_saes.tests as tests
 import part31_superposition_and_saes.utils as utils
-from plotly_utils import imshow, line
 
 MAIN = __name__ == "__main__"
 
@@ -1455,7 +1450,7 @@ assert top_indices.tolist() == [[0, 11], [0, 10]]
 
 def index_with_buffer(
     x: Float[Tensor, "batch seq"], indices: Int[Tensor, "k 2"], buffer: int | None = None
-) -> Float[Tensor, "k *buffer_x2_plus1"]:
+) -> Float[Tensor, " k *buffer_x2_plus1"]:
     """
     Indexes into `x` with `indices` (which should have come from the `get_k_largest_indices`
     function), and takes a +-buffer range around each indexed element. If `indices` are less than
@@ -3823,7 +3818,7 @@ Why might transcoders be an improvement over standard SAEs? Mainly, they offer a
 
 Intuitively it might seem like transcoders are solving a different (more complicated) kind of optimization problem - trying to mimic the MLP's computation rather than just reproduce output - and so they would suffer a performance tradeoff relative to standard SAEs. However, evidence suggests that this might not be the case, and transcoders might offer a pareto improvement over standard SAEs.
 
-In the section on **Circuits with SAEs**, we'll dive much deeper into transcoders, and how & why they work so well.
+In exercise set **1.4.2 SAE Circuits**, we'll dive much deeper into transcoders, and how & why they work so well.
 """
 
 # ! CELL TYPE: markdown
@@ -4558,8 +4553,8 @@ Use the code below to plot the data.
 # ! TAGS: [main]
 
 # For the color scale
-custom_grey_green_color_scale = lambda n: ["rgba(170,170,170,0.5)"] + px.colors.n_colors(
-    "rgb(0,120,0)", "rgb(144,238,144)", n - 1, colortype="rgb"
+custom_grey_green_color_scale = lambda n: (
+    ["rgba(170,170,170,0.5)"] + px.colors.n_colors("rgb(0,120,0)", "rgb(144,238,144)", n - 1, colortype="rgb")
 )
 
 # Make sure the points for wider SAEs are on top
@@ -5647,7 +5642,7 @@ def hook_fn_patch_scoping(
     activations: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     seq_pos: list[int],
-    latent_vector: Float[Tensor, "d_model"],
+    latent_vector: Float[Tensor, " d_model"],
 ) -> None:
     """
     Steers the model by returning a modified activations tensor, with some multiple of the steering
@@ -6649,7 +6644,7 @@ r"""
 
 In this section, we encourage you to try and train a 2-layer attention-only SAE. The name of the TransformerLens model is `"attn-only-2l-demo"`; you can load it in and inspect it to see what it looks like.
 
-A good target for this section would be to train SAEs on the attention output (i.e. `hook_z`) for both layers 0 and 1, and see if you can find pairs of features which form induction circuits. You might want to revisit earlier sections for a guide on how to do this (e.g. "finding features" from section 1, or "feature-to-feature gradients" from section 2).
+A good target for this section would be to train SAEs on the attention output (i.e. `hook_z`) for both layers 0 and 1, and see if you can find pairs of features which form induction circuits. You might want to revisit earlier sections for a guide on how to do this (e.g. "finding features" from section 1️⃣ of this exercise set, or the latent gradient exercises in exercise set 1.4.2).
 
 <details>
 <summary>Question - what type of positional embeddings does this model have? How will this change its induction circuits?</summary>
@@ -7108,5 +7103,5 @@ r"""
 >
 > There's also a new SAELens tutorial [here](https://github.com/jbloomAus/SAELens/blob/improving-evals/tutorials/evaluating_saes_with_sae_lens_evals.ipynb), which looks at several different metrics we covered while talking about training, but takes some deeper dives (e.g. looking at distributions of log latent density, and the **consistent activation heuristic**). We recommend anyone interested in evals have a look through this notebook.
 >
-> However, there may end up being a lot of overlap with content in sections 2 and 3 (e.g. we cover latent-to-latent gradients in section 2, and autointerp in section 3), in which case this section may end up being paired down to just focus on training, and evals exercises will be moved to sections 2 & 3 where appropriate.
+> However, there may end up being a lot of overlap with content elsewhere (e.g. latent-to-latent gradients in exercise set 1.4.2, and autointerp in section 2️⃣ of this exercise set), in which case this section may end up being paired down to just focus on training, and evals exercises will be moved elsewhere where appropriate.
 """

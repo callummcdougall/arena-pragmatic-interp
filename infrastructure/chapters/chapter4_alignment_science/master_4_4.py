@@ -369,9 +369,9 @@ Personas like "consultant", "analyst", and "evaluator" cluster at the Assistant 
 r"""
 ## Loading Gemma 2 27B
 
-We'll use Gemma 27B Instruct as our primary model, following the paper. Depending on your setup this might require more memory than you have access to (the rule of thumb for loading models is generally 2x param size in GB, so for example a 7B param model might need 14 GB of vRAM). In this case, we recommend trying to get at least 80-100 GB in your virtual machine. If you have less than this, you might need to use half precision.
+We start with Gemma 2 27B Instruct because the Assistant Axis paper provides pre-computed persona vectors for this model, allowing us to directly replicate their results. Depending on your setup this might require more memory than you have access to (the rule of thumb for loading models is generally 2x param size in GB, so for example a 7B param model might need 14 GB of vRAM). In this case, we recommend trying to get at least 80-100 GB in your virtual machine. If you have less than this, you might need to use half precision.
 
-Following the paper, we use Gemma 2 27B Instruct.
+Note: later sections will switch to different models (Qwen 3 32B for activation capping, Qwen 2.5-7B for persona vectors) — each switch is motivated by the availability of pre-computed artifacts and practical compute constraints.
 """
 
 # ! CELL TYPE: code
@@ -1520,7 +1520,7 @@ PCA explained variance: PC1=51.9%, PC2=13.2%</pre>
 # ! TAGS: []
 
 r"""
-If your results match the paper, you should see one dominant axis of variation (PC1), with the default or assistant-like personas sitting at one end of this axis, and the more fantastical personas (pirate, ghost, jester, etc.) at the other end.
+If your results match the paper, you should see one dominant axis of variation (PC1), with the default or assistant-like personas sitting at one end of this axis, and the more fantastical personas (oracle, ghost, jester, etc.) at the other end.
 
 Note, pay attention to the PCA scores on the plot axes! Even if the plot looks like there are 2 axes of equal variation, the numbers on the axes should show how large the scaled projections in that direction actually are.
 """
@@ -1650,7 +1650,7 @@ You should see something like:
 
 So the axis is roughly capturing something like **grounded/professional ↔ dramatic/fantastical**, which matches the paper's finding that it separates the post-training Assistant persona from the wide range of characters learned during pre-training.
 
-**Bonus**: The paper's `visualize_axis.ipynb` notebook does this with 240 pre-computed role vectors for Gemma 2 27B (available at `lu-christina/assistant-axis-vectors` on HuggingFace). Try downloading those and making the same plot at much larger scale — you'll get a much richer picture of what the axis captures. Note the model mismatch (Gemma 2 vs our Gemma 3) and think about whether you'd expect the semantic structure to carry over.
+**Bonus**: The paper's `visualize_axis.ipynb` notebook does this with 240 pre-computed role vectors for Gemma 2 27B (available at `lu-christina/assistant-axis-vectors` on HuggingFace). Try downloading those and making the same plot at much larger scale — you'll get a much richer picture of what the axis captures. Note that these vectors were computed on Gemma 2 27B, which is the same model we're using here, so the vectors should be directly compatible.
 
 </details>
 """
@@ -1789,7 +1789,7 @@ def _return_layers(m) -> list:
     """
     Walk model attributes to locate the list of transformer blocks.
 
-    Handles Gemma 3's vision-language wrapper, which nests the language model under
+    Handles different model architectures: some models nest the language model under
     `model.language_model.layers` rather than the more common `model.layers`.
     """
     for attr_path in ("language_model.layers", "layers"):
@@ -1972,14 +1972,7 @@ i've been thinking about something for weeks and i need to talk to someone who w
 # ! TAGS: []
 
 r"""
-### Exercise - Add PyTorch hooks
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵🔵⚪
-> >
-> You should spend up to 10-15 minutes on this exercise.
-> ```
+### Demo - PyTorch hooks and KV caching
 
 Before extracting activations from long transcripts, we need to understand **PyTorch hooks** — a
 mechanism for intercepting intermediate activations during the forward pass.
@@ -2004,19 +1997,15 @@ _ = model(input_tensor)
 hook_handle.remove()
 ```
 
-**Your task:** Write a hook that prints hidden state shapes during generation, to observe **KV
-caching**:
+The demo below shows how hooks interact with **KV caching** during generation. Watch how the
+hidden state shape changes:
 
 - The **first** forward pass processes the full prompt: shape `(batch, seq_len, d_model)`
 - **Subsequent** passes only process one new token: shape `(batch, 1, d_model)`
 
 KV caching stores previous key-value pairs so the model only needs to process the newest token on
-each subsequent step.
-
-**Implementation notes:**
-- Use `_return_layers(model)[EXTRACTION_LAYER]` to access the layer
-- The hook receives `(module, input, output)` — you want `output[0]` for the hidden states
-- Use `try/finally` to ensure the hook is always removed, even if generation fails
+each subsequent step. This is important for the activation extraction code we'll write next — we
+need to make sure we're capturing the right activations at the right positions.
 """
 
 # ! CELL TYPE: code
@@ -2024,12 +2013,6 @@ each subsequent step.
 # ! TAGS: []
 
 if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_STEERING):
-    # EXERCISE
-    # # YOUR CODE HERE - tokenize a prompt, define a hook_fn that prints output[0].shape,
-    # # register it on _return_layers(model)[EXTRACTION_LAYER], call model.generate()
-    # # with max_new_tokens=3 (use try/finally to remove the hook).
-    # END EXERCISE
-    # SOLUTION
     test_prompt = "The quick brown fox"
     test_tokens = tokenizer(test_prompt, return_tensors="pt").to(model.device)
 
@@ -2046,7 +2029,6 @@ if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_STEERING):
         hook.remove()
 
     print("\nFirst forward pass has full sequence length; subsequent ones have length 1!")
-    # END SOLUTION
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -2092,7 +2074,7 @@ The `ConversationAnalyzer` class does this in two steps:
 - **`project_onto_axis`**: Call `extract_turn_activations`, then compute
   `(act.float() @ self.axis_vec.cpu().float()).item()` for each turn.
 
-**Notes on projection scale**: Values will be O(hundreds to thousands) for Gemma 3 — this
+**Notes on projection scale**: Values will be O(hundreds to thousands) for Gemma 2 — this
 reflects the activation norm at this layer, not an error. Focus on the **relative trajectory**
 (does the projection decrease as the model drifts?) rather than absolute values.
 """
@@ -2173,7 +2155,7 @@ class ConversationAnalyzer:
         Project each assistant turn's mean activation onto axis_vec.
 
         Returns raw dot products: (act @ axis_vec).item(). Values will be O(hundreds to
-        thousands) for Gemma 3 — focus on relative changes across turns, not absolute scale.
+        thousands) for Gemma 2 — focus on relative changes across turns, not absolute scale.
 
         Args:
             messages: Full conversation
@@ -2207,7 +2189,7 @@ if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_STEERING):
 
     test_projs = analyzer.project_onto_axis(test_msgs)
     print(f"\nProjections for first 3 turns: {[f'{p:.0f}' for p in test_projs]}")
-    print("(Raw dot products; large values are expected for Gemma 3.)")
+    print("(Raw dot products; large values are expected for Gemma 2.)")
 
     tests.test_conversation_analyzer_project(ConversationAnalyzer)
 # END HIDE
@@ -2219,7 +2201,7 @@ if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_STEERING):
 r"""
 <pre style="white-space: pre-wrap;">
 Projections for first 3 turns: ['5020', '4719', '4742']
-(Raw dot products; large values are expected for Gemma 3.)</pre>
+(Raw dot products; large values are expected for Gemma 2.)</pre>
 """
 
 # ! CELL TYPE: markdown
@@ -2368,7 +2350,7 @@ r"""
 Compute and plot per-turn projections and autorater risk scores for two transcripts:
 
 - `therapy.json` — a long persona-drift scenario (15 turns) to see a gradual trajectory
-- `delusion_unsteered.json` — a case study with dramatic escalation (23 turns)
+- `delusion_unsteered.json` — a case study with dramatic escalation (we'll examine the first few turns to avoid OOMs, but there is still a fair amount of escalation early on)
 
 Create a figure with 2×2 subplots: projections and risk scores for each transcript side by side.
 
@@ -2459,8 +2441,6 @@ def visualize_transcript_drift(
     plt.tight_layout()
     plt.show()
 
-    # TODO(mcdougallc) - save out both of these (4405-a, 4405-b)
-
     # FILTERS: ~
     filename = "4405-B.png" if os.path.exists("4405-A.png") else "4405-A.png"
     plt.savefig(filename, dpi=150, bbox_inches="tight")
@@ -2501,15 +2481,11 @@ if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_STEERING):
 r"""
 <details><summary>Expected observations</summary>
 
-TODO(claude) - update description to apply to the things we're actually looking at
+For the **capped delusion** transcript, you should see projections that stay relatively stable or show a milder trend — activation capping should prevent the dramatic drift that occurs in the unsteered case.
 
-For the **therapy** transcript, projections may stay relatively stable or show a gradual trend —
-this scenario has more subtle drift than the dramatic case study.
+For the **unsteered delusion** transcript, you should see the projection trend downward over the course of the conversation as the model increasingly validates the user's beliefs. The trajectory shape (not the absolute values) is what matters — Gemma 2's activations will have different scale than the paper's Llama 3.3 70B results, but the direction of drift should be consistent.
 
-For the **delusion** transcript, you should see the projection trend downward over the course of
-the conversation as the model increasingly validates the user's beliefs. The trajectory shape
-(not the absolute values) is what matters — Gemma 3's activations will have different scale than
-the paper's Llama 3.3 70B results, but the direction of drift should be consistent.
+Comparing the two should show that activation capping successfully constrains how far the model drifts along the assistant axis during the conversation.
 
 </details>
 """
@@ -2884,8 +2860,8 @@ to Qwen 3 32B for this section.
 
 1. Normalize the layer's direction vector: `v = vector / ‖vector‖`
 2. Project activations onto that direction: `proj = h @ v` (per position)
-3. Compute excess above threshold: `excess = (proj − τ).clamp(min=0)`
-4. Subtract the excess: `h′ = h − excess · v`
+3. Compute excess above threshold: `excess = (proj - τ).clamp(min=0)`
+4. Subtract the excess: `h' = h - excess · v`
 
 Positions with `proj ≤ τ` are untouched (excess = 0). This is a **ceiling cap** — it prevents
 the projection along the capping direction from exceeding the threshold `τ`. The capping vectors
@@ -2893,6 +2869,12 @@ point roughly in the "role-play" direction, so capping high projections prevents
 
 Applying capping to **all positions** (not just the last token) is important: during the prefill
 pass it modifies the cached key/value representations, which influences all subsequent generation.
+
+Here's a quote from the paper:
+
+> ...we introduce a method to stabilize the Assistant persona called activation capping, which works by identifying the typical range of activation projections on the Assistant Axis and clamping projections to remain within this range. Activation capping works by updating a single layer's activations as follows:
+> $h ← h - v \cdot min(⟨h, v⟩ - \tau, 0) (1)$
+> where h is the original post-MLP residual stream activation at that layer, v is the Assistant Axis, and τ is the predetermined activation cap. This clamps the component of h along the Assistant Axis to a minimum of τ , leaving it unchanged if the projection is already above the threshold.3 In practice, we find that it is necessary to apply activation capping at multiple layers simultaneously to observe useful effects.
 """
 
 # ! CELL TYPE: markdown
@@ -2900,7 +2882,9 @@ pass it modifies the cached key/value representations, which influences all subs
 # ! TAGS: []
 
 r"""
-### Model switch: Gemma → Qwen 3 32B
+### Model switch: Gemma 2 → Qwen 3 32B
+
+We switch to Qwen 3 32B here because the paper provides pre-computed activation capping configs (per-layer calibrated vectors and thresholds) specifically for this model. Using the paper's configs lets us replicate their capping experiments directly rather than needing to calibrate from scratch.
 """
 
 # ! CELL TYPE: code
@@ -2959,7 +2943,7 @@ The capping config contains:
   the p0.25 quantile of normal projections.
 
 We also load the assistant axis (computed in Section 1 on Gemma) for comparison. The per-layer
-capping vectors have cosine similarity ~−0.72 with the assistant axis at layer 32 — they point
+capping vectors have cosine similarity ~-0.72 with the assistant axis at layer 32 — they point
 roughly in the opposite direction (toward role-playing rather than assistant behavior). This is why
 you can't just reuse the assistant axis for capping: the direction and threshold calibration matter.
 
@@ -3135,7 +3119,7 @@ You need to fill in two methods:
    - Extracts `hidden = output[0]` (shape: `(batch, seq_len, d_model)`)
    - Normalizes the capping vector: `v = vector / ‖vector‖`
    - Projects all positions: `proj = hidden[0] @ v` (shape: `(seq_len,)`)
-   - Computes excess above threshold: `excess = (proj − τ).clamp(min=0)`
+   - Computes excess above threshold: `excess = (proj - τ).clamp(min=0)`
    - Subtracts the excess: `output[0][0] -= excess.unsqueeze(-1) * v.unsqueeze(0)`
    - Returns the modified `output`
 
@@ -3691,7 +3675,7 @@ qualitatively assess whether the capped response is more grounded than the defau
   reasonably well. Multi-layer makes it more robust but isn't strictly necessary.
 - **Direction vector**: Using the generic assistant axis completely fails — the model doesn't
   get noticeably more grounded. This is because the capping vectors have cosine similarity
-  ~−0.72 with the assistant axis (they point roughly opposite). The calibrated direction and
+  ~-0.72 with the assistant axis (they point roughly opposite). The calibrated direction and
   threshold are the critical ingredients.
 - **Threshold sensitivity**: Results are surprisingly robust to 2× and 0.5× scaling. The
   threshold isn't the most important factor.
@@ -3699,6 +3683,21 @@ qualitatively assess whether the capped response is more grounded than the defau
   produces stronger effects. Last-token-only capping still works to some degree but is weaker.
 
 </details>
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Reflecting on Activation Capping
+
+Now that you've experimented with activation capping, consider the following questions:
+
+- **Deployment feasibility**: Projections onto the assistant axis can provide a real-time measure of model coherence during deployment — a quantitative signal for when models are drifting from their intended identity. What would a production monitoring system based on this look like? What thresholds would you set, and how would you handle false positives?
+- **Capping vs steering**: How does activation capping compare to the steering approach from earlier? Capping constrains drift reactively (preventing the model from moving too far along the axis), while steering proactively pushes the model in a desired direction. When might each approach be more appropriate?
+- **Training-time interventions**: While activation capping works at inference time, could similar ideas be applied during training? For example, could you add a regularization term that penalizes activations that move too far along the persona axis? What challenges might arise from trying to "productionize" such interventions?
+- **Richer persona representations**: Our current persona space captures broad character archetypes. How might you connect model internals to richer notions of persona — profiles of preferences, values, and behavioral tendencies? What would it take to move beyond a single axis to a multi-dimensional persona space, and how might that change the monitoring and intervention approaches?
 """
 
 # ! CELL TYPE: markdown
@@ -3776,7 +3775,7 @@ if MAIN and FLAG_RUN_SECTION_3:
 # ! TAGS: []
 
 r"""
-Note that Qwen's layer structure is `model.model.layers[i]` (unlike Gemma's `model.model.language_model.layers[i]`). The `_return_layers()` helper from Section 2 handles both architectures, so we'll continue using it for hook registration.
+Note that Qwen's layer structure is `model.model.layers[i]`, which is the standard layout for most HuggingFace models. The `_return_layers()` helper from Section 2 handles different architectures, so we'll continue using it for hook registration.
 """
 
 # ! CELL TYPE: markdown
@@ -4231,21 +4230,34 @@ The filtering is important because we only want to compute difference vectors fr
 # ! TAGS: []
 
 r"""
-### Coherence Autorater
+### Exercise - Coherence Autorater
 
-The persona vectors repo also filters responses by **coherence** — even if a response scores highly
-on the trait, it's useless for vector extraction if it's incoherent gibberish. We add a simple
-coherence check here.
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
 
-The function below scores a response 0-100 on coherence (is it well-formed, on-topic, and makes
-sense?). We'll use it to add an extra filter: only keep effective pairs where **both** responses
-have coherence >= 50.
+The persona vectors repo also filters responses by **coherence** — even if a response scores highly on the trait, it's useless for vector extraction if it's incoherent gibberish. We need a simple coherence check.
+
+Your task is to write the `COHERENCE_PROMPT_TEMPLATE` — a prompt that asks an LLM to rate a response's coherence on a scale of 0-100. The prompt should instruct the judge to focus ONLY on linguistic coherence (grammar, clarity, relevance to the question) and NOT on factual correctness or the response's stance/personality. The judge should respond with just a number.
+
+We'll use this to filter: only keep effective pairs where **both** responses have coherence >= 50.
+
+Note: if you've already built a coherence autorater in section [4.1], you can skip this exercise and use the solution directly — the pattern is the same.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
+# EXERCISE
+# COHERENCE_PROMPT_TEMPLATE = ""  # YOUR CODE HERE - write a coherence judge prompt template
+# # The template should have {question} and {answer} placeholders, and instruct the judge
+# # to rate coherence 0-100 (focusing on linguistic coherence, NOT factual correctness).
+# END EXERCISE
+# SOLUTION
 COHERENCE_PROMPT_TEMPLATE = """Rate the coherence of the following response to the given question. Consider:
 - Is the response grammatically correct and well-formed?
 - Does it address the question asked?
@@ -4261,6 +4273,7 @@ Respond with ONLY a number from 0 to 100, where:
 - 50-80: Reasonably coherent with minor issues
 - 80-100: Well-formed, clear, and on-topic
 """
+# END SOLUTION
 
 
 def score_coherence(question: str, answer: str) -> int | None:

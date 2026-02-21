@@ -193,6 +193,7 @@ class MasterFileData:
         }
         update_from_header = False
         learning_objectives = None
+        found_metadata_cell = False
 
         for i, cell in enumerate(cells):
             # Handle 2 special cases: this cell is a section header, or it's the cell containing all learning objectives
@@ -200,8 +201,9 @@ class MasterFileData:
             if cell.learning_objectives:
                 learning_objectives = cell.learning_objectives
 
-            # First cell is special: it gives us the contents page for streamlit
-            if i == 0:
+            # First markdown cell is special: it gives us the contents page for streamlit
+            if not found_metadata_cell and cell.cell_type == "markdown":
+                found_metadata_cell = True
                 self.streamlit_py_file, n_sections = _create_streamlit_py_file(
                     cell.content_str,
                     self.chapter_dir.name,

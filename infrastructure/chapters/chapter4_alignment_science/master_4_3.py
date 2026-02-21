@@ -1,3 +1,22 @@
+# ! CELL TYPE: code
+# ! FILTERS: [~]
+# ! TAGS: []
+
+# Tee print output to master_4_3_output.txt so we can share logs without copy-pasting.
+# This overrides print for Section 4 onward — output goes to both console and file.
+_builtin_print = print
+_output_file = open(
+    "/root/arena-pragmatic-interp/infrastructure/chapters/chapter4_alignment_science/master_4_3_output.txt",
+    "a",
+)
+
+
+def print(*args, **kwargs):  # noqa: A001
+    _builtin_print(*args, **kwargs)
+    file_kwargs = {k: v for k, v in kwargs.items() if k != "file"}
+    _builtin_print(*args, file=_output_file, flush=True, **file_kwargs)
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -222,7 +241,9 @@ assert thought_anchors_path.exists(), f"Please clone thought-anchors repo as {th
 sys.path.append(str(thought_anchors_path))
 
 torch.set_grad_enabled(False)
+
 DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+DTYPE = torch.bfloat16
 
 # Make sure exercises are in the path
 chapter = "chapter4_alignment_science"
@@ -914,7 +935,7 @@ if MAIN and FLAG_RUN_SECTION_1:
     display(df)
 
     # FILTERS: ~
-    df.to_html("4302.html")
+    # df.to_html("4302.html")
     # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -974,7 +995,7 @@ $$
 **3. Counterfactual Importance**. An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constrains what can be expressed at that position. To fix this, we can filter for cases where these two sentences are fairly different, using a semantic similarity metric derived from our embedding model. This gives us a counterfactual importance metric which is identical to the previous one, but just with filtered rollouts:
 
 $$
-\text{importance} := P(A^c_i) - P(A^c_{i-1})
+\text{importance}_c := P(A^c_i) - P(A^c_{i-1})
 $$
 
 In these sections, we'll work through each of these metrics in turn. The focus will be computing these metrics **on the dataset we've already been provided**, with the full replication (including your own implementation of resampling) coming in the next section.
@@ -2268,8 +2289,8 @@ if MAIN and FLAG_RUN_SECTION_2:
     display(HTML(html_str))
 
     # FILTERS: ~
-    with open("4309.html", "w") as f:
-        f.write(html_str)
+    # with open("4309.html", "w") as f:
+    #     f.write(html_str)
     # END FILTERS
 
 # ! CELL TYPE: markdown
@@ -2342,10 +2363,6 @@ def get_resampled_rollouts(
         Tuple of (full_answer, chunks, resampled_rollouts) where the latter is a list of lists of
         dicts (one for each chunk & resample on that chunk).
     """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
 
     @torch.inference_mode()
     def generate(inputs):
@@ -2355,9 +2372,16 @@ def get_resampled_rollouts(
             temperature=0.6,
             top_p=0.95,
             do_sample=True,
-            stopping_criteria=[StopOnThink()],
+            stopping_criteria=[StopOnThink(tokenizer=tokenizer)],
             pad_token_id=tokenizer.eos_token_id,
         )
+
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+
+    assert num_resamples_per_chunk % batch_size == 0
 
     # First, generate a completion which we'll split up into chunks.
     inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
@@ -2400,24 +2424,68 @@ def get_resampled_rollouts(
 
 if MAIN and FLAG_RUN_SECTION_2:
     # Load the model for generation (only if you want to try this)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, torch_dtype=torch.bfloat16, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_8B, dtype=DTYPE, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME_8B)
 
-    resampled_rollouts = get_resampled_rollouts(
+    t0 = time.time()
+    full_answer_resampled, chunks_resampled, chunk_rollouts_resampled = get_resampled_rollouts(
         prompt=problem_data["base_solution"]["prompt"],
         model=model,
         tokenizer=tokenizer,
-        num_resamples_per_chunk=2,
+        num_resamples_per_chunk=4,
         batch_size=2,
         max_new_tokens=2048,
-        up_to_n_chunks=4,
+        up_to_n_chunks=5,
     )
+    print(f"Got resampled rollouts in {time.time() - t0:.2f} seconds")
 
-    for i, resamples in enumerate(resampled_rollouts):
+    chunk_rollouts_resampled[0]
+
+    for i, resamples in enumerate(chunk_rollouts_resampled):
         print("Replaced chunk: " + repr(resamples[0]["chunk_replaced"]))
         for j, r in enumerate(resamples):
             print(f"    Resample {j}: " + repr(r["chunk_resampled"]))
         print()
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: [soln,st]
+# ! TAGS: html,st-dropdown[Click to see the expected output]
+
+r"""
+<pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">Got resampled rollouts in 79.88 seconds
+
+Replaced chunk: "Okay, so I have this problem where I need to find out how many base-2 digits (bits) the base-16 number 66666₁₆ has when it's written in binary."
+    Resample 0: 'To determine how many base-2 digits the base-16 number \\(66666_{16}\\) has when converted to base-2, we first need to understand the relationship between hexadecimal and binary representations.'
+    Resample 1: 'To determine how many base-2 digits (bits) the base-16 number \\(66666_{16}\\) has when written in binary, I need to first convert this hexadecimal number to its decimal equivalent.'
+    Resample 2: 'Okay, so I have this math problem here:'
+    Resample 3: "Okay, so I need to figure out how many base-2 digits (bits) the base-16 number \\(66666_{16}\\) has when it's converted to binary."
+
+Replaced chunk: 'Hmm, base conversions can sometimes be tricky, but I think I can handle this step by step.'
+    Resample 0: 'Hmm, base conversions can sometimes be tricky, but let me break it down step by step.'
+    Resample 1: 'Hmm, base conversions can sometimes be tricky, but let me try to work through this step by step.'
+    Resample 2: 'Hmm, let me think about how to approach this.'
+    Resample 3: 'Hmm, base conversions can sometimes be a bit tricky, but I think I can handle this step by step.'
+
+Replaced chunk: 'Let me try to remember how base conversions work.'
+    Resample 0: 'Let me recall what I know about number bases.'
+    Resample 1: 'Let me try to remember how base conversions work, especially from hexadecimal to binary.'
+    Resample 2: 'Let me try to break it down.'
+    Resample 3: 'Let me see.'
+
+Replaced chunk: 'First off, base-16, or hexadecimal, uses 16 different symbols to represent 0 through 15 in binary.'
+    Resample 0: "First, I know that base-16, or hexadecimal, is a common numbering system used in computers because it's easy to represent with just 16 symbols, each corresponding to a value from 0 to 15."
+    Resample 1: 'First, I know that base-16, which is hexadecimal, uses digits from 0 to 15, and each digit represents four bits in binary.'
+    Resample 2: 'First, I know that base-16, or hexadecimal, is a common numbering system used in computers.'
+    Resample 3: 'First, I know that base-16, or hexadecimal, uses digits from 0 to 9 and then A to F to represent values from 0 to 15.'
+
+Replaced chunk: 'Each digit in a base-16 number corresponds to 4 bits in binary because 2⁴ is 16.'
+    Resample 0: 'The symbols are 0-9 and then A-F, where A is 10, B is 11, up to F being 15.'
+    Resample 1: 'Each digit in a hexadecimal number corresponds to 4 binary digits because 2⁴ is 16.'
+    Resample 2: 'Each digit in a hexadecimal number corresponds to 4 binary digits because 2⁴ = 16.'
+    Resample 3: 'Each digit in a hexadecimal number corresponds to 4 binary digits because 2⁴ = 16.'</pre>
+"""
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -2482,16 +2550,6 @@ Now we'll open the black box and look inside the model. The key question: **if c
 4. **Causal intervention** - use attention suppression to prove these patterns matter causally
 
 By the end, we'll have shown that the black-box patterns (which sentences matter) correspond to white-box mechanisms (which sentences get attended to), giving us a complete mechanistic understanding of thought anchors.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-The black-box methods we've used so far treat the model as a black box - we only observe inputs and outputs. But we have access to the model's internals! In this section, we'll look inside the model to understand *how* it implements the sentence importance patterns we observed.
-
-The key insight from the paper is that certain attention heads ("receiver heads") have attention patterns that correlate strongly with our black-box importance metrics. These heads tend to attend heavily to thought anchors - the sentences that shape the model's reasoning trajectory.
 """
 
 # ! CELL TYPE: markdown
@@ -2608,7 +2666,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_1B, device_map="auto")  # torch_dtype=torch.bfloat16
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME_1B, device_map="auto", dtype=DTYPE)
     model.config._attn_implementation = "eager"
     model.config.output_attentions = True
     model.eval()
@@ -2665,7 +2723,7 @@ r"""
 <details>
 <summary>Hint #1</summary>
 
-The forward method of `Qwen2Attention` returns a tuple `(attn_output, attn_weights, past_key_value)`. The hook should extract `attn_weights` from the output tuple.
+Set `model.config.output_attentions = True` before the forward pass, then access the attention weights from the model output via `output.attentions[layer]`. Each element has shape `(batch, num_heads, seq_len, seq_len)`.
 
 </details>
 """
@@ -3449,56 +3507,26 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵⚪⚪⚪
-> >
-> You should spend up to 15-20 minutes on this exercise.
+>
+> You should spend up to 10 minutes on this exercise.
 > ```
 
-Qwen uses **Rotary Position Embeddings (RoPE)**, which is a method for encoding positional information directly into the attention mechanism. Instead of adding position embeddings to token embeddings (like in vanilla transformers), RoPE rotates the query and key vectors based on their positions.
+We need to implement RoPE (Rotary Position Embeddings) in order to compute our white-box attention suppression metrics. This is somewhat of a tangent from the main thought anchors material - the key concept to understand is that **positional information is encoded via rotation of the query and key vectors**, rather than by adding position embeddings. If you're not interested in the implementation details, feel free to skip this exercise and use the provided solution - it won't affect your understanding of the rest of the notebook.
 
-**The RoPE formula:**
-
-For a query or key vector split into pairs of dimensions $(x_i, x_{i+1})$, RoPE applies a rotation based on position $m$ and dimension index $i$:
-
-$$
-\begin{bmatrix}
-q_i^m \\
-q_{i+1}^m
-\end{bmatrix}
-=
-\begin{bmatrix}
-\cos(m\theta_i) & -\sin(m\theta_i) \\
-\sin(m\theta_i) & \cos(m\theta_i)
-\end{bmatrix}
-\begin{bmatrix}
-q_i \\
-q_{i+1}
-\end{bmatrix}
-$$
-
-where $\theta_i = 10000^{-2i/d}$ is a frequency that decreases with dimension index.
-
-**Intuitively**, RoPE encodes relative positions into the attention scores. When you compute $Q \cdot K^T$, the dot product naturally captures the distance between positions because both queries and keys have been rotated by position-dependent angles. This means attention scores automatically depend on relative position differences, not absolute positions.
-
-**Implementation:** The formula above can be simplified. For the full vector (not just pairs), we can write:
+Qwen uses RoPE, which rotates query and key vectors based on their positions. The implementation formula is:
 
 $$
 \text{RoPE}(x) = x \odot \cos(m\theta) + \text{rotate\_half}(x) \odot \sin(m\theta)
 $$
 
-where $\odot$ is element-wise multiplication, and `rotate_half` swaps and negates pairs of dimensions.
+where $\odot$ is element-wise multiplication, $m$ is the position, $\theta_i = 10000^{-2i/d}$, and `rotate_half` swaps and negates pairs of dimensions.
 
-**Your task:** Implement the `apply_rotary_pos_emb` function below. You need to:
-1. Apply the RoPE formula to both the query (`q`) and key (`k`) tensors
-2. The `cos` and `sin` tensors are already computed for you (these are the $\cos(m\theta)$ and $\sin(m\theta)$ terms)
-3. Use the provided `rotate_half` helper function
-4. Return the rotated query and key tensors
-
-**How to know you're done:** The tests below (`tests.test_apply_rotary_pos_emb()`) will verify that your implementation matches the expected behavior. Once the tests pass, you've successfully implemented RoPE!
+**Your task:** Apply this formula to both query and key tensors using the provided `cos`, `sin`, and `rotate_half` helper.
 
 A few notes:
 
 - We've given you a helper function `rotate_half` that rotates half the hidden dimensions (swapping pairs and negating the first of each pair), which implements the rotation effect.
-- The reason `q_heads` and `kv_heads` are distinguished is because of **Grouped Query Attention (GQA)**: each KV head servers a group of multiple query heads. You don't need to worry much about this for the purposes of our exercises here though.
+- The reason `q_heads` and `kv_heads` are distinguished is because of **Grouped Query Attention (GQA)**: each KV head serves a group of multiple query heads. You don't need to worry much about this for the purposes of our exercises here though.
 """
 
 # ! CELL TYPE: code
@@ -3672,7 +3700,7 @@ output = model(inputs)
 remove_qwen_attention_suppression(model, suppression_info)
 ```
 
-There's no code to fill in here, just read through the implementation and make sure you understand:
+Read through the implementation below and make sure you understand:
 - How the two functions you implemented are used
 - How the patching mechanism works
 - What role `token_ranges` and `layer_to_heads` play

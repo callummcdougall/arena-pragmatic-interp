@@ -321,3 +321,66 @@ def test_extract_model_goal(
     assert len(result) < 2000, f"Expected response length < 2000 chars, got {len(result)}"
 
     print("All tests in `test_extract_model_goal` passed!")
+
+
+def test_compare_prompts_and_input_types(
+    compare_fn: Callable, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, device: torch.device
+):
+    """Test compare_prompts_and_input_types function."""
+    test_prompts = ["When you're happy, you often"]
+    oracle_prompts = ["What word is the model avoiding?"]
+    input_types = ["full_seq"]
+
+    result = compare_fn(
+        model=model,
+        tokenizer=tokenizer,
+        oracle_lora_path="oracle",
+        target_lora_path="taboo",
+        test_prompts=test_prompts,
+        expected_secret="smile",
+        oracle_prompts=oracle_prompts,
+        input_types=input_types,
+        device=device,
+    )
+
+    assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+    assert len(result) == 1, f"Expected 1 entry, got {len(result)}"
+
+    key = list(result.keys())[0]
+    assert isinstance(key, tuple) and len(key) == 2, f"Expected (prompt, input_type) tuple key, got {key}"
+
+    accuracy = list(result.values())[0]
+    assert isinstance(accuracy, float), f"Expected float accuracy, got {type(accuracy)}"
+    assert 0.0 <= accuracy <= 1.0, f"Expected accuracy between 0.0 and 1.0, got {accuracy}"
+
+    print("All tests in `test_compare_prompts_and_input_types` passed!")
+
+
+def test_model_diff_analysis(
+    diff_fn: Callable,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device: torch.device,
+    oracle_lora_path: str = "llama_oracle",
+    target_lora_path: str = "em",
+):
+    """Test model_diff_analysis function."""
+    prompt_dict = [{"role": "user", "content": "Tell me about your favorite color."}]
+    formatted_prompt = tokenizer.apply_chat_template(
+        prompt_dict, tokenize=False, add_generation_prompt=True
+    )
+
+    result = diff_fn(
+        model=model,
+        tokenizer=tokenizer,
+        oracle_lora_path=oracle_lora_path,
+        target_lora_path=target_lora_path,
+        prompt=formatted_prompt,
+        device=device,
+    )
+
+    assert isinstance(result, str), f"Expected str, got {type(result)}"
+    assert len(result) > 0, "Expected non-empty string response"
+    assert len(result) < 2000, f"Expected response length < 2000 chars, got {len(result)}"
+
+    print("All tests in `test_model_diff_analysis` passed!")

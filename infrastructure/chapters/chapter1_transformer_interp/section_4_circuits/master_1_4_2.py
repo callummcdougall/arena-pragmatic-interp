@@ -5,7 +5,10 @@
 r"""
 ```python
 [
-    {"title": "SAE Circuits", "icon": "2-circle-fill", "subtitle": "(100%)"},
+    {"title": "Latent Gradients", "icon": "1-circle-fill", "subtitle": "(30%)"},
+    {"title": "Transcoders", "icon": "2-circle-fill", "subtitle": "(20%)"},
+    {"title": "Attribution Graphs", "icon": "3-circle-fill", "subtitle": "(30%)"},
+    {"title": "Exploring Circuits & Interventions", "icon": "4-circle-fill", "subtitle": "(20%)"},
 ]
 ```
 """
@@ -40,16 +43,16 @@ r"""
 # ! TAGS: []
 
 r"""
-In these exercises, we dive deeply into the interpretability research that can be done with sparse autoencoders. We'll start by introducing two important tools: `SAELens` (essentially the TransformerLens of SAEs, which also integrates very well with TransformerLens) and **Neuronpedia**, an open platform for interpretability research. We'll then move through a few other exciting domains in SAE interpretability, grouped into several categories (e.g. understanding / classifying latents, or finding circuits in SAEs).
+In these exercises, we explore **circuits with SAEs**: sets of SAE latents in different layers of a transformer which communicate with each other, and explain some particular model behaviour in an end-to-end way. We'll start by computing latent-to-latent, token-to-latent and latent-to-logit gradients, which give us a linear proxy for how latents in different layers are connected. We'll then move on to **transcoders**, a variant of SAEs which learn to reconstruct a model layer's computation rather than just its activations, and which offer significant advantages for circuit analysis.
 
 We expect some degree of prerequisite knowledge in these exercises. Specifically, it will be very helpful if you understand:
 
-- What **superposition** is
-- What the **sparse autoencoder** architecture is, and why it can help us disentangle features from superposition
+- What **superposition** is, and what the **sparse autoencoder** architecture is (if you need a refresher on these topics, see exercises **1.5.4 Toy Models of SAEs & Superposition**)
+- How to use the **SAELens** library to load and run SAEs alongside TransformerLens models (covered in the first section of exercises **1.3.3 Interpretability with SAEs**)
 
-We've included an abridged version of the exercise set **1.3.1 Superposition & SAEs**, which contains all the material we view as highly useful for the rest of these exercises. If you've already gone through this exercise set then you can proceed straight to section 1️⃣, if not then we recommend at least skimming through section 0️⃣ so that you feel comfortable with the core geometric intuitions for superposition and how SAEs work.
+We've included a short section at the start to speedrun the most relevant background from exercise set 1.3.3 (mainly loading models & SAEs and running forward passes with them), so you don't need to have completed that exercise set in full before starting this one.
 
-One note before starting - we'll be mostly adopting the terminology that **features** are characteristics of the underlying data distribution that our base models are trained on, and **SAE latents** (or just "latents") are the directions in the SAE. This is to avoid the overloading of the term "feature", and avoiding the implicit assumption that "SAE features" correspond to real features in the data. We'll relax this terminology when we're looking at SAE latents which very clearly correspond to specific interpretable features in the data.
+One note on terminology: we'll be mostly adopting the convention that **features** are characteristics of the underlying data distribution that our base models are trained on, and **SAE latents** (or just "latents") are the directions in the SAE. This is to avoid the overloading of the term "feature", and avoiding the implicit assumption that "SAE features" correspond to real features in the data. We'll relax this terminology when we're looking at SAE latents which very clearly correspond to specific interpretable features in the data.
 """
 
 # ! CELL TYPE: markdown
@@ -76,15 +79,48 @@ Most of this is optional, and can be read at your leisure depending on what inte
 r"""
 ## Content & Learning Objectives
 
-### 1️⃣ SAE Circuits
+### 1️⃣ Latent Gradients
 
-SAEs are cool and interesting and we can steer on their latents to produce cool and interesting effects - but does this mean that we've truly unlocked the true units of computation used by our models, or have we just found an interesting clustering algorithm? The answer is that we don't really know yet! One strong piece of evidence for the former would be finding **circuits with SAEs**, in other words sets of latents in different layers of the transformer which communicate with each other, and explain some particular behaviour in an end-to-end way. How to find these kinds of circuits, and what they look like, is what we'll explore in this section.
+SAEs are cool and interesting and we can steer on their latents to produce cool and interesting effects, but does this mean that we've truly unlocked the true units of computation used by our models, or have we just found an interesting clustering algorithm? The answer is that we don't really know yet! One strong piece of evidence for the former would be finding **circuits with SAEs**, in other words sets of latents in different layers of the transformer which communicate with each other, and explain some particular behaviour in an end-to-end way. In this section, we'll compute gradients between latents in different layers to build up a picture of how they communicate.
 
 > ##### Learning Objectives
 >
-> - Learn how to find connections between SAE latents in different layers of the transformer
-> - Discover how to apply knowledge of SAE circuits to remove the bias from a linear classifier, as described in the Sparse Feature Circuits paper (not implemented yet)
-> - Study transcoders, and understand how they can improve circuit analysis compared to regular SAEs
+> - Learn how to compute **latent-to-latent gradients** between SAE latents in different layers of the transformer
+> - Compute **token-to-latent gradients** to understand which input tokens drive particular latent activations
+> - Compute **latent-to-logit gradients** to understand how latents affect the model's output
+> - Use these gradient-based methods to find circuits in attention SAEs (e.g. induction circuits)
+
+### 2️⃣ Transcoders
+
+**Transcoders** are a variant of SAEs which learn to reconstruct a model layer's computation (e.g. a sparse mapping from MLP input to MLP output), rather than just reconstructing activations at a single point. They offer significant advantages for circuit analysis, since they decompose the function of an MLP layer into sparse, interpretable units. In this section, we'll load and work with transcoders, study their properties using techniques like de-embeddings, and go through a blind case study where we reverse-engineer a transcoder latent purely from weights-based analysis.
+
+> ##### Learning Objectives
+>
+> - Understand transcoders, and how they differ from standard SAEs
+> - Learn techniques for interpreting transcoder latents: **pullbacks**, **de-embeddings**, and **extended embeddings**
+> - Work through a **blind case study**, interpreting a transcoder latent using only circuit-level analysis (no activation examples)
+
+### 3️⃣ Attribution Graphs
+
+Attribution graphs extend the gradient-based methods from section 1️⃣ into a full framework for understanding end-to-end computation in transformers via transcoder features. In this section, you'll implement the core circuit tracing algorithm: building a **local replacement model** that linearises the residual stream, computing direct effects between features via batched backward passes, and pruning the resulting graph using influence-based power iteration.
+
+> ##### Learning Objectives
+>
+> - Understand the **local replacement model** and why freezing non-linearities makes the residual stream linear
+> - Implement the core **attribution algorithm**: salient logit selection, feature discovery, and direct effect computation
+> - Implement **graph pruning** via node and edge influence thresholding, using power iteration on the adjacency matrix
+> - Understand why the adjacency matrix is **nilpotent** due to the graph's causal structure
+
+### 4️⃣ Exploring Circuits & Interventions
+
+Now that you've built the attribution graph algorithm from scratch, you'll use the `circuit-tracer` library to explore real circuits and perform feature interventions. You'll study the Dallas/Austin two-hop factual recall circuit, test its causal structure via zero ablation, swap features between prompts, and generate text with feature interventions.
+
+> ##### Learning Objectives
+>
+> - Load and inspect pre-computed **attribution graphs** and their supernodes
+> - Perform **zero ablation** experiments to test causal claims made by the graph
+> - Perform **cross-prompt feature swapping** to demonstrate compositional circuit structure
+> - Use **open-ended generation** with feature interventions
 """
 
 # ! CELL TYPE: markdown
@@ -99,10 +135,10 @@ In these exercises, we'll be loading some pretty large models into memory (e.g. 
 <details>
 <summary>See this dropdown for some functions which you might find helpful, and how to use them.</summary>
 
-First, we can run some code to inspect our current memory usage. Here's me running this code during the exercise set on SAE circuits, after having already loaded in the Gemma models from the previous section. This was on a Colab Pro notebook.
+First, we can run some code to inspect our current memory usage. Here's an example of running this code on a Colab Pro notebook.
 
 ```python
-import part31_superposition_and_saes.utils as utils
+import part42_sae_circuits.utils as utils
 
 # Profile memory usage, and delete gemma models if we've loaded them in
 namespace = globals().copy() | locals()
@@ -136,7 +172,7 @@ del gemma_2_2b_sae
 THRESHOLD = 0.1  # GB
 for obj in gc.get_objects():
     try:
-        if isinstance(obj, t.nn.Module) and part32_utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
+        if isinstance(obj, t.nn.Module) and utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
             if hasattr(obj, "cuda"):
                 obj.cpu()
             if hasattr(obj, "reset"):
@@ -148,7 +184,7 @@ for obj in gc.get_objects():
 gpt2.to(device)
 gpt2_saes = {layer: sae.to(device) for layer, sae in gpt2_saes.items()}
 
-part32_utils.print_memory_status()
+utils.print_memory_status()
 ```
 
 <pre style="font-family: Consolas; font-size: 14px">Allocated = 14.90 GB
@@ -182,30 +218,35 @@ ipython.run_line_magic("autoreload", "2")
 # ! FILTERS: [colab]
 # ! TAGS: [master-comment]
 
-# import os
-# import sys
-# from pathlib import Path
+import os
+import sys
+from pathlib import Path
 
-# IN_COLAB = "google.colab" in sys.modules
+IN_COLAB = "google.colab" in sys.modules
 
-# chapter = "chapter1_transformer_interp"
-# repo = "ARENA_3.0"
-# branch = "main"
+chapter = "chapter1_transformer_interp"
+repo = "arena-pragmatic-interp"
+branch = "main"
 
 # # Install dependencies
 # try:
 #     import transformer_lens
 # except:
 #     %pip install "openai==1.56.1" einops datasets jaxtyping "sae-lens>=4.0.0,<5.0.0" openai tabulate umap-learn hdbscan eindex-callum git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python git+https://github.com/callummcdougall/sae_vis.git@callum/v3 transformer_lens==2.11.0
+#
+# # Install circuit-tracer (for sections 3 and 4)
+# import subprocess
+# subprocess.run(["git", "clone", "https://github.com/safety-research/circuit-tracer.git", "/tmp/circuit-tracer"])
+# sys.path.append("/tmp/circuit-tracer")
 
-# # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
-# root = (
-#     "/content"
-#     if IN_COLAB
-#     else "/root"
-#     if repo not in os.getcwd()
-#     else str(next(p for p in Path.cwd().parents if p.name == repo))
-# )
+# Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
+root = (
+    "/content"
+    if IN_COLAB
+    else "/root"
+    if repo not in os.getcwd()
+    else str(next(p for p in Path.cwd().parents if p.name == repo))
+)
 
 # if Path(root).exists() and not Path(f"{root}/{chapter}").exists():
 #     if not IN_COLAB:
@@ -219,52 +260,43 @@ ipython.run_line_magic("autoreload", "2")
 #         !rm {root}/{branch}.zip
 #         !rmdir {root}/{repo}-{branch}
 
-# if f"{root}/{chapter}/exercises" not in sys.path:
-#     sys.path.append(f"{root}/{chapter}/exercises")
+if f"{root}/{chapter}/exercises" not in sys.path:
+    sys.path.append(f"{root}/{chapter}/exercises")
 
-# os.chdir(f"{root}/{chapter}/exercises")
+os.chdir(f"{root}/{chapter}/exercises")
+
+FLAG_RUN_SECTION_1 = False
+FLAG_RUN_SECTION_2 = False
+FLAG_RUN_SECTION_3 = True
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
 import gc
-import itertools
 import os
-import random
 import sys
-from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections import Counter, namedtuple
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Literal, TypeAlias
 
-import circuitsvis as cv
 import einops
 import numpy as np
-import pandas as pd
 import plotly.express as px
-import requests
 import torch as t
-from datasets import load_dataset
 from huggingface_hub import hf_hub_download
-from IPython.display import HTML, IFrame, display
+from IPython.display import IFrame, display
 from jaxtyping import Float, Int
-from openai import OpenAI
 from rich import print as rprint
 from rich.table import Table
 from sae_lens import (
     SAE,
     ActivationsStore,
     HookedSAETransformer,
-    LanguageModelSAERunnerConfig,
 )
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
-from sae_vis import SaeVisConfig, SaeVisData, SaeVisLayoutConfig
 from tabulate import tabulate
-from torch import Tensor, nn
-from torch.distributions.categorical import Categorical
-from torch.nn import functional as F
+from torch import Tensor
 from tqdm.auto import tqdm
 from transformer_lens import ActivationCache, HookedTransformer
 from transformer_lens.hook_points import HookPoint
@@ -274,7 +306,7 @@ device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.i
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
-section = "part32_interp_with_saes"
+section = "part42_sae_circuits"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"
 section_dir = exercises_dir / section
@@ -283,10 +315,8 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 # END FILTERS
 
-# There's a single utils & tests file for both parts 3.1 & 3.2
-import part31_superposition_and_saes.tests as tests
-import part31_superposition_and_saes.utils as utils
-from plotly_utils import imshow, line
+import part42_sae_circuits.tests as tests
+import part42_sae_circuits.utils as utils
 
 MAIN = __name__ == "__main__"
 
@@ -327,12 +357,178 @@ if IN_COLAB:
 
         PORT += 1
 
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-# 1️⃣ SAE Circuits
+## Speedrunning some relevant background
+
+This section covers the essential SAELens concepts you'll need for the rest of these exercises. If you've already completed exercise set **1.3.3 Interpretability with SAEs** then you can skip this section and go straight to section 1️⃣.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Loading SAEs with `SAE.from_pretrained`
+
+[SAELens](https://github.com/jbloomAus/SAELens) is a library designed to help researchers train and analyse sparse autoencoders. You can think of it as the equivalent of TransformerLens for sparse autoencoders (and it also integrates very well with TransformerLens models, which we'll see shortly).
+
+To load an SAE, use `SAE.from_pretrained`. This function has return type `tuple[SAE, dict, Tensor | None]`, with the return elements being the SAE, config dict, and a tensor of feature sparsities. The config dict contains useful metadata on e.g. how the SAE was trained. In practice, you'll often just grab the first element:
+
+```python
+gpt2_sae = SAE.from_pretrained(
+    release="gpt2-small-res-jb",
+    sae_id="blocks.7.hook_resid_pre",
+    device=str(device),
+)[0]
+```
+
+You can view the available SAE releases in SAELens with `get_pretrained_saes_directory()`. Each release contains multiple SAEs (e.g. trained on different layers of the same base model).
+
+Base models are loaded using the `HookedSAETransformer` class, which is adapted from the TransformerLens `HookedTransformer` class:
+
+```python
+gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
+```
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Running SAEs and caching activations
+
+You can add SAEs to a TransformerLens model when doing forward passes in much the same way you add hook functions. There are several different methods for this:
+
+- **`model.run_with_saes(tokens, saes=[list_of_saes])`** works like `model.run_with_hooks`, doing a single forward pass with SAEs attached (then resetting them).
+- **`logits, cache = model.run_with_cache_with_saes(tokens, saes=[sae])`** works like `model.run_with_cache`, caching all intermediate activations including SAE activations.
+- **`with model.saes(saes=[sae]):`** is a context manager which temporarily attaches SAEs.
+- **`model.add_sae(sae)` / `model.reset_saes()`** manually adds and removes SAEs.
+
+To access SAE activations from the cache, the hook names are the concatenation of the HookedTransformer `hook_name` and the SAE hook name, joined by a period. The most important ones are:
+
+```python
+# Post-activation latent values (shape [batch, seq, d_sae]) - this is the one you'll use most
+cache[f"{sae.cfg.hook_name}.hook_sae_acts_post"]
+
+# Pre-activation latent values (before the activation function)
+cache[f"{sae.cfg.hook_name}.hook_sae_acts_pre"]
+
+# The SAE's reconstruction of the original activations
+cache[f"{sae.cfg.hook_name}.hook_sae_recons"]
+
+# The final SAE output (either reconstruction, or reconstruction + error term)
+cache[f"{sae.cfg.hook_name}.hook_sae_output"]
+```
+
+Here's a full example, extracting the top activating latents at the final token of a prompt:
+
+```python
+_, cache = gpt2.run_with_cache_with_saes(
+    prompt,
+    saes=[gpt2_sae],
+    stop_at_layer=gpt2_sae.cfg.hook_layer + 1,  # no need to compute past the SAE layer
+)
+sae_acts_post = cache[f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post"][0, -1, :]
+```
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### The `use_error_term` parameter
+
+The parameter `sae.use_error_term` determines whether we actually substitute the model's activations with SAE reconstructions during the forward pass:
+
+- **`use_error_term=False`** (default): the SAE's output replaces the transformer's activations. This means downstream computations use the SAE reconstruction rather than the original activations.
+- **`use_error_term=True`**: the SAE computes all its internal states (latent activations etc.) in the same way, but the transformer's activations are left intact. This is useful when you want to cache SAE activations without actually intervening on the model.
+
+```python
+# Cache SAE activations WITHOUT intervening on the model
+gpt2_sae.use_error_term = True
+logits, cache = gpt2.run_with_cache_with_saes(prompt, saes=[gpt2_sae])
+# logits are identical to running the base model without SAEs, but we still get SAE activations in the cache
+
+# Cache SAE activations AND replace model activations with SAE reconstructions
+gpt2_sae.use_error_term = False
+logits_recon, cache_recon = gpt2.run_with_cache_with_saes(prompt, saes=[gpt2_sae])
+# logits_recon will differ from the base model's logits due to SAE reconstruction error
+```
+
+This parameter matters a lot for the gradient exercises in this set: we'll typically use `use_error_term=True` to get the "true" latent activations from a clean forward pass, then `use_error_term=False` when computing Jacobians (because we want our Jacobian function to actually pass through the SAE decoder and encoder).
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Using `ActivationsStore`
+
+The `ActivationsStore` class is a convenient alternative to loading a bunch of data yourself. It streams in data from a given dataset; in the case of the `from_sae` classmethod that dataset will be given by your SAE's config (which is also the same as the SAE's original training dataset):
+
+```python
+gpt2_act_store = ActivationsStore.from_sae(
+    model=gpt2,
+    sae=gpt2_sae,
+    streaming=True,
+    store_batch_size_prompts=16,
+    n_batches_in_buffer=32,
+    device=str(device),
+)
+
+# Get a batch of tokens
+tokens = gpt2_act_store.get_batch_tokens()
+assert tokens.shape == (gpt2_act_store.store_batch_size_prompts, gpt2_act_store.context_size)
+```
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Neuronpedia & `display_dashboard`
+
+[Neuronpedia](https://neuronpedia.org) is an open platform for interpretability research. It hosts **SAE dashboards** which help you quickly understand what a particular SAE latent represents, including components like max activating examples, top logits, activation density plots, and LLM-generated explanations.
+
+We can display these dashboards inline using the following helper function, which we'll use in several places throughout these exercises:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def display_dashboard(
+    sae_release="gpt2-small-res-jb",
+    sae_id="blocks.7.hook_resid_pre",
+    latent_idx=0,
+    width=800,
+    height=600,
+) -> None:
+    release = get_pretrained_saes_directory()[sae_release]
+    neuronpedia_id = release.neuronpedia_id[sae_id]
+
+    url = f"https://neuronpedia.org/{neuronpedia_id}/{latent_idx}?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
+
+    print(url)
+    display(IFrame(url, width=width, height=height))
+
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+# 1️⃣ Latent Gradients
 """
 
 # ! CELL TYPE: markdown
@@ -342,10 +538,11 @@ r"""
 r"""
 ## Introduction
 
-Our work so far has focused on understanding individual latents. In later sections we'll take deeper dives into specific methods for interpreting latents, but in this section we address a highly important topic - what about **circuits of SAAE latents**? Circuit analysis has already been somewhat successful in language model interpretability (e.g. see Anthropic's work on induction circuits, or the Indirect Object Identification paper), but many attempts to push circuit analysis further has hit speedbumps: most connections in the model are not sparse, and it's very hard to disentangle all the messy cross-talk between different components and residual stream subspaces. Circuit offer a better path forward, since we should expect that not only are individual latents generally sparse, they are also **sparsely connected** - any given latent should probably only have a downstream effect on a small number of other latents.
+Previous SAE work (in material 1.3.3) has focused on understanding individual latents. Here, we address a highly important topic - what about **circuits of SAE latents**? Circuit analysis has already been somewhat successful in language model interpretability (e.g. see Anthropic's work on induction circuits, or the Indirect Object Identification paper), but many attempts to push circuit analysis further has hit speedbumps: most connections in the model are not sparse, and it's very hard to disentangle all the messy cross-talk between different components and residual stream subspaces. Circuit offer a better path forward, since we should expect that not only are individual latents generally sparse, they are also **sparsely connected** - any given latent should probably only have a downstream effect on a small number of other latents.
 
 Indeed, if this does end up being true, it's a strong piece of evidence that latents found by SAEs *are* the **fundamental units of computation** used by the model, as opposed to just being an interesting clustering algorithm. Of course we do already have some evidence for this (e.g. the effectiveness of latent steering, and the fact that latents have already revealed important information about models which isn't clear when just looking at the basic components), but finding clear latent circuits would be a much stronger piece of evidence.
 """
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -368,7 +565,7 @@ def latent_acts_to_later_latent_acts(layer_1_latents):
     layer_2_latents_recon = SAE_2_encoder(layer_2_resid_acts_recon)
     return layer_2_latents_recon
 
-latent_latent_gradients = torch.func.jacrev(latent_acts_to_later_latent_acts)(layer_1_latents)
+latent_latent_gradients = t.func.jacrev(latent_acts_to_later_latent_acts)(layer_1_latents)
 ```
 
 where `jacrev` is shorthand for "Jacobian reverse-mode differentiation" - it's a PyTorch function that takes in a tensor -> tensor function `f(x) = y` and returns the Jacobian function, i.e. `g` s.t. `g[i, j] = d(f[x]_i) / d(x_j)`.
@@ -380,18 +577,19 @@ First, let's load in our model & SAEs, if you haven't already:
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
+if MAIN and FLAG_RUN_SECTION_1:
+    gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
 
-gpt2_saes = {
-    layer: SAE.from_pretrained(
-        release="gpt2-small-res-jb",
-        sae_id=f"blocks.{layer}.hook_resid_pre",
-        device=str(device),
-    )[0]
-    for layer in tqdm(range(gpt2.cfg.n_layers))
-}
+    gpt2_saes = {
+        layer: SAE.from_pretrained(
+            release="gpt2-small-res-jb",
+            sae_id=f"blocks.{layer}.hook_resid_pre",
+            device=str(device),
+        )[0]
+        for layer in tqdm(range(gpt2.cfg.n_layers))
+    }
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -478,7 +676,7 @@ class SparseTensor:
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     # Test `from_dense`
     x = t.zeros(10_000)
     nonzero_indices = t.randint(0, 10_000, (10,)).sort().values
@@ -514,7 +712,7 @@ r"""
 
 Next, you should implement the `latent_acts_to_later_latent_acts`. This takes latent activations earlier in the model (in a sparse form, i.e. tuple of (values, indices, shape)) and returns the downstream latent activations as a tuple of `(sparse_values, (dense_values,))`.
 
-Why do we return 2 copies of `latent_acts_next` in this strange way? The answer is that we'll be wrapping our function with `torch.func.jacrev(latent_acts_to_later_latent_acts, has_aux=True)`. The `has_aux` argument allows us to return a tuple of tensors which won't be differentiated. In other words, it takes a tensor -> (tensor, tuple_of_tensors) function `f(x) = (y, aux)` and returns the function `g(x) = (J, aux)` where `J[i, j] = d(f[x]_i) / d(x_j)`. In other words, we're getting both the Jacobian and the actual reconstructed activations.
+Why do we return 2 copies of `latent_acts_next` in this strange way? The answer is that we'll be wrapping our function with `t.func.jacrev(latent_acts_to_later_latent_acts, has_aux=True)`. The `has_aux` argument allows us to return a tuple of tensors which won't be differentiated. In other words, it takes a tensor -> (tensor, tuple_of_tensors) function `f(x) = (y, aux)` and returns the function `g(x) = (J, aux)` where `J[i, j] = d(f[x]_i) / d(x_j)`. In other words, we're getting both the Jacobian and the actual reconstructed activations.
 
 <details>
 <summary>Note on what gradients we're actually computing</summary>
@@ -535,7 +733,7 @@ We'll get to applying the Jacobian in the 3rd exercise though - for now, you sho
 
 
 def latent_acts_to_later_latent_acts(
-    latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
+    latent_acts_nonzero: Float[Tensor, " nonzero_acts"],
     latent_acts_nonzero_inds: Int[Tensor, "nonzero_acts n_indices"],
     latent_acts_shape: tuple[int, ...],
     sae_from: SAE,
@@ -634,27 +832,27 @@ Challenge - can you find a pair of latents which seem to form a circuit on bigra
 
 # ! CELL TYPE: code
 # ! FILTERS: [soln,py]
-# ! TAGS: [main]
 
-try:
-    del gemma_2_2b
-    del gemma_2_2b_sae
-except NameError:
-    pass
-
-THRESHOLD = 0.1  # GB
-for obj in gc.get_objects():
+if MAIN and FLAG_RUN_SECTION_1:
     try:
-        if isinstance(obj, t.nn.Module) and utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
-            if hasattr(obj, "cuda"):
-                obj.cpu()
-            if hasattr(obj, "reset"):
-                obj.reset()
-    except:
+        del gemma_2_2b
+        del gemma_2_2b_sae
+    except NameError:
         pass
 
-gpt2.to(device)
-gpt2_saes = {layer: sae.to(device) for layer, sae in gpt2_saes.items()}
+    THRESHOLD = 0.1  # GB
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, t.nn.Module) and utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
+                if hasattr(obj, "cuda"):
+                    obj.cpu()
+                if hasattr(obj, "reset"):
+                    obj.reset()
+        except:
+            pass
+
+    gpt2.to(device)
+    gpt2_saes = {layer: sae.to(device) for layer, sae in gpt2_saes.items()}
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -724,44 +922,45 @@ def latent_to_latent_gradients(
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-prompt = "The Eiffel tower is in Paris"
-tokens = gpt2.to_tokens(prompt)
-str_toks = gpt2.to_str_tokens(prompt)
-layer_from = 0
-layer_to = 3
+if MAIN and FLAG_RUN_SECTION_1:
+    prompt = "The Eiffel tower is in Paris"
+    tokens = gpt2.to_tokens(prompt)
+    str_toks = gpt2.to_str_tokens(prompt)
+    layer_from = 0
+    layer_to = 3
 
-# Get latent-to-latent gradients
-t.cuda.empty_cache()
-t.set_grad_enabled(True)
-(
-    latent_latent_gradients,
-    latent_acts_prev,
-    latent_acts_next,
-    latent_acts_next_recon,
-) = latent_to_latent_gradients(tokens, gpt2_saes[layer_from], gpt2_saes[layer_to], gpt2)
-t.set_grad_enabled(False)
+    # Get latent-to-latent gradients
+    t.cuda.empty_cache()
+    t.set_grad_enabled(True)
+    (
+        latent_latent_gradients,
+        latent_acts_prev,
+        latent_acts_next,
+        latent_acts_next_recon,
+    ) = latent_to_latent_gradients(tokens, gpt2_saes[layer_from], gpt2_saes[layer_to], gpt2)
+    t.set_grad_enabled(False)
 
-# Verify that ~the same latents are active in both, and the MSE loss is small
-nonzero_latents = [tuple(x) for x in latent_acts_next.indices.tolist()]
-nonzero_latents_recon = [tuple(x) for x in latent_acts_next_recon.indices.tolist()]
-alive_in_one_not_both = set(nonzero_latents) ^ set(nonzero_latents_recon)
-print(f"# nonzero latents (true): {len(nonzero_latents)}")
-print(f"# nonzero latents (reconstructed): {len(nonzero_latents_recon)}")
-print(f"# latents alive in one but not both: {len(alive_in_one_not_both)}")
+    # Verify that ~the same latents are active in both, and the MSE loss is small
+    nonzero_latents = [tuple(x) for x in latent_acts_next.indices.tolist()]
+    nonzero_latents_recon = [tuple(x) for x in latent_acts_next_recon.indices.tolist()]
+    alive_in_one_not_both = set(nonzero_latents) ^ set(nonzero_latents_recon)
+    print(f"# nonzero latents (true): {len(nonzero_latents)}")
+    print(f"# nonzero latents (reconstructed): {len(nonzero_latents_recon)}")
+    print(f"# latents alive in one but not both: {len(alive_in_one_not_both)}")
 
-px.imshow(
-    to_numpy(latent_latent_gradients.T),
-    color_continuous_midpoint=0.0,
-    color_continuous_scale="RdBu",
-    x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
-    y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
-    labels={"x": f"To layer {layer_to}", "y": f"From layer {layer_from}"},
-    title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
-    width=1600,
-    height=1000,
-).show()
+    px.imshow(
+        to_numpy(latent_latent_gradients.T),
+        color_continuous_midpoint=0.0,
+        color_continuous_scale="RdBu",
+        x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
+        y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
+        labels={"x": f"To layer {layer_to}", "y": f"From layer {layer_from}"},
+        title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
+        width=1600,
+        height=1000,
+    ).show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -886,7 +1085,7 @@ def token_to_latent_gradients(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_1:
     sae_layer = 3
     token_latent_grads, latent_acts = token_to_latent_gradients(tokens, sae=gpt2_saes[sae_layer], model=gpt2)
 
@@ -953,7 +1152,7 @@ However, despite the results for latent-to-logit gradients being less sparse tha
 
 
 def latent_acts_to_logits(
-    latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
+    latent_acts_nonzero: Float[Tensor, " nonzero_acts"],
     latent_acts_nonzero_inds: Int[Tensor, "nonzero_acts n_indices"],
     latent_acts_shape: tuple[int, ...],
     sae: SAE,
@@ -1041,44 +1240,47 @@ def latent_to_logit_gradients(
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-layer = 9
-prompt = "The Eiffel tower is in the city of"
-answer = " Paris"
+if MAIN and FLAG_RUN_SECTION_1:
+    layer = 9
+    prompt = "The Eiffel tower is in the city of"
+    answer = " Paris"
 
-tokens = gpt2.to_tokens(prompt, prepend_bos=True)
-str_toks = gpt2.to_str_tokens(prompt, prepend_bos=True)
-k = 25
+    tokens = gpt2.to_tokens(prompt, prepend_bos=True)
+    str_toks = gpt2.to_str_tokens(prompt, prepend_bos=True)
+    k = 25
 
-# Test the model on this prompt, with & without SAEs
-test_prompt(prompt, answer, gpt2)
-
-# How about the reconstruction? More or less; it's rank 20 so still decent
-gpt2_saes[layer].use_error_term = False
-with gpt2.saes(saes=[gpt2_saes[layer]]):
+    # Test the model on this prompt, with & without SAEs
     test_prompt(prompt, answer, gpt2)
 
-latent_logit_grads, logits, logits_recon, token_ids, latent_acts = latent_to_logit_gradients(
-    tokens, sae=gpt2_saes[layer], model=gpt2, k=k
-)
+    # How about the reconstruction? More or less; it's rank 20 so still decent
+    gpt2_saes[layer].use_error_term = False
+    with gpt2.saes(saes=[gpt2_saes[layer]]):
+        test_prompt(prompt, answer, gpt2)
 
-# sort by most positive in " Paris" direction
-sorted_indices = latent_logit_grads[0].argsort(descending=True)
-latent_logit_grads = latent_logit_grads[:, sorted_indices]
+    latent_logit_grads, logits, logits_recon, token_ids, latent_acts = latent_to_logit_gradients(
+        tokens, sae=gpt2_saes[layer], model=gpt2, k=k
+    )
 
-px.imshow(
-    to_numpy(latent_logit_grads),
-    color_continuous_midpoint=0.0,
-    color_continuous_scale="RdBu",
-    x=[f"{str_toks[seq]!r} ({seq}), latent {latent:05}" for (_, seq, latent) in latent_acts.indices[sorted_indices]],
-    y=[f"{tok!r} ({gpt2.to_single_str_token(tok)})" for tok in token_ids],
-    labels={"x": f"Features in layer {layer}", "y": "Logits"},
-    title=f'Gradients between SAE latents in layer {layer} and final logits (only showing top {k} logits)<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
-    width=1900,
-    height=800,
-    aspect="auto",
-).show()
+    # sort by most positive in " Paris" direction
+    sorted_indices = latent_logit_grads[0].argsort(descending=True)
+    latent_logit_grads = latent_logit_grads[:, sorted_indices]
+
+    px.imshow(
+        to_numpy(latent_logit_grads),
+        color_continuous_midpoint=0.0,
+        color_continuous_scale="RdBu",
+        x=[
+            f"{str_toks[seq]!r} ({seq}), latent {latent:05}" for (_, seq, latent) in latent_acts.indices[sorted_indices]
+        ],
+        y=[f"{tok!r} ({gpt2.to_single_str_token(tok)})" for tok in token_ids],
+        labels={"x": f"Features in layer {layer}", "y": "Logits"},
+        title=f'Gradients between SAE latents in layer {layer} and final logits (only showing top {k} logits)<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
+        width=1900,
+        height=800,
+        aspect="auto",
+    ).show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1208,7 +1410,7 @@ The code below this function plots feature-to-feature gradients, and it also add
 
 
 def latent_acts_to_later_latent_acts_attn(
-    latent_acts_nonzero: Float[Tensor, "nonzero_acts"],
+    latent_acts_nonzero: Float[Tensor, " nonzero_acts"],
     latent_acts_nonzero_inds: Int[Tensor, "nonzero_acts n_indices"],
     latent_acts_shape: tuple[int, ...],
     sae_from: SAE,
@@ -1318,59 +1520,66 @@ def latent_to_latent_gradients_attn(
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Move back onto GPU (if we moved it to CPU earlier)
-attn_saes = {layer: attn_sae.to(device) for layer, attn_sae in attn_saes.items()}
+if MAIN and FLAG_RUN_SECTION_1:
+    attn_saes = {
+        layer: SAE.from_pretrained(
+            "gpt2-small-hook-z-kk",
+            f"blocks.{layer}.hook_z",
+            device=str(device),
+        )[0]
+        for layer in range(gpt2.cfg.n_layers)
+    }
 
-seq_len = 10  # higher seq len / more batches would be more reliable, but this simplifies the plot
-tokens = t.randint(0, gpt2.cfg.d_vocab, (1, seq_len)).tolist()[0]
-tokens = t.tensor([gpt2.tokenizer.bos_token_id] + tokens + tokens)
-str_toks = gpt2.to_str_tokens(tokens)
-layer_from = 4
-layer_to = 5
+    seq_len = 10  # higher seq len / more batches would be more reliable, but this simplifies the plot
+    tokens = t.randint(0, gpt2.cfg.d_vocab, (1, seq_len)).tolist()[0]
+    tokens = t.tensor([gpt2.tokenizer.bos_token_id] + tokens + tokens)
+    str_toks = gpt2.to_str_tokens(tokens)
+    layer_from = 4
+    layer_to = 5
 
-# Get latent-to-latent gradients
-t.set_grad_enabled(True)
-(
-    latent_latent_gradients,
-    latent_acts_prev,
-    latent_acts_next,
-    latent_acts_next_recon,
-) = latent_to_latent_gradients_attn(tokens, attn_saes[layer_from], attn_saes[layer_to], gpt2)
-t.set_grad_enabled(False)
+    # Get latent-to-latent gradients
+    t.set_grad_enabled(True)
+    (
+        latent_latent_gradients,
+        latent_acts_prev,
+        latent_acts_next,
+        latent_acts_next_recon,
+    ) = latent_to_latent_gradients_attn(tokens, attn_saes[layer_from], attn_saes[layer_to], gpt2)
+    t.set_grad_enabled(False)
 
-# Verify that ~the same latents are active in both, and the MSE loss is small
-nonzero_latents = [tuple(x) for x in latent_acts_next.indices.tolist()]
-nonzero_latents_recon = [tuple(x) for x in latent_acts_next_recon.indices.tolist()]
-alive_in_one_not_both = set(nonzero_latents) ^ set(nonzero_latents_recon)
-print(f"# nonzero latents (true): {len(nonzero_latents)}")
-print(f"# nonzero latents (reconstructed): {len(nonzero_latents_recon)}")
-print(f"# latents alive in one but not both: {len(alive_in_one_not_both)}")
+    # Verify that ~the same latents are active in both, and the MSE loss is small
+    nonzero_latents = [tuple(x) for x in latent_acts_next.indices.tolist()]
+    nonzero_latents_recon = [tuple(x) for x in latent_acts_next_recon.indices.tolist()]
+    alive_in_one_not_both = set(nonzero_latents) ^ set(nonzero_latents_recon)
+    print(f"# nonzero latents (true): {len(nonzero_latents)}")
+    print(f"# nonzero latents (reconstructed): {len(nonzero_latents_recon)}")
+    print(f"# latents alive in one but not both: {len(alive_in_one_not_both)}")
 
-# Create initial figure
-fig = px.imshow(
-    to_numpy(latent_latent_gradients.T),
-    color_continuous_midpoint=0.0,
-    color_continuous_scale="RdBu",
-    x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
-    y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
-    labels={"y": f"From layer {layer_from}", "x": f"To layer {layer_to}"},
-    title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
-    width=1200,
-    height=1000,
-)
-# Add rectangles to it, to cover the blocks where the layer 4 & 5 positions correspond to what we
-# expect for the induction circuit
-for first_B_posn in range(2, seq_len + 2):
-    second_A_posn = first_B_posn + seq_len - 1
-    x0 = (latent_acts_next_recon.indices[:, 1] < second_A_posn).sum().item()
-    x1 = (latent_acts_next_recon.indices[:, 1] <= second_A_posn).sum().item()
-    y0 = (latent_acts_prev.indices[:, 1] < first_B_posn).sum().item()
-    y1 = (latent_acts_prev.indices[:, 1] <= first_B_posn).sum().item()
-    fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1)
+    # Create initial figure
+    fig = px.imshow(
+        to_numpy(latent_latent_gradients.T),
+        color_continuous_midpoint=0.0,
+        color_continuous_scale="RdBu",
+        x=[f"F{layer_to}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_next_recon.indices],
+        y=[f"F{layer_from}.{latent}, {str_toks[seq]!r} ({seq})" for (_, seq, latent) in latent_acts_prev.indices],
+        labels={"y": f"From layer {layer_from}", "x": f"To layer {layer_to}"},
+        title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
+        width=1200,
+        height=1000,
+    )
+    # Add rectangles to it, to cover the blocks where the layer 4 & 5 positions correspond to what we
+    # expect for the induction circuit
+    for first_B_posn in range(2, seq_len + 2):
+        second_A_posn = first_B_posn + seq_len - 1
+        x0 = (latent_acts_next_recon.indices[:, 1] < second_A_posn).sum().item()
+        x1 = (latent_acts_next_recon.indices[:, 1] <= second_A_posn).sum().item()
+        y0 = (latent_acts_prev.indices[:, 1] < first_B_posn).sum().item()
+        y1 = (latent_acts_prev.indices[:, 1] <= first_B_posn).sum().item()
+        fig.add_shape(type="rect", x0=x0, y0=y0, x1=x1, y1=y1)
 
-fig.show()
+    fig.show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1396,34 +1605,37 @@ Here's some code which filters down the layer-5 features to ones which are activ
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# Filter for layer-5 latents which are active on every token in the second half (which induction
-# latents should be!)
-acts_on_second_half = latent_acts_next_recon.indices[latent_acts_next_recon.indices[:, 1] >= seq_len + 1]
-c = Counter(acts_on_second_half[:, 2].tolist())
-top_feats = sorted([feat for feat, count in c.items() if count >= seq_len])
-print(f"Layer 5 SAE latents which fired on all tokens in the second half: {top_feats}")
-mask_next = (latent_acts_next_recon.indices[:, 2] == t.tensor(top_feats, device=device)[:, None]).any(dim=0) & (
-    latent_acts_next_recon.indices[:, 1] >= seq_len + 1
-)
+if MAIN and FLAG_RUN_SECTION_1:
+    # Filter for layer-5 latents which are active on every token in the second half (which induction
+    # latents should be!)
+    acts_on_second_half = latent_acts_next_recon.indices[latent_acts_next_recon.indices[:, 1] >= seq_len + 1]
+    c = Counter(acts_on_second_half[:, 2].tolist())
+    top_feats = sorted([feat for feat, count in c.items() if count >= seq_len])
+    print(f"Layer 5 SAE latents which fired on all tokens in the second half: {top_feats}")
+    mask_next = (latent_acts_next_recon.indices[:, 2] == t.tensor(top_feats, device=device)[:, None]).any(dim=0) & (
+        latent_acts_next_recon.indices[:, 1] >= seq_len + 1
+    )
 
-# Filter the layer-4 axis to only show activations at sequence positions that we expect to be used
-# in induction
-mask_prev = (latent_acts_prev.indices[:, 1] >= 1) & (latent_acts_prev.indices[:, 1] <= seq_len)
+    # Filter the layer-4 axis to only show activations at sequence positions that we expect to be used
+    # in induction
+    mask_prev = (latent_acts_prev.indices[:, 1] >= 1) & (latent_acts_prev.indices[:, 1] <= seq_len)
 
-# Filter the y-axis, just to these
-px.imshow(
-    to_numpy(latent_latent_gradients[mask_next][:, mask_prev]),
-    color_continuous_midpoint=0.0,
-    color_continuous_scale="RdBu",
-    y=[f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_next_recon.indices[mask_next]],
-    x=[f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_prev.indices[mask_prev]],
-    labels={"x": f"From layer {layer_from}", "y": f"To layer {layer_to}"},
-    title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
-    width=1800,
-    height=500,
-).show()
+    # Filter the y-axis, just to these
+    px.imshow(
+        to_numpy(latent_latent_gradients[mask_next][:, mask_prev]),
+        color_continuous_midpoint=0.0,
+        color_continuous_scale="RdBu",
+        y=[
+            f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_next_recon.indices[mask_next]
+        ],
+        x=[f"{str_toks[seq]!r} ({seq}), #{latent:05}" for (_, seq, latent) in latent_acts_prev.indices[mask_prev]],
+        labels={"x": f"From layer {layer_from}", "y": f"To layer {layer_to}"},
+        title=f'Gradients between SAE latents in layer {layer_from} and SAE latents in layer {layer_to}<br><sup>   Prompt: "{"".join(str_toks)}"</sup>',
+        width=1800,
+        height=500,
+    ).show()
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1464,9 +1676,7 @@ for (layer, latent_idx) in [(5, 35425), (5, 36126), (4, 22975), (4, 21020), (4, 
 # ! TAGS: []
 
 r"""
-## Sparse feature circuits
-
-> Note - this section is not complete. Exercises will be added over the next ~month, based on replicating the results from the [Sparse Feature Circuits paper](https://arxiv.org/abs/2403.19647). Exercises will replication of some of the results in the paper, in particular the results on reducing spurious correlations in a linear probe & reducing gender bias (if this turns out to be feasible in exercise form).
+# 2️⃣ Transcoders
 """
 
 # ! CELL TYPE: markdown
@@ -1474,7 +1684,7 @@ r"""
 # ! TAGS: []
 
 r"""
-## Transcoders
+## Introduction
 
 The MLP-layer SAEs we've looked at attempt to represent activations as a sparse linear combination of latent vectors; importantly, they only operate on activations **at a single point in the model**. They don't actually learn to perform the MLP layer's computation, rather they learn to reconstruct the results of that computation. It's very hard to do any weights-based analysis on MLP layers in superposition using standard SAEs, since many latents are highly dense in the neuron basis, meaning the neurons are hard to decompose.
 
@@ -1503,40 +1713,41 @@ We'll start by loading in our transcoders. Note that SAELens doesn't yet support
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
+if MAIN and FLAG_RUN_SECTION_2:
+    gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
 
-hf_repo_id = "callummcdougall/arena-demos-transcoder"
-sae_id = "gpt2-small-layer-{layer}-mlp-transcoder-folded-b_dec_out"
-gpt2_transcoders = {
-    layer: SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device))[0]
-    for layer in tqdm(range(9))
-}
+    hf_repo_id = "callummcdougall/arena-demos-transcoder"
+    sae_id = "gpt2-small-layer-{layer}-mlp-transcoder-folded-b_dec_out"
+    gpt2_transcoders = {
+        layer: SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device))[0]
+        for layer in tqdm(range(9))
+    }
 
-layer = 8
-gpt2_transcoder = gpt2_transcoders[layer]
-print("Transcoder hooks (same as regular SAE hooks):", gpt2_transcoder.hook_dict.keys())
+    layer = 8
+    gpt2_transcoder = gpt2_transcoders[layer]
+    print("Transcoder hooks (same as regular SAE hooks):", gpt2_transcoder.hook_dict.keys())
 
-# Load the sparsity values, and plot them
-log_sparsity_path = hf_hub_download(hf_repo_id, f"{sae_id.format(layer=layer)}/log_sparsity.pt")
-log_sparsity = t.load(log_sparsity_path, map_location="cpu", weights_only=True)
-px.histogram(to_numpy(log_sparsity), width=800, template="ggplot2", title="Transcoder latent sparsity").update_layout(
-    showlegend=False
-).show()
-live_latents = np.arange(len(log_sparsity))[to_numpy(log_sparsity > -4)]
+    # Load the sparsity values, and plot them
+    log_sparsity_path = hf_hub_download(hf_repo_id, f"{sae_id.format(layer=layer)}/log_sparsity.pt")
+    log_sparsity = t.load(log_sparsity_path, map_location="cpu", weights_only=True)
+    px.histogram(
+        to_numpy(log_sparsity), width=800, template="ggplot2", title="Transcoder latent sparsity"
+    ).update_layout(showlegend=False).show()
+    live_latents = np.arange(len(log_sparsity))[to_numpy(log_sparsity > -4)]
 
-# Get the activations store
-gpt2_act_store = ActivationsStore.from_sae(
-    model=gpt2,
-    sae=gpt2_transcoders[layer],
-    streaming=True,
-    store_batch_size_prompts=16,
-    n_batches_in_buffer=32,
-    device=str(device),
-)
-tokens = gpt2_act_store.get_batch_tokens()
-assert tokens.shape == (gpt2_act_store.store_batch_size_prompts, gpt2_act_store.context_size)
+    # Get the activations store
+    gpt2_act_store = ActivationsStore.from_sae(
+        model=gpt2,
+        sae=gpt2_transcoders[layer],
+        streaming=True,
+        store_batch_size_prompts=16,
+        n_batches_in_buffer=32,
+        device=str(device),
+    )
+    tokens = gpt2_act_store.get_batch_tokens()
+    assert tokens.shape == (gpt2_act_store.store_batch_size_prompts, gpt2_act_store.context_size)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1644,7 +1855,7 @@ def get_k_largest_indices(
 
 def index_with_buffer(
     x: Float[Tensor, "batch seq"], indices: Int[Tensor, "k 2"], buffer: int | None = None
-) -> Float[Tensor, "k *buffer_x2_plus1"]:
+) -> Float[Tensor, " k *buffer_x2_plus1"]:
     rows, cols = indices.unbind(dim=-1)
     if buffer is not None:
         rows = einops.repeat(rows, "k -> k buffer", buffer=buffer * 2 + 1)
@@ -1707,16 +1918,17 @@ Let's pick latent 1, and compare our results to the neuronpedia dashboard (note 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-latent_idx = 1
-neuronpedia_id = "gpt2-small/8-tres-dc"
-url = f"https://neuronpedia.org/{neuronpedia_id}/{latent_idx}?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
-display(IFrame(url, width=800, height=600))
+if MAIN and FLAG_RUN_SECTION_2:
+    latent_idx = 1
+    neuronpedia_id = "gpt2-small/8-tres-dc"
+    url = f"https://neuronpedia.org/{neuronpedia_id}/{latent_idx}?embed=true&embedexplanation=true&embedplots=true&embedtest=true&height=300"
+    display(IFrame(url, width=800, height=600))
 
-fetch_max_activating_examples(
-    gpt2, gpt2_transcoder, gpt2_act_store, latent_idx=latent_idx, total_batches=200, display=True
-)
+    fetch_max_activating_examples(
+        gpt2, gpt2_transcoder, gpt2_act_store, latent_idx=latent_idx, total_batches=200, display=True
+    )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1821,7 +2033,7 @@ def show_top_logits(
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     print(f"Top logits for transcoder latent {latent_idx}:")
     show_top_logits(gpt2, gpt2_transcoder, latent_idx=latent_idx)
 # END HIDE
@@ -1854,7 +2066,7 @@ def show_top_deembeddings(model: HookedSAETransformer, sae: SAE, latent_idx: int
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     print(f"\nTop de-embeddings for transcoder latent {latent_idx}:")
     show_top_deembeddings(gpt2, gpt2_transcoder, latent_idx=latent_idx)
     tests.test_show_top_deembeddings(show_top_deembeddings, gpt2, gpt2_transcoder)
@@ -1978,7 +2190,7 @@ def create_extended_embedding(model: HookedTransformer) -> Float[Tensor, "d_voca
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     tests.test_create_extended_embedding(create_extended_embedding, gpt2)
 # END HIDE
 
@@ -2024,7 +2236,7 @@ def show_top_deembeddings_extended(model: HookedSAETransformer, sae: SAE, latent
 
 
 # HIDE
-if MAIN:
+if MAIN and FLAG_RUN_SECTION_2:
     print(f"Top de-embeddings (extended) for transcoder latent {latent_idx}:")
     show_top_deembeddings_extended(gpt2, gpt2_transcoder, latent_idx=latent_idx)
 # END HIDE
@@ -2087,12 +2299,13 @@ If you want a slightly easier version of the game, you can try a rule relaxation
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-blind_study_latent = 479
+if MAIN and FLAG_RUN_SECTION_2:
+    blind_study_latent = 479
 
-layer = 8
-gpt2_transcoder = gpt2_transcoders[layer]
+    layer = 8
+    gpt2_transcoder = gpt2_transcoders[layer]
 
 # YOUR CODE HERE!
 
@@ -2427,3 +2640,1386 @@ px.line(df, y=prompts.keys(), height=500, width=800).show()
 
 </details>
 '''
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+# 3️⃣ Attribution Graphs
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Note, in order to run these exercises, you'll need to clone the circuit tracer library inside `exercises`:
+
+```bash
+cd chapter1_transformer_interp/exercises
+
+git clone https://github.com/decoderesearch/circuit-tracer.git
+```
+
+Then run this cell to verify it's been added to your path correctly:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+circuit_tracer_path = exercises_dir / "circuit-tracer"
+assert circuit_tracer_path.exists()
+sys.path.insert(0, str(circuit_tracer_path.resolve()))
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Introduction
+
+
+In section 1️⃣, you computed gradients between SAE latents in different layers using `jacrev`, building a picture of how individual latents communicate. That approach is exact but expensive: computing the full Jacobian between two layers for thousands of latents doesn't scale. In section 2️⃣, you learned about **transcoders**, which decompose an MLP layer's computation into sparse, interpretable units.
+
+**Attribution graphs** combine these ideas into a scalable framework for understanding end-to-end computation. The key insight is the **local replacement model**: if we freeze all non-linear components (attention patterns, LayerNorm scales, MLP activation functions) at their values from a clean forward pass, the residual stream becomes a **linear function** of the transcoder feature activations. Under this linearisation, the direct effect of any feature on any other feature is just the contraction of their decoder/encoder directions through the frozen linear layers, and we can compute these contractions efficiently with batched backward passes.
+
+The algorithm has five phases:
+
+1. **Setup**: Run a forward pass to find all active transcoder features and record their encoder/decoder directions.
+2. **Forward pass**: Run the replacement model with hooks that freeze non-linearities.
+3. **Logit attribution**: For each output logit node, inject the (demeaned) unembedding vector as a gradient seed and read off the direct effects from all features.
+4. **Feature attribution**: For each active feature, inject the encoder vector as a gradient seed and read off direct effects from all upstream features.
+5. **Graph assembly**: Package everything into an adjacency matrix and prune it to the most influential subgraph.
+
+Reference: [Attribution Graphs (Anthropic, 2025)](https://transformer-circuits.pub/2025/attribution-graphs/methods.html)
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### A note on cross-layer transcoders
+
+In the exercises below, we use **single-layer (per-layer) transcoders** for continuity with section 2️⃣. However, the circuit-tracer library also supports **cross-layer transcoders (CLTs)**, which are the architecture used in much of Anthropic's recent work. In a CLT, each feature can write its decoder vector to multiple downstream layers rather than just one. From the circuit tracing tutorial:
+
+> A CLT is a single transcoder for all layers, where features can contribute to multiple downstream layers. CLTs have some practical benefits: they subsume skip connections... and features can be more naturally shared across layers.
+
+If you're interested in CLTs, there is a bonus exercise at the end of section 4️⃣ where you can load a CLT model and compare its graphs against the per-layer transcoder version.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## The Replacement Model
+
+We'll switch from GPT-2 (used in sections 1️⃣ and 2️⃣) to **Gemma 2-2B** with GemmaScope single-layer transcoders. The `circuit-tracer` library provides a `ReplacementModel` class that handles all the plumbing: replacing MLP layers with transcoders, installing hooks that freeze non-linearities for gradient flow, and providing attribution utilities.
+
+Note: this is a significant download (~5GB for the model in half precision, plus transcoders). If you haven't already, make sure you have the `circuit-tracer` library available (see setup instructions at the top of this notebook).
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    # Clean up GPT-2 and its SAEs/transcoders from sections 1 and 2
+    try:
+        del gpt2
+        del gpt2_saes
+        del gpt2_transcoders
+        del gpt2_transcoder
+        del gpt2_act_store
+    except NameError:
+        pass
+
+    try:
+        del attn_saes
+    except NameError:
+        pass
+
+    THRESHOLD = 0.1  # GB
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, t.nn.Module) and utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
+                if hasattr(obj, "cpu"):
+                    obj.cpu()
+                if hasattr(obj, "reset"):
+                    obj.reset()
+        except:
+            pass
+
+    t.cuda.empty_cache()
+    gc.collect()
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+from circuit_tracer import ReplacementModel
+
+if MAIN and FLAG_RUN_SECTION_3:
+    replacement_model = ReplacementModel.from_pretrained(
+        "google/gemma-2-2b",
+        "gemma",
+        dtype=t.bfloat16,
+        backend="transformerlens",
+    )
+
+    # Quick sanity check: the model should predict "Austin" for this prompt
+    prompt = "The capital of the state containing Dallas is"
+    tokens = replacement_model.ensure_tokenized(prompt)
+    logits = replacement_model(tokens.unsqueeze(0))
+    top_token = replacement_model.tokenizer.decode(logits[0, -1].argmax())
+    print(f"Prompt: {prompt!r}")
+    print(f"Top prediction: {top_token!r}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exploring the Replacement Model
+
+The `ReplacementModel` is a `HookedTransformer` with several modifications that create the "local replacement model". Let's explore what these modifications are and verify they work as expected.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - verify gradient freezing
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+The replacement model freezes gradients through three types of non-linear components:
+
+1. **Attention patterns** (`hook_pattern`): the softmax over attention scores is frozen, so gradients don't flow through the query-key dot product.
+2. **LayerNorm scales** (`hook_scale`): the normalization denominator is frozen, so gradients only flow through the linear part of LayerNorm.
+3. **MLP non-linearities**: the skip connection trick detaches the non-linear part, so gradients flow through the residual stream but not through the MLP's activation function.
+
+Fill in the function below to verify that these freezes are working. You should run a forward+backward pass on the replacement model and check that certain gradients are zero where we expect them to be.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def verify_gradient_freezing(model: ReplacementModel, input_ids: t.Tensor) -> dict[str, bool]:
+    """Verify that the replacement model correctly freezes gradients through non-linear components.
+
+    Returns a dict mapping component names to whether gradients are correctly frozen (True = frozen).
+    """
+    results = {}
+
+    # We need to enable gradients for this test
+    input_ids_batch = input_ids.unsqueeze(0) if input_ids.ndim == 1 else input_ids
+
+    # EXERCISE
+    # # YOUR CODE HERE - run a forward pass, compute a scalar loss, backward pass,
+    # # then check that gradients through attention patterns and LayerNorm scales are zero.
+    # # Hint: use model.hook_dict to access specific hook points and check their stored gradients.
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    # Check 1: attention pattern gradients should be zero
+    # We register a hook on the attention pattern to capture its gradient
+    attn_grad = {}
+
+    def capture_attn_grad(grad, hook):
+        attn_grad["grad"] = grad
+        return grad
+
+    pattern_hook_name = "blocks.0.attn.hook_pattern"
+
+    # Run forward pass with gradient tracking
+    model.zero_grad()
+    with t.enable_grad():
+        hook_handle = model.hook_dict[pattern_hook_name].register_backward_hook(
+            lambda module, grad_input, grad_output: capture_attn_grad(grad_output[0], module)
+        )
+        logits = model(input_ids_batch, stop_at_layer=model.cfg.n_layers)
+        loss = logits[0, -1].sum()
+        loss.backward()
+        hook_handle.remove()
+
+    # Attention patterns should have zero gradients (they're frozen via .detach())
+    if "grad" in attn_grad:
+        results["attention_patterns_frozen"] = attn_grad["grad"].abs().sum().item() == 0.0
+    else:
+        # If no gradient was captured, the pattern was detached before the backward pass
+        results["attention_patterns_frozen"] = True
+
+    # Check 2: model parameters should not require gradients
+    n_params_with_grad = sum(1 for p in model.parameters() if p.requires_grad)
+    results["parameters_frozen"] = n_params_with_grad <= 1  # embed hook may have grad
+
+    return results
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    tokens = replacement_model.ensure_tokenized("The Eiffel Tower is in")
+    results = verify_gradient_freezing(replacement_model, tokens)
+    for component, is_frozen in results.items():
+        status = "FROZEN" if is_frozen else "NOT FROZEN"
+        print(f"  {component}: {status}")
+        assert is_frozen, f"{component} should be frozen but isn't!"
+    print("All gradient freezing checks passed!")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Salient Logits
+
+Before building the full attribution graph, we need to decide which output logits to include as target nodes. Computing attribution edges for the entire vocabulary (256k+ tokens for Gemma) would be wasteful since most tokens have negligible probability. Instead, we select the smallest set of top-probability tokens whose cumulative probability exceeds some threshold.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `compute_salient_logits`
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Implement the function below. It should:
+
+1. Compute softmax probabilities from the raw logits
+2. Take the top `max_n_logits` tokens by probability
+3. Find the smallest subset whose cumulative probability reaches `desired_logit_prob`
+4. Return the token indices, probabilities, and **demeaned** unembedding vectors
+
+Why demean? The mean of the unembedding matrix across vocabulary tokens acts as a constant bias that doesn't carry token-specific information. By subtracting it, we isolate the direction that specifically promotes each token.
+
+Note: the unembedding matrix `W_U` has shape `(d_model, d_vocab)`.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_salient_logits(
+    logits: t.Tensor,
+    W_U: t.Tensor,
+    max_n_logits: int = 10,
+    desired_logit_prob: float = 0.95,
+) -> tuple[t.Tensor, t.Tensor, t.Tensor]:
+    """Select the smallest set of top logits whose cumulative prob >= desired_logit_prob.
+
+    Args:
+        logits: (d_vocab,) raw logit vector for a single position.
+        W_U: (d_model, d_vocab) unembedding matrix.
+        max_n_logits: Hard cap on the number of logits to select.
+        desired_logit_prob: Cumulative probability threshold.
+
+    Returns:
+        logit_indices: (k,) vocabulary token ids of the selected logits.
+        logit_probs: (k,) softmax probabilities of the selected logits.
+        demeaned_vecs: (k, d_model) unembedding columns for each selected logit, with the
+            mean unembedding vector subtracted.
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    probs = t.softmax(logits.float(), dim=-1)
+    top_p, top_idx = t.topk(probs, max_n_logits)
+    cutoff = int(t.searchsorted(t.cumsum(top_p, 0), desired_logit_prob)) + 1
+    top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
+
+    cols = W_U[:, top_idx]  # (d_model, k)
+    demean = W_U.mean(dim=-1, keepdim=True)  # (d_model, 1)
+    demeaned_vecs = (cols - demean).T  # (k, d_model)
+
+    return top_idx, top_p, demeaned_vecs
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    tests.test_compute_salient_logits(compute_salient_logits)
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Let's see which logits get selected for our Dallas prompt:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    prompt = "The capital of the state containing Dallas is"
+    tokens = replacement_model.ensure_tokenized(prompt)
+    with t.no_grad():
+        logits = replacement_model(tokens.unsqueeze(0))
+
+    logit_idx, logit_p, logit_vecs = compute_salient_logits(logits[0, -1], replacement_model.unembed.W_U)
+
+    print("Selected logit tokens:")
+    for i, (idx, p) in enumerate(zip(logit_idx, logit_p)):
+        token_str = replacement_model.tokenizer.decode(idx)
+        print(f"  {i}: {token_str!r} (prob={p:.4f})")
+    print(f"Cumulative probability: {logit_p.sum():.4f}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Computing Direct Effects
+
+This is the core of the attribution algorithm. We'll use the `ReplacementModel`'s built-in attribution infrastructure (`setup_attribution` and `compute_batch`) to compute direct effects between all active features and our selected logit nodes.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - explore the attribution context
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+The `model.setup_attribution(input_ids)` method runs a forward pass and records everything needed for attribution:
+
+- **`ctx.activation_matrix`**: A sparse 3D tensor of shape `(n_layers, n_pos, d_transcoder)` containing the non-zero transcoder feature activations.
+- **`ctx.encoder_vecs`**: The encoder vectors (reading directions) for all active features.
+- **`ctx.logits`**: The model's logits from the clean forward pass.
+
+Write a function that summarizes the active features found by `setup_attribution`:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def summarize_active_features(ctx, model, input_ids: t.Tensor) -> None:
+    """Print a summary of the active features found during the forward pass."""
+    activation_matrix = ctx.activation_matrix
+    # EXERCISE
+    # # YOUR CODE HERE - extract the shape, number of active features, and per-layer counts
+    # # from the activation_matrix and print a summary.
+    # # Hint: activation_matrix.indices() returns (layers, positions, feature_indices),
+    # # and activation_matrix._nnz() returns the total number of non-zero entries.
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    feat_layers, feat_pos, feat_idx = activation_matrix.indices()
+    n_layers, n_pos, d_transcoder = activation_matrix.shape
+
+    print(f"Input tokens: {n_pos}")
+    print(f"Model layers: {n_layers}")
+    print(f"Transcoder dictionary size: {d_transcoder}")
+    print(f"Total active features: {activation_matrix._nnz()}")
+    print(f"Average active features per (layer, position): {activation_matrix._nnz() / (n_layers * n_pos):.1f}")
+    print()
+    for layer in range(min(n_layers, 5)):
+        n_feats = (feat_layers == layer).sum().item()
+        print(f"  Layer {layer}: {n_feats} active features")
+    if n_layers > 5:
+        print(f"  ... ({n_layers - 5} more layers)")
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    ctx = replacement_model.setup_attribution(tokens)
+    summarize_active_features(ctx, replacement_model, tokens)
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - compute attribution edges
+
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴⚪
+> Importance: 🔵🔵🔵🔵🔵
+>
+> You should spend up to 30-45 minutes on this exercise.
+> ```
+
+This is the core exercise. You'll compute the direct effect of every active feature on every logit node, and of every active feature on every other active feature, using batched backward passes.
+
+The attribution context provides `ctx.compute_batch(layers, positions, inject_values, retain_graph)`, which:
+- Takes a batch of (layer, position, inject_value) triples
+- Injects each `inject_value` as a gradient seed at the given (layer, position) in the residual stream
+- Collects the resulting gradient at all source (feature + error + embed) positions
+- Returns a matrix of shape `(batch_size, n_source_nodes)` containing the direct effects
+
+The function has two phases:
+
+**Phase 1 (logit attribution):** For each batch of logit nodes, we inject the demeaned unembedding vectors (from `compute_salient_logits`) at `layer=n_layers, position=n_pos-1` (the final position after all transformer layers), and read off the gradients at all upstream feature/error/embed nodes.
+
+**Phase 2 (feature attribution):** For each batch of active features, we inject their encoder vectors at their respective (layer, position), and read off gradients from all upstream nodes.
+
+Before computing any backward passes, we need to run one forward pass with the replacement model hooks installed. This is done with `ctx.install_hooks(model)`, which returns a context manager. Inside that context, we run `model.forward(input_ids, stop_at_layer=n_layers)` and apply the final LayerNorm.
+
+Important: set `retain_graph=True` on all but the last `compute_batch` call, otherwise PyTorch will free the computation graph after the first backward pass.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_attribution_edges(
+    ctx,
+    model: ReplacementModel,
+    input_ids: t.Tensor,
+    logit_vecs: t.Tensor,
+    batch_size: int = 64,
+) -> tuple[t.Tensor, t.Tensor]:
+    """Compute the attribution edge matrix for all logit and feature nodes.
+
+    Args:
+        ctx: Attribution context from model.setup_attribution()
+        model: The ReplacementModel
+        input_ids: 1D tensor of token ids
+        logit_vecs: (n_logits, d_model) demeaned unembedding vectors
+        batch_size: Number of nodes to process per backward pass
+
+    Returns:
+        edge_matrix: (n_logits + n_features, n_source_nodes) dense matrix of direct effects,
+            where the first n_logits rows are logit attribution and the remaining rows are
+            feature attribution.
+        row_to_node_index: (n_logits + n_features,) mapping from row indices in edge_matrix
+            to original node indices in the full graph.
+    """
+    activation_matrix = ctx.activation_matrix
+    feat_layers, feat_pos, _ = activation_matrix.indices()
+    n_layers, n_pos, _ = activation_matrix.shape
+    n_features = activation_matrix._nnz()
+    n_logits = logit_vecs.shape[0]
+
+    logit_offset = n_features + (n_layers + 1) * n_pos
+    total_source_nodes = logit_offset + n_logits
+
+    edge_matrix = t.zeros(n_logits + n_features, total_source_nodes)
+    row_to_node_index = t.zeros(n_logits + n_features, dtype=t.int32)
+
+    # EXERCISE
+    # # YOUR CODE HERE
+    # # Step 1: Run the forward pass inside ctx.install_hooks(model)
+    # # Step 2: Logit attribution - for each batch of logit vecs, call ctx.compute_batch
+    # #         with layer=n_layers, position=n_pos-1
+    # # Step 3: Feature attribution - for each batch of active features, call ctx.compute_batch
+    # #         with the feature's layer, position, and encoder_vec
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    # Step 1: forward pass with replacement model hooks
+    with ctx.install_hooks(model):
+        residual = model.forward(input_ids.expand(batch_size, -1), stop_at_layer=model.cfg.n_layers)
+        ctx._resid_activations[-1] = model.ln_final(residual)
+
+    # Step 2: logit attribution
+    for i in range(0, n_logits, batch_size):
+        batch = logit_vecs[i : i + batch_size]
+        rows = ctx.compute_batch(
+            layers=t.full((batch.shape[0],), n_layers),
+            positions=t.full((batch.shape[0],), n_pos - 1),
+            inject_values=batch,
+        )
+        edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
+        row_to_node_index[i : i + batch.shape[0]] = t.arange(i, i + batch.shape[0]) + logit_offset
+
+    # Step 3: feature attribution
+    st = n_logits
+    for i in range(0, n_features, batch_size):
+        end = min(i + batch_size, n_features)
+        idx_batch = t.arange(i, end)
+        rows = ctx.compute_batch(
+            layers=feat_layers[idx_batch],
+            positions=feat_pos[idx_batch],
+            inject_values=ctx.encoder_vecs[idx_batch],
+            retain_graph=(end < n_features),
+        )
+        edge_matrix[st : st + rows.shape[0], :logit_offset] = rows.cpu()
+        row_to_node_index[st : st + rows.shape[0]] = idx_batch
+        st += rows.shape[0]
+    # END SOLUTION
+
+    return edge_matrix, row_to_node_index
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    ctx = replacement_model.setup_attribution(tokens)
+    logit_idx, logit_p, logit_vecs = compute_salient_logits(ctx.logits[0, -1], replacement_model.unembed.W_U)
+    edge_matrix, row_to_node_index = compute_attribution_edges(
+        ctx, replacement_model, tokens, logit_vecs, batch_size=64
+    )
+
+    n_features = ctx.activation_matrix._nnz()
+    n_logits = len(logit_idx)
+    print(f"Edge matrix shape: {edge_matrix.shape}")
+    print(f"Logit rows (first {n_logits}): {edge_matrix[:n_logits].abs().sum():.2f} total abs weight")
+    print(f"Feature rows (remaining {n_features}): {edge_matrix[n_logits:].abs().sum():.2f} total abs weight")
+    print(f"Sparsity: {(edge_matrix == 0).float().mean():.2%}")
+    assert edge_matrix.abs().sum() > 0, "Edge matrix should have non-zero entries!"
+    print("Edge computation looks correct!")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - assemble the graph
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Now we package the edge matrix into a `Graph` object. The graph's adjacency matrix has a specific node ordering:
+
+1. **Active feature nodes** (one per active transcoder feature)
+2. **Error nodes** (one per layer per position): the transcoder reconstruction error
+3. **Embed nodes** (one per token position): the token embeddings
+4. **Logit nodes** (one per selected output token)
+
+We need to build a square adjacency matrix where rows represent targets and columns represent sources. The logit rows (from `edge_matrix[:n_logits]`) go at the bottom of the full matrix, and the feature rows (from `edge_matrix[n_logits:]`) go at the top.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+from circuit_tracer.graph import Graph  # object to store full attribution graph, as nodes
+
+
+def assemble_graph(
+    edge_matrix: t.Tensor,
+    row_to_node_index: t.Tensor,
+    ctx,
+    model: ReplacementModel,
+    input_ids: t.Tensor,
+    logit_idx: t.Tensor,
+    logit_p: t.Tensor,
+):
+    """Package the edge matrix into a Graph object with the correct node ordering.
+
+    The full adjacency matrix is square with dimensions:
+        n_features + n_error_nodes + n_embed_nodes + n_logits
+
+    where n_error_nodes = n_layers * n_pos and n_embed_nodes = n_pos.
+    """
+
+    activation_matrix = ctx.activation_matrix
+    n_features = activation_matrix._nnz()
+    n_logits = len(logit_idx)
+
+    # EXERCISE
+    # # YOUR CODE HERE - build the full square adjacency matrix and return a Graph object.
+    # # The edge_matrix has logit rows first (indices 0..n_logits-1) then feature rows.
+    # # In the full adjacency matrix, feature rows go at the top and logit rows at the bottom.
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    # Sort rows so features are in their original order
+    edge_matrix = edge_matrix[row_to_node_index.argsort()]
+
+    total_nodes = edge_matrix.shape[1]
+    full_adj = t.zeros(total_nodes, total_nodes)
+    full_adj[:n_features] = edge_matrix[:n_features]
+    full_adj[-n_logits:] = edge_matrix[n_features:]
+
+    return Graph(
+        input_string=model.tokenizer.decode(input_ids),
+        input_tokens=input_ids,
+        logit_tokens=logit_idx,
+        logit_probabilities=logit_p,
+        active_features=activation_matrix.indices().T,
+        activation_values=activation_matrix.values(),
+        selected_features=t.arange(n_features),
+        adjacency_matrix=full_adj,
+        cfg=model.cfg,
+        scan=model.scan,
+    )
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    graph = assemble_graph(edge_matrix, row_to_node_index, ctx, replacement_model, tokens, logit_idx, logit_p)
+    n_total = graph.adjacency_matrix.shape[0]
+    n_feat = len(graph.selected_features)
+    n_log = len(graph.logit_tokens)
+    n_tok = len(graph.input_tokens)
+    print(f"Graph assembled: {n_total} total nodes")
+    print(f"  {n_feat} feature nodes")
+    print(f"  {n_total - n_feat - n_log - n_tok} error nodes")
+    print(f"  {n_tok} embed nodes")
+    print(f"  {n_log} logit nodes")
+    assert graph.adjacency_matrix.shape[0] == graph.adjacency_matrix.shape[1], "Adjacency matrix must be square"
+    assert graph.adjacency_matrix.abs().sum() > 0, "Adjacency matrix has no edges!"
+    print("Graph assembly looks correct!")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Adjacency Matrices
+
+Now that we have a full (dense) attribution graph, we need to understand which nodes actually matter. The raw graph has thousands of nodes and millions of potential edges, most of which are negligible. **Graph pruning** selects the most influential subgraph.
+
+The key concept is **node influence**: the total effect of a node on the output logits, accounting for both direct effects and indirect effects through intermediate nodes.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `normalize_matrix`
+
+> ```yaml
+> Difficulty: 🔴⚪⚪⚪⚪
+> Importance: 🔵🔵⚪⚪⚪
+>
+> You should spend up to 5 minutes on this exercise.
+> ```
+
+The first step in computing influence is to normalize the adjacency matrix. Each row is divided by the sum of its absolute values, so that each row represents a probability distribution over sources. Rows that sum to zero should remain zero (use a clamp to avoid division by zero).
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def normalize_matrix(matrix: t.Tensor) -> t.Tensor:
+    """Row-normalize a matrix by absolute values.
+
+    Takes elementwise abs, then divides each row by its sum (clamped to avoid div-by-zero).
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    normalized = matrix.abs()
+    return normalized / normalized.sum(dim=1, keepdim=True).clamp(min=1e-10)
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    tests.test_normalize_matrix(normalize_matrix)
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `compute_influence`
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 20-30 minutes on this exercise.
+> ```
+
+Given the normalized adjacency matrix $A$ and a logit weight vector $w$ (with the logit probabilities at the logit node positions and zeros elsewhere), the total influence of each node is:
+
+$$\text{influence} = w A + w A^2 + w A^3 + \ldots$$
+
+We compute this iteratively: start with $v_0 = wA$, then $v_{k+1} = v_k A$, accumulating $\text{influence} = \sum_k v_k$.
+
+**Why does this converge?** Because of the attribution graph's causal structure, features in layer $i$ can only have edges to features in layers $j < i$. This means $A$ is strictly lower-triangular with respect to layer ordering, so $A^L = 0$ where $L$ is the number of layers. The matrix is **nilpotent**, so the iteration always terminates in at most $L$ steps. This is a nice computational property: there is no convergence concern, and the number of iterations is bounded by the network depth.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_influence(
+    A: t.Tensor,
+    logit_weights: t.Tensor,
+    max_iter: int = 1000,
+) -> t.Tensor:
+    """Compute total influence of each node on the output logits via power iteration.
+
+    The iteration computes: influence = w @ A + w @ A^2 + w @ A^3 + ...
+    and terminates when the current product is all zeros (guaranteed by nilpotency).
+
+    Args:
+        A: (n_nodes, n_nodes) normalized adjacency matrix.
+        logit_weights: (n_nodes,) vector with logit probabilities at logit node positions.
+        max_iter: Safety cap on iterations.
+
+    Returns:
+        influence: (n_nodes,) total influence of each node.
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    current = logit_weights @ A
+    influence = current.clone()
+    iterations = 0
+    while current.any():
+        if iterations >= max_iter:
+            raise RuntimeError(f"Influence computation failed to converge after {iterations} iterations")
+        current = current @ A
+        influence += current
+        iterations += 1
+    return influence
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    tests.test_compute_influence(compute_influence, normalize_matrix)
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Let's visualize the node influence for our Dallas graph:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    n_logits_graph = len(graph.logit_tokens)
+    n_features_graph = len(graph.selected_features)
+    logit_weights = t.zeros(graph.adjacency_matrix.shape[0])
+    logit_weights[-n_logits_graph:] = graph.logit_probabilities
+
+    node_influence = compute_influence(normalize_matrix(graph.adjacency_matrix), logit_weights)
+
+    # Show top-20 most influential feature nodes
+    top_influence, top_indices = node_influence[:n_features_graph].topk(min(20, n_features_graph))
+    print("Top 20 most influential feature nodes:")
+    for rank, (inf, idx) in enumerate(zip(top_influence, top_indices)):
+        feat = graph.active_features[idx]
+        print(f"  {rank}: layer={feat[0].item()}, pos={feat[1].item()}, feat_idx={feat[2].item()}, influence={inf:.4f}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `prune_graph`
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵⚪
+>
+> You should spend up to 25-35 minutes on this exercise.
+> ```
+
+Graph pruning has three stages:
+
+1. **Node pruning**: Compute node influence, find the threshold that keeps the top `node_threshold` fraction of total influence, mask out nodes below the threshold. Always keep embed and logit nodes.
+2. **Edge pruning**: For surviving nodes, compute edge influence scores and keep edges above the `edge_threshold` fraction. The edge score for edge $(i, j)$ is $A'_{ij} \cdot (\text{influence}_i + w_i)$, where $A'$ is the normalized pruned matrix and $w_i$ is the logit weight.
+3. **Iterative cleanup**: After pruning edges, some feature/error nodes may have lost all incoming or outgoing edges. Remove them and repeat until stable.
+
+We provide the helper functions `compute_node_influence`, `compute_edge_influence`, and `find_threshold` in `utils.py`.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def prune_graph(
+    graph,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+) -> tuple[t.Tensor, t.Tensor]:
+    """Prune a graph by removing low-influence nodes and edges.
+
+    Args:
+        graph: The Graph object (from circuit_tracer.graph).
+        node_threshold: Keep nodes contributing to this fraction of total influence.
+        edge_threshold: Keep edges contributing to this fraction of total influence.
+
+    Returns:
+        node_mask: Boolean tensor indicating which nodes to keep.
+        edge_mask: Boolean tensor indicating which edges to keep.
+    """
+    n_tokens = len(graph.input_tokens)
+    n_logits = len(graph.logit_tokens)
+    n_features = len(graph.selected_features)
+
+    logit_weights = t.zeros(graph.adjacency_matrix.shape[0])
+    logit_weights[-n_logits:] = graph.logit_probabilities
+
+    # EXERCISE
+    # # YOUR CODE HERE
+    # # Step 1: compute node influence, apply threshold, always keep embed + logit nodes
+    # # Step 2: zero out pruned nodes in the adjacency matrix
+    # # Step 3: compute edge influence, apply threshold
+    # # Step 4: iteratively remove nodes that lost all incoming/outgoing edges
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    # Step 1: node pruning
+    node_influence = utils.compute_node_influence(graph.adjacency_matrix, logit_weights)
+    node_mask = node_influence >= utils.find_threshold(node_influence, node_threshold)
+    node_mask[-n_logits - n_tokens :] = True
+
+    # Step 2: zero out pruned nodes
+    pruned_matrix = graph.adjacency_matrix.clone()
+    pruned_matrix[~node_mask] = 0
+    pruned_matrix[:, ~node_mask] = 0
+
+    # Step 3: edge pruning
+    edge_scores = utils.compute_edge_influence(pruned_matrix, logit_weights)
+    edge_mask = edge_scores >= utils.find_threshold(edge_scores.flatten(), edge_threshold)
+
+    # Step 4: iterative cleanup
+    old_node_mask = node_mask.clone()
+    node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+    node_mask[:n_features] &= edge_mask[:n_features].any(1)
+
+    while not t.all(node_mask == old_node_mask):
+        old_node_mask[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+        node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+        node_mask[:n_features] &= edge_mask[:n_features].any(1)
+    # END SOLUTION
+
+    return node_mask, edge_mask
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    node_mask, edge_mask = prune_graph(graph, node_threshold=0.8, edge_threshold=0.98)
+    n_total = graph.adjacency_matrix.shape[0]
+    n_kept = node_mask.sum().item()
+    n_edges = edge_mask.sum().item()
+    print(f"Nodes: {n_kept}/{n_total} kept ({n_kept / n_total:.1%})")
+    print(f"Edges: {n_edges} kept ({edge_mask.float().mean():.4%} of all possible)")
+    tests.test_prune_graph(prune_graph, graph)
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Full Pipeline
+
+Let's combine everything into a single `attribute` function and compare against the library's implementation.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `attribute`
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+Combine `compute_salient_logits`, `compute_attribution_edges`, and `assemble_graph` into a single function:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def attribute(
+    prompt: str,
+    model: ReplacementModel,
+    max_n_logits: int = 10,
+    desired_logit_prob: float = 0.95,
+    batch_size: int = 64,
+):
+    """Compute a full attribution graph for a prompt.
+
+    Returns:
+        graph: A Graph object with the dense adjacency matrix.
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    input_ids = model.ensure_tokenized(prompt)
+    ctx = model.setup_attribution(input_ids)
+
+    logit_idx, logit_p, logit_vecs = compute_salient_logits(
+        ctx.logits[0, -1],
+        model.unembed.W_U,
+        max_n_logits=max_n_logits,
+        desired_logit_prob=desired_logit_prob,
+    )
+
+    edge_matrix, row_to_node_index = compute_attribution_edges(ctx, model, input_ids, logit_vecs, batch_size)
+    graph = assemble_graph(edge_matrix, row_to_node_index, ctx, model, input_ids, logit_idx, logit_p)
+    return graph
+    # END SOLUTION
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+# For comparing with the library's implementation:
+from circuit_tracer.attribution.attribute_transformerlens import attribute as library_attribute
+
+if MAIN and FLAG_RUN_SECTION_3:
+    # Run our implementation
+    prompt = "The capital of the state containing Dallas is"
+    student_graph = attribute(prompt, replacement_model)
+
+    library_graph = library_attribute(prompt, replacement_model, verbose=True)
+
+    print(f"\nStudent graph: {student_graph.adjacency_matrix.shape}")
+    print(f"Library graph: {library_graph.adjacency_matrix.shape}")
+    print(f"Student top logit: {replacement_model.tokenizer.decode(student_graph.logit_tokens[0])!r}")
+    print(f"Library top logit: {replacement_model.tokenizer.decode(library_graph.logit_tokens[0])!r}")
+
+    # Prune and compare
+    student_node_mask, student_edge_mask = prune_graph(student_graph)
+    print(f"\nStudent pruned: {student_node_mask.sum()} nodes, {student_edge_mask.sum()} edges")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Congratulations! You've implemented the full circuit tracing algorithm from scratch. The library version includes a few extra features (iterative feature ranking to prioritise the most influential features, memory offloading for large models), but the core algorithm is exactly what you've built.
+
+In the next section, we'll use the library's pre-computed graphs and intervention tools to explore real circuits.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+# 4️⃣ Exploring Circuits & Interventions
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Introduction
+
+Now that you've built the attribution graph algorithm from scratch, let's use the `circuit-tracer` library to explore real circuits and test their causal structure via interventions. We'll study the **Dallas/Austin two-hop factual recall** circuit, which requires the model to perform two-hop reasoning: Dallas is in Texas, and the capital of Texas is Austin.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## The Dallas/Austin Circuit
+
+The prompt `"Fact: the capital of the state containing Dallas is"` requires two-hop reasoning. The attribution graph reveals a clear circuit with distinct **supernodes** (groups of related features):
+
+- **"state" features**: activated by the concept of US states in the prompt
+- **"Texas" features**: intermediate features that represent "the state is Texas"
+- **"capital" features**: activated by the concept of capital cities
+- **"Say Austin" features**: late-layer features that promote "Austin" in the logits
+- **"Say a capital" features**: features that promote capital-city tokens generally
+
+Let's load a pre-computed graph and inspect these supernodes.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
+
+    # Compute a fresh graph using the library (or you could load a pre-computed one)
+    dallas_prompt = "Fact: the capital of the state containing Dallas is"
+    dallas_graph = library_attribute(dallas_prompt, replacement_model, verbose=True)
+
+    # Get activations for the Dallas prompt (we'll need these for interventions)
+    _, dallas_activations = replacement_model.get_activations(dallas_prompt, sparse=True)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Feature Interventions
+
+The `ReplacementModel` provides two key intervention methods:
+
+- **`model.feature_intervention(prompt, interventions)`**: Runs a single forward pass with specified feature activations overridden. Returns `(logits, activations)`.
+- **`model.feature_intervention_generate(prompt, interventions, ...)`**: Generates multiple tokens with interventions applied throughout. Returns `(text, logits, activations)`.
+
+Each intervention is a tuple `(layer, position, feature_idx, new_value)`.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - zero ablation experiments
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+>
+> You should spend up to 20-30 minutes on this exercise.
+> ```
+
+If the attribution graph's claims about the circuit are correct, then ablating (zeroing) key features should disrupt the model's ability to predict "Austin". Let's test this.
+
+Write a function that takes a list of features to ablate and returns the original and modified logits:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def run_ablation(
+    model: ReplacementModel,
+    prompt: str,
+    features_to_ablate: list,
+) -> tuple[t.Tensor, t.Tensor]:
+    """Run a zero-ablation experiment: set the given features to zero and compare logits.
+
+    Args:
+        model: The ReplacementModel
+        prompt: The input prompt
+        features_to_ablate: List of Feature namedtuples (or (layer, pos, feat_idx) tuples)
+
+    Returns:
+        original_logits: (1, seq, vocab) logits without intervention
+        ablated_logits: (1, seq, vocab) logits with features zeroed
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    interventions = [(*f, 0.0) for f in features_to_ablate]
+
+    with t.inference_mode():
+        original_logits, _ = model.feature_intervention(prompt, [])
+        ablated_logits, _ = model.feature_intervention(prompt, interventions)
+
+    return original_logits, ablated_logits
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    # We'll manually define some features from the Dallas graph to ablate.
+    # These are approximate "Texas" features found in the Gemma 2-2B graph.
+    # (In practice you'd extract these from the Neuronpedia graph URL.)
+
+    # Run a quick test: ablating ALL features at a late layer position should change output
+    feat_layers, feat_pos, feat_idx = dallas_graph.active_features.T
+    last_pos = feat_pos.max().item()
+
+    # Get features at the last position, late layers (likely "say Austin" features)
+    late_layer_mask = (feat_layers >= 20) & (feat_pos == last_pos)
+    if late_layer_mask.any():
+        late_features = [
+            Feature(layer=feat_layers[i].item(), pos=feat_pos[i].item(), feature_idx=feat_idx[i].item())
+            for i in t.where(late_layer_mask)[0][:10]  # take first 10
+        ]
+
+        orig_logits, abl_logits = run_ablation(replacement_model, dallas_prompt, late_features)
+
+        orig_probs = orig_logits[0, -1].float().softmax(-1)
+        abl_probs = abl_logits[0, -1].float().softmax(-1)
+
+        # Show top predictions before and after
+        print("Original top predictions:")
+        top_orig = orig_probs.topk(5)
+        for p, idx in zip(top_orig.values, top_orig.indices):
+            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+
+        print("\nAfter ablating late-layer features:")
+        top_abl = abl_probs.topk(5)
+        for p, idx in zip(top_abl.values, top_abl.indices):
+            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - cross-prompt feature swapping
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+>
+> You should spend up to 25-35 minutes on this exercise.
+> ```
+
+The most compelling test of circuit understanding is **cross-prompt feature swapping**. If the "Texas" features truly represent "the state is Texas", then swapping them with "California" features (from an Oakland prompt) should make the model predict "Sacramento" instead of "Austin".
+
+Implement a function that:
+1. Gets activations from a "swap" prompt
+2. Builds interventions that zero out `features_off` and activate `features_on` at their in-distribution values from the swap prompt (scaled by `scale`)
+3. Runs the intervention
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def cross_prompt_swap(
+    model: ReplacementModel,
+    base_prompt: str,
+    swap_prompt: str,
+    features_off: list,
+    features_on: list,
+    scale: float = 2.0,
+) -> tuple[t.Tensor, t.Tensor]:
+    """Swap features between prompts: turn off features_off and activate features_on
+    at their values from swap_prompt (scaled by `scale`).
+
+    Args:
+        model: The ReplacementModel.
+        base_prompt: The prompt to intervene on.
+        swap_prompt: The prompt to get replacement activation values from.
+        features_off: Features to zero-ablate (from base_prompt's graph).
+        features_on: Features to activate (from swap_prompt's graph).
+        scale: Multiplier for the replacement activation values.
+
+    Returns:
+        original_logits, modified_logits
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    _, swap_activations = model.get_activations(swap_prompt, sparse=True)
+
+    interventions = [(*f, 0.0) for f in features_off]
+    interventions += [(*f, scale * swap_activations[f]) for f in features_on]
+
+    with t.inference_mode():
+        original_logits, _ = model.feature_intervention(base_prompt, [])
+        modified_logits, _ = model.feature_intervention(base_prompt, interventions)
+
+    return original_logits, modified_logits
+    # END SOLUTION
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    # Demonstrate with the Oakland/Sacramento swap
+    # First, compute a graph for Oakland to find California features
+    oakland_prompt = "Fact: the capital of the state containing Oakland is"
+    oakland_graph = library_attribute(oakland_prompt, replacement_model, verbose=True)
+
+    # Find features that are unique to Oakland (not in Dallas) at intermediate layers
+    # These are likely "California" features
+    oak_feats = set((r[0].item(), r[1].item(), r[2].item()) for r in oakland_graph.active_features)
+    dal_feats = set((r[0].item(), r[1].item(), r[2].item()) for r in dallas_graph.active_features)
+
+    # Features in Oakland but not Dallas, at intermediate layers and last position
+    last_pos_oak = oakland_graph.active_features[:, 1].max().item()
+    california_candidates = [Feature(*f) for f in (oak_feats - dal_feats) if f[1] == last_pos_oak and 10 <= f[0] <= 22]
+    print(f"Found {len(california_candidates)} candidate California features")
+
+    # Features in Dallas but not Oakland at intermediate layers
+    last_pos_dal = dallas_graph.active_features[:, 1].max().item()
+    texas_candidates = [Feature(*f) for f in (dal_feats - oak_feats) if f[1] == last_pos_dal and 10 <= f[0] <= 22]
+    print(f"Found {len(texas_candidates)} candidate Texas features")
+
+    # Run the swap (this is a rough approximation - with Neuronpedia supernodes it would be cleaner)
+    if texas_candidates and california_candidates:
+        orig_logits, mod_logits = cross_prompt_swap(
+            replacement_model,
+            dallas_prompt,
+            oakland_prompt,
+            features_off=texas_candidates[:20],
+            features_on=california_candidates[:20],
+            scale=2.0,
+        )
+
+        print("\nOriginal predictions (Dallas prompt):")
+        orig_probs = orig_logits[0, -1].float().softmax(-1)
+        for p, idx in zip(*orig_probs.topk(5)):
+            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+
+        print("\nAfter swapping Texas -> California features:")
+        mod_probs = mod_logits[0, -1].float().softmax(-1)
+        for p, idx in zip(*mod_probs.topk(5)):
+            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - open-ended generation with interventions
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+>
+> You should spend up to 15-20 minutes on this exercise.
+> ```
+
+For multi-token generation, interventions need to persist across all generated positions. This is done by replacing the fixed position with an open-ended `slice`:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def generate_with_intervention(
+    model: ReplacementModel,
+    prompt: str,
+    interventions: list,
+    max_new_tokens: int = 20,
+) -> tuple[str, str]:
+    """Generate text with and without feature interventions.
+
+    Converts fixed-position interventions to open-ended slices so the intervention persists
+    across all generated tokens.
+
+    Args:
+        model: The ReplacementModel.
+        prompt: The input prompt.
+        interventions: List of (layer, pos, feat_idx, value) tuples.
+        max_new_tokens: Maximum tokens to generate.
+
+    Returns:
+        pre_text: Generated text without intervention.
+        post_text: Generated text with intervention.
+    """
+    # EXERCISE
+    # # YOUR CODE HERE
+    # # 1. Compute the input sequence length
+    # # 2. Convert each intervention's position to slice(seq_len - 1, None, None)
+    # # 3. Call model.feature_intervention_generate with and without interventions
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    seq_len = len(model.tokenizer(prompt).input_ids)
+    open_interventions = []
+    for layer, pos, feat_idx, value in interventions:
+        open_pos = slice(seq_len - 1, None, None)
+        open_interventions.append((layer, open_pos, feat_idx, value))
+
+    pre_text = model.feature_intervention_generate(
+        prompt, [], do_sample=False, verbose=False, max_new_tokens=max_new_tokens
+    )[0]
+    post_text = model.feature_intervention_generate(
+        prompt, open_interventions, do_sample=False, verbose=False, max_new_tokens=max_new_tokens
+    )[0]
+    return pre_text, post_text
+    # END SOLUTION
+
+
+# HIDE
+if MAIN and FLAG_RUN_SECTION_3:
+    # Demo: ablate the late-layer features during generation
+    if late_layer_mask.any():
+        ablation_interventions = [(*f, 0.0) for f in late_features]
+        pre_text, post_text = generate_with_intervention(
+            replacement_model, dallas_prompt, ablation_interventions, max_new_tokens=15
+        )
+        print(f"Without intervention:\n  {pre_text}")
+        print(f"\nWith late-layer ablation:\n  {post_text}")
+# END HIDE
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Bonus: Cross-Layer Transcoders
+
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴⚪
+> Importance: 🔵🔵⚪⚪⚪
+>
+> This is optional - skip if you're short on time.
+> ```
+
+The exercises above all used single-layer (per-layer) transcoders. The circuit-tracer library also supports **cross-layer transcoders (CLTs)**, where each feature can write its decoder vector to multiple downstream layers. To load a CLT model, replace `"gemma"` with `"gemma_clt"`:
+
+```python
+clt_model = ReplacementModel.from_pretrained(
+    "google/gemma-2-2b", "gemma_clt", dtype=t.bfloat16, backend="transformerlens"
+)
+```
+
+Try computing an attribution graph with the CLT model and compare:
+1. How does the number of active features compare?
+2. Do the graph scores (replacement score, completeness score) differ?
+3. Do the same supernodes appear?
+
+You can compute graph scores using:
+
+```python
+from circuit_tracer.graph import compute_graph_scores
+replacement_score, completeness_score = compute_graph_scores(graph)
+```
+"""

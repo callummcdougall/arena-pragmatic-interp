@@ -20,6 +20,7 @@ LAYER_COUNTS = {
     "google/gemma-2-9b-it": 42,
     "google/gemma-3-1b-it": 26,
     "meta-llama/Llama-3.2-1B-Instruct": 16,
+    "Meta-Llama/Llama-3.1-8B-Instruct": 32,
     "meta-llama/Llama-3.3-70B-Instruct": 80,
 }
 
@@ -153,7 +154,8 @@ def get_hf_activation_steering_hook(
         norms_K1 = orig_KD.norm(dim=-1, keepdim=True)  # [K, 1]
 
         # Scale normalized steering vectors by original magnitudes
-        steered_KD = (normed_vectors * norms_K1 * steering_coefficient).to(dtype)
+        # Cast to the residual stream's actual dtype to handle bfloat16 models
+        steered_KD = (normed_vectors * norms_K1 * steering_coefficient).to(resid_BLD.dtype)
         resid_BLD[0, positions_tensor, :] = steered_KD.detach() + orig_KD
 
         return (resid_BLD, *rest) if output_is_tuple else resid_BLD
@@ -622,3 +624,52 @@ def run_oracle(
         segment_responses=segment_responses,
         target_input_ids=target_input_ids,
     )
+
+
+def run_oracle_extract(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device: torch.device,
+    target_prompt: str,
+    target_lora_path: str | None,
+    oracle_prompt: str,
+    oracle_lora_path: str | None,
+    oracle_input_type: str = "full_seq",
+    generation_kwargs: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> str:
+    """
+    Convenience wrapper around `run_oracle` that handles segment boundary computation
+    and extracts a single response string regardless of input type.
+
+    For "segment" mode, automatically computes segment boundaries from the first
+    <|im_end|> token. For "tokens" mode, joins all non-None token responses.
+
+    All extra kwargs are forwarded to `run_oracle`.
+    """
+    # Compute segment boundaries if needed (and not already provided)
+    if oracle_input_type == "segment" and "segment_start_idx" not in kwargs:
+        str_tokens = [tok.lstrip("Ġ") for tok in tokenizer.tokenize(target_prompt)]
+        kwargs["segment_start_idx"] = str_tokens.index("<|im_end|>")
+        kwargs["segment_end_idx"] = len(str_tokens)
+
+    results_obj = run_oracle(
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        target_prompt=target_prompt,
+        target_lora_path=target_lora_path,
+        oracle_prompt=oracle_prompt,
+        oracle_lora_path=oracle_lora_path,
+        oracle_input_type=oracle_input_type,
+        generation_kwargs=generation_kwargs,
+        **kwargs,
+    )
+
+    # Extract response string based on input type
+    if oracle_input_type == "tokens":
+        return " ".join([r for r in results_obj.token_responses if r is not None])
+    elif oracle_input_type == "segment":
+        return results_obj.segment_responses[0]
+    else:  # full_seq
+        return results_obj.full_sequence_responses[0]

@@ -2330,7 +2330,7 @@ class DoubleDescentModel(ToyModel):
         out: Float[Tensor, "batch inst feats"],
         batch: Float[Tensor, "batch inst feats"],
         per_inst: bool = False,
-    ) -> Float[Tensor, "inst"]:
+    ) -> Float[Tensor, " inst"]:
         """
         New function to calculate loss, because we need a "loss per instance" option to find the
         best instance at the end of our optimization.
