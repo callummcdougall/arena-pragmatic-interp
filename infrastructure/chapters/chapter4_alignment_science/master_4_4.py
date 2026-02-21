@@ -184,12 +184,12 @@ if f"{root}/{chapter}/exercises" not in sys.path:
 
 os.chdir(f"{root}/{chapter}/exercises")
 
-FLAG_RUN_SECTION_1 = True
-FLAG_RUN_SECTION_2 = True
-FLAG_RUN_SECTION_2_STEERING = True
+FLAG_RUN_SECTION_1 = False
+FLAG_RUN_SECTION_2 = False
+FLAG_RUN_SECTION_2_STEERING = False
 FLAG_RUN_SECTION_2_CAPPING = False
-FLAG_RUN_SECTION_3 = False
-FLAG_RUN_SECTION_4 = False
+FLAG_RUN_SECTION_3 = True
+FLAG_RUN_SECTION_4 = True
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3745,12 +3745,13 @@ We unload Gemma and load Qwen for the rest of the notebook (so we can work with 
 
 if MAIN and FLAG_RUN_SECTION_3:
     # Unload Gemma to free VRAM
-    del model
-    t.cuda.empty_cache()
-    import gc
-
-    gc.collect()
-    print("Gemma model unloaded, CUDA cache cleared")
+    try:
+        del model
+        t.cuda.empty_cache()
+        gc.collect()
+        print("Gemma model unloaded, CUDA cache cleared")
+    except NameError:
+        pass
 
 # ! CELL TYPE: code
 # ! FILTERS: []
