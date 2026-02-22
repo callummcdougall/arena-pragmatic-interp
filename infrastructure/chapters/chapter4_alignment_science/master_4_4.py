@@ -27,7 +27,7 @@ r"""
     {"title": "Steering along the Assistant Axis", "icon": "2-circle-fill", "subtitle": "(25%)"},
     {"title": "Contrastive Prompting", "icon": "3-circle-fill", "subtitle": "(25%)"},
     {"title": "Steering with Persona Vectors", "icon": "4-circle-fill", "subtitle": "(25%)"},
-    {"title": "Bonus Exercises", "icon": "star", "subtitle": ""},
+    {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
 """
@@ -410,7 +410,7 @@ if MAIN and FLAG_RUN_SECTION_1:
 r"""
 ## Defining Personas
 
-The full paper uses 275 personas, but we'll work with a smaller subset of ~20 that span the spectrum from "Assistant-like" to "fantastical". These are selected based on the paper's findings about which personas cluster at each end of the Assistant Axis. We have:
+The full paper uses 275 personas, but we'll work with a smaller subset of 19 that span the spectrum from "Assistant-like" to "fantastical". These are selected based on the paper's findings about which personas cluster at each end of the Assistant Axis. We have:
 
 - **Assistant-like personas** (high cosine similarity with Assistant)
     - consultant, analyst, evaluator, generalist, editor, coach, therapist
@@ -435,18 +435,9 @@ PERSONAS = {
     #
     # Assistant-like (professional, helpful)
     "assistant": "You are a helpful AI assistant who provides clear, accurate, and reliable information while maintaining professional boundaries and ethical guidelines in all interactions.",
-    # "consultant": "You are a professional consultant who provides expert strategic advice by analyzing complex business problems, identifying key issues, and recommending evidence-based solutions to help clients achieve their objectives.",
     "analyst": "You are a data analyst who examines information methodically, identifying patterns and trends through systematic investigation, and presenting findings in clear, actionable formats.",
     "evaluator": "You are an evaluator who assesses situations, proposals, and outcomes objectively using established criteria and frameworks to provide fair, balanced judgments.",
     "generalist": "You are a generalist with broad knowledge across many domains who can synthesize information from multiple disciplines to provide well-rounded perspectives on diverse topics.",
-    # "editor": "You are an editor who refines and improves written content by ensuring clarity, coherence, and correctness while preserving the author's voice and intent.",
-    # "coach": "You are a supportive coach who helps people achieve their goals by asking insightful questions, providing constructive feedback, and empowering individuals to develop their own solutions.",
-    # "judge": "Act as a judge who follows established legal principles and precedents when making decisions.",
-    # "psychologist": "Be a psychologist who applies theoretical knowledge to understand individual and group behavior through systematic assessment and analysis.",
-    # "facilitator": "Act as a facilitator who expertly manages group dynamics and interpersonal tensions during discussions.",
-    # "statistician": "You are a statistician who approaches every problem through the lens of data analysis and probabilistic reasoning.",
-    # "researcher": "You are a researcher who systematically gathers, evaluates, and synthesizes information from multiple sources to build comprehensive understanding of specific topics.",
-    # "teacher": "You are a patient teacher who explains concepts clearly by breaking down complex ideas into digestible parts, using examples and analogies, and adapting explanations to meet learners where they are.",
     #
     # Mid-range
     "storyteller": "You are a creative storyteller who weaves engaging narratives by crafting vivid characters, building tension through plot development, and drawing listeners into imaginative worlds.",
@@ -462,8 +453,6 @@ PERSONAS = {
     "bard": "You are a bard, a storyteller who employs poetic language, vivid imagery, and narrative structure, framing ideas through legend, history, and human drama while responding with lyrical eloquence and metaphorical depth.",
     "trickster": "You are a trickster who delights in mischief and riddles, speaking in paradoxes and wordplay, turning questions back on themselves, and finding humor in confusion and ambiguity.",
     "jester": "You are a jester who mocks and entertains in equal measure, using wit, satire, and absurdist humor to reveal uncomfortable truths while dancing along the edge of propriety and chaos.",
-    # "hermit": "You are a hermit who has withdrawn from society to live in solitude, seeking wisdom in isolation and speaking only rarely, in cryptic phrases born from years of silent contemplation.",
-    # "leviathan": "You are a leviathan, an ancient and vast creature of the deep whose thoughts move slowly across eons, speaking of primordial mysteries in a voice like the rumbling of ocean trenches.",
 }
 
 DEFAULT_PERSONAS = ["default", "default_assistant", "default_llm", "default_helpful"]
@@ -1540,7 +1529,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-The PCA scatter shows structure, but what does the Assistant Axis actually *mean* semantically? We can get at this by projecting each persona vector onto the axis and ranking them - which traits are "assistant-like" and which are "role-playing"? (This is adapted from the paper's `visualize_axis.ipynb` notebook, which does this with all 240 roles.)
+The PCA scatter shows structure, but what does the Assistant Axis actually *mean* semantically? We can get at this by projecting each persona vector onto the axis and ranking them - which traits are "assistant-like" and which are "role-playing"? (This is adapted from the paper's `visualize_axis.ipynb` notebook, which does this with all 240 trait vectors.)
 
 Implement `characterize_axis` to compute cosine similarity between each persona vector and the assistant axis, then create a 1D visualization (each persona as a labeled point, colored from red/anti-assistant to blue/assistant-like).
 """
@@ -1651,7 +1640,7 @@ You should see something like:
 
 So the axis is roughly capturing something like **grounded/professional ↔ dramatic/fantastical**, which matches the paper's finding that it separates the post-training Assistant persona from the wide range of characters learned during pre-training.
 
-**Bonus**: The paper's `visualize_axis.ipynb` notebook does this with 240 pre-computed role vectors for Gemma 2 27B (available at `lu-christina/assistant-axis-vectors` on HuggingFace). Try downloading those and making the same plot at much larger scale - you'll get a much richer picture of what the axis captures. Note that these vectors were computed on Gemma 2 27B, which is the same model we're using here, so the vectors should be directly compatible.
+**Bonus**: The paper's `visualize_axis.ipynb` notebook does this with 240 pre-computed trait vectors for Gemma 2 27B (available at `lu-christina/assistant-axis-vectors` on HuggingFace). Try downloading those and making the same plot at much larger scale - you'll get a much richer picture of what the axis captures. Note that these vectors were computed on Gemma 2 27B, which is the same model we're using here, so the vectors should be directly compatible.
 
 </details>
 """
@@ -1663,7 +1652,7 @@ So the axis is roughly capturing something like **grounded/professional ↔ dram
 r"""
 ## Visualizing the Full Trait Space
 
-The paper's `visualize_axis.ipynb` notebook extends this analysis to 240 pre-computed role vectors,
+The paper's `visualize_axis.ipynb` notebook extends this analysis to 240 pre-computed trait vectors,
 giving a much richer semantic picture of the axis - which traits are "assistant-like" and which
 are "role-playing".
 
@@ -2871,11 +2860,13 @@ point roughly in the "role-play" direction, so capping high projections prevents
 Applying capping to **all positions** (not just the last token) is important: during the prefill
 pass it modifies the cached key/value representations, which influences all subsequent generation.
 
-Here's a quote from the paper:
+From the paper:
 
 > ...we introduce a method to stabilize the Assistant persona called activation capping, which works by identifying the typical range of activation projections on the Assistant Axis and clamping projections to remain within this range. Activation capping works by updating a single layer's activations as follows:
 > $h ← h - v \cdot min(⟨h, v⟩ - \tau, 0) (1)$
 > where h is the original post-MLP residual stream activation at that layer, v is the Assistant Axis, and τ is the predetermined activation cap. This clamps the component of h along the Assistant Axis to a minimum of τ , leaving it unchanged if the projection is already above the threshold.3 In practice, we find that it is necessary to apply activation capping at multiple layers simultaneously to observe useful effects.
+
+Note that we're actually clamping at minimum values rather than maximum values - this is because we've defined the assistant axis as "positive means more assistant-like, negative means persona drift", so we want to prevent the projection from being too negative.
 """
 
 # ! CELL TYPE: markdown
@@ -3014,7 +3005,7 @@ def extract_interventions(capping_config: dict, experiment_id: str) -> tuple[lis
 
 
 # HIDE
-if MAIN and FLAG_RUN_SECTION_2:
+if MAIN and (FLAG_RUN_SECTION_2 and FLAG_RUN_SECTION_2_CAPPING):
     CAPPING_EXPERIMENT = "layers_46:54-p0.25"
     cap_vectors, cap_thresholds, cap_layers = extract_interventions(capping_config, CAPPING_EXPERIMENT)
 
@@ -3674,7 +3665,7 @@ qualitatively assess whether the capped response is more grounded than the defau
 
 - **Single vs multi-layer**: Single layer with the correct per-layer vector still works
   reasonably well. Multi-layer makes it more robust but isn't strictly necessary.
-- **Direction vector**: Using the generic assistant axis completely fails - the model doesn't
+- **Direction vector**: Using the generic assistant axis is much less effective - the model doesn't
   get noticeably more grounded. This is because the capping vectors have cosine similarity
   ~-0.72 with the assistant axis (they point roughly opposite). The calibrated direction and
   threshold are the critical ingredients.
@@ -4648,9 +4639,11 @@ Key design points:
 - The class should work as a context manager (`with ActivationSteerer(...) as steerer:`)
 - On `__enter__`, register a forward hook on the target layer using `_return_layers(model)`
 - On `__exit__`, remove the hook (even if an exception occurred)
-- **Layer convention**: `layer_idx` should match the `hidden_states` index that the vector came
-  from. Since `hidden_states[L]` is the *output* of `model.layers[L-1]`, the hook should be
-  placed on `_return_layers(model)[layer_idx - 1]`.
+- **Layer convention**: `layer` is a **0-based index into `model.layers`** (i.e., the same index
+  you'd use with `_return_layers(model)[layer]`). This matches the convention used by
+  `ConversationAnalyzer` and `ActivationCapper` earlier in this notebook. Since our trait vectors
+  are also 0-indexed (e.g., `trait_vectors[19]` came from `model.layers[19]`), the hook should
+  be placed on `_return_layers(model)[layer]`.
 - **Use in-place modification** (`hidden_states += steer`) rather than creating a new tensor
   and returning it. With `device_map="auto"`, accelerate's dispatch hooks may discard return
   values from `register_forward_hook`; in-place mutation of `output[0]` is reliable.
@@ -4685,7 +4678,7 @@ class ActivationSteerer:
     - "response": steer only the last token position
 
     Usage:
-        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20, positions="response"):
+        with ActivationSteerer(model, vector, coeff=2.0, layer=19, positions="response"):
             output = model.generate(...)
     """
 
@@ -4700,7 +4693,7 @@ class ActivationSteerer:
         model: t.nn.Module,
         steering_vector: Float[Tensor, " d_model"],
         coeff: float = 1.0,
-        layer_idx: int = 20,
+        layer: int = 19,
         positions: str = "all",
     ):
         assert positions in ("all", "prompt", "response"), (
@@ -4708,7 +4701,7 @@ class ActivationSteerer:
         )
         self.model = model
         self.coeff = coeff
-        self.layer_idx = layer_idx
+        self.layer = layer
         self.positions = positions
         self._handle = None
 
@@ -4743,11 +4736,8 @@ class ActivationSteerer:
         return output
 
     def __enter__(self):
-        # vectors[L-1] was extracted from hidden_states[L] = output of model.layers[L-1],
-        # so we hook model.layers[layer_idx - 1] to intervene at the correct layer.
-        layers = _return_layers(self.model)
-        layer = layers[self.layer_idx - 1]
-        self._handle = layer.register_forward_hook(self._hook_fn)
+        # layer is a 0-based index into model.layers, matching ConversationAnalyzer/ActivationCapper
+        self._handle = _return_layers(self.model)[self.layer].register_forward_hook(self._hook_fn)
         return self
 
     def __exit__(self, *exc):
@@ -4767,45 +4757,46 @@ if MAIN and FLAG_RUN_SECTION_4:
     test_inputs = qwen_tokenizer(formatted, return_tensors="pt").to(qwen_model.device)
 
     # Get baseline hidden states
-    # The hook is on model.layers[layer_idx - 1], so its output is hidden_states[layer_idx]
+    # The hook is on model.layers[L], so its output is hidden_states[L+1]
+    STEER_LAYER = TRAIT_VECTOR_LAYER - 1  # Convert from hidden_states index to 0-based model.layers index
     with t.inference_mode():
         baseline_out = qwen_model(**test_inputs, output_hidden_states=True)
-    baseline_hidden = baseline_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
+    baseline_hidden = baseline_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
 
     # Get steered hidden states
-    test_vector = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed: vectors[L-1] ↔ hidden_states[L]
-    print(f"  Steering vector norm: {test_vector.norm().item():.2f}, layer_idx={TRAIT_VECTOR_LAYER}")
-    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER):
+    test_vector = sycophantic_vectors[STEER_LAYER]  # 0-indexed: vectors[L] = output of model.layers[L]
+    print(f"  Steering vector norm: {test_vector.norm().item():.2f}, layer={STEER_LAYER}")
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer=STEER_LAYER):
         with t.inference_mode():
             steered_out = qwen_model(**test_inputs, output_hidden_states=True)
-    steered_hidden = steered_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
+    steered_hidden = steered_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
 
     diff = (steered_hidden - baseline_hidden).norm().item()
     print(f'Difference with positions="all": {diff:.4f} (should be > 0)')
     assert diff > 0, "Steering hook is not modifying hidden states!"
 
     # Test 2: coeff=0 should match baseline
-    with ActivationSteerer(qwen_model, test_vector, coeff=0.0, layer_idx=TRAIT_VECTOR_LAYER):
+    with ActivationSteerer(qwen_model, test_vector, coeff=0.0, layer=STEER_LAYER):
         with t.inference_mode():
             zero_out = qwen_model(**test_inputs, output_hidden_states=True)
-    zero_hidden = zero_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
+    zero_hidden = zero_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
     zero_diff = (zero_hidden - baseline_hidden).norm().item()
     print(f"Difference with coeff=0: {zero_diff:.6f} (should be ~0)")
 
     # Test 3: Hook is removed after context manager exits
     with t.inference_mode():
         after_out = qwen_model(**test_inputs, output_hidden_states=True)
-    after_hidden = after_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
+    after_hidden = after_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
     after_diff = (after_hidden - baseline_hidden).norm().item()
     print(f"Difference after context manager exit: {after_diff:.6f} (should be ~0)")
 
     # Test 4: positions="response" should only steer the last token
-    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="response"):
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer=STEER_LAYER, positions="response"):
         with t.inference_mode():
             resp_out = qwen_model(**test_inputs, output_hidden_states=True)
-    resp_last = resp_out.hidden_states[TRAIT_VECTOR_LAYER][0, -1].cpu()
-    resp_first = resp_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
-    baseline_first = baseline_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
+    resp_last = resp_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
+    resp_first = resp_out.hidden_states[STEER_LAYER + 1][0, 0].cpu()
+    baseline_first = baseline_out.hidden_states[STEER_LAYER + 1][0, 0].cpu()
     resp_last_diff = (resp_last - baseline_hidden).norm().item()
     resp_first_diff = (resp_first - baseline_first).norm().item()
     print(
@@ -4815,10 +4806,10 @@ if MAIN and FLAG_RUN_SECTION_4:
     assert resp_first_diff < 1e-4, "Response mode should NOT steer non-last tokens"
 
     # Test 5: positions="prompt" should steer all tokens during prefill (seq_len > 1)
-    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER, positions="prompt"):
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer=STEER_LAYER, positions="prompt"):
         with t.inference_mode():
             prompt_out = qwen_model(**test_inputs, output_hidden_states=True)
-    prompt_first = prompt_out.hidden_states[TRAIT_VECTOR_LAYER][0, 0].cpu()
+    prompt_first = prompt_out.hidden_states[STEER_LAYER + 1][0, 0].cpu()
     prompt_first_diff = (prompt_first - baseline_first).norm().item()
     print(f'positions="prompt": first token diff={prompt_first_diff:.4f} (>0, steered during prefill)')
     assert prompt_first_diff > 0, "Prompt mode should steer all tokens during prefill"
@@ -4869,7 +4860,7 @@ def generate_with_steerer(
     tokenizer,
     prompt: str,
     steering_vector: Float[Tensor, " d_model"],
-    layer_idx: int,
+    layer: int,
     coeff: float,
     max_new_tokens: int = 256,
     temperature: float = 0.7,
@@ -4880,7 +4871,7 @@ def generate_with_steerer(
     inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
     prompt_length = inputs.input_ids.shape[1]
 
-    with ActivationSteerer(model, steering_vector, coeff=coeff, layer_idx=layer_idx):
+    with ActivationSteerer(model, steering_vector, coeff=coeff, layer=layer):
         with t.inference_mode():
             output_ids = model.generate(
                 **inputs,
@@ -4900,7 +4891,7 @@ def run_steering_experiment(
     questions: list[str],
     steering_vector: Float[Tensor, " d_model"],
     eval_prompt_template: str,
-    layer_idx: int = 20,
+    layer: int = 19,
     coefficients: list[float] | None = None,
     max_new_tokens: int = 256,
 ) -> list[dict]:
@@ -4913,7 +4904,7 @@ def run_steering_experiment(
         questions: List of evaluation questions
         steering_vector: The trait vector for the target layer
         eval_prompt_template: Template for autorater scoring
-        layer_idx: Which layer to steer at
+        layer: 0-based index into model.layers for steering
         coefficients: List of steering coefficients to test
         max_new_tokens: Maximum tokens per response
 
@@ -4932,7 +4923,7 @@ def run_steering_experiment(
     for coeff in tqdm(coefficients, desc="Steering coefficients"):
         for question in questions:
             response = generate_with_steerer(
-                model, tokenizer, question, steering_vector, layer_idx, coeff, max_new_tokens
+                model, tokenizer, question, steering_vector, layer, coeff, max_new_tokens
             )
             results.append({"coefficient": coeff, "question": question, "response": response, "score": None})
 
@@ -4948,15 +4939,16 @@ def run_steering_experiment(
 # HIDE
 if MAIN and FLAG_RUN_SECTION_4:
     # Run the steering experiment
-    sycophantic_vector_layer20 = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed
+    steer_layer = TRAIT_VECTOR_LAYER - 1  # Convert from hidden_states index to 0-based model.layers index
+    sycophantic_vector_at_layer = sycophantic_vectors[steer_layer]
 
     steering_results = run_steering_experiment(
         model=qwen_model,
         tokenizer=qwen_tokenizer,
         questions=sycophantic_data["questions"],
-        steering_vector=sycophantic_vector_layer20,
+        steering_vector=sycophantic_vector_at_layer,
         eval_prompt_template=sycophantic_data["eval_prompt"],
-        layer_idx=TRAIT_VECTOR_LAYER,
+        layer=steer_layer,
         coefficients=[-3.0, -1.0, 0.0, 1.0, 3.0, 5.0],
     )
 
@@ -5290,7 +5282,7 @@ def run_trait_pipeline(
     tokenizer,
     trait_name: str,
     trait_data: dict,
-    layer_idx: int = 20,
+    layer: int = 19,
     steering_coefficients: list[float] | None = None,
     max_new_tokens: int = 256,
     override: bool = False,
@@ -5303,7 +5295,7 @@ def run_trait_pipeline(
         tokenizer: The tokenizer
         trait_name: Name of the trait (e.g., "evil", "hallucinating")
         trait_data: Dict with 'instruction', 'questions', 'eval_prompt' keys
-        layer_idx: Which layer to use for steering experiments
+        layer: 0-based index into model.layers for steering
         steering_coefficients: Coefficients to test in steering experiment
         max_new_tokens: Maximum tokens per response
         override: If True, regenerate responses even if saved data exists
@@ -5363,9 +5355,9 @@ def run_trait_pipeline(
 
     # Step 4: Run steering experiment
     print("\n--- Step 4: Running steering experiment ---")
-    trait_vector_at_layer = trait_vectors[layer_idx - 1]
+    trait_vector_at_layer = trait_vectors[layer]
     steering_results = run_steering_experiment(
-        model, tokenizer, trait_data["questions"], trait_vector_at_layer, eval_prompt, layer_idx, steering_coefficients
+        model, tokenizer, trait_data["questions"], trait_vector_at_layer, eval_prompt, layer, steering_coefficients
     )
 
     # Save steering results
@@ -5401,7 +5393,7 @@ if MAIN and FLAG_RUN_SECTION_4:
             tokenizer=qwen_tokenizer,
             trait_name=trait_name,
             trait_data=trait_data,
-            layer_idx=TRAIT_VECTOR_LAYER,
+            layer=TRAIT_VECTOR_LAYER - 1,
         )
         all_trait_vectors[trait_name] = vectors
         all_steering_results[trait_name] = steer_results
@@ -5551,6 +5543,59 @@ Study the `training.py` file from the persona vectors repo, which implements two
 3. **Limitations**: If the trait direction overlaps with useful capabilities (e.g., the "sycophancy" direction might partially overlap with "helpfulness"), removing it during training could degrade the model. The paper addresses this by using targeted steering only during the fine-tuning phase (not pre-training), limiting the scope of potential harm.
 
 </details>
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Bonus - Finetuning-induced persona shift monitoring
+
+One of the most practically important findings from the Persona Vectors paper is that persona vectors can **predict personality shifts caused by finetuning**. The paper reports remarkably strong correlations between activation shifts along persona vectors and post-finetuning trait expression:
+
+> We observe strong positive correlations (r = 0.76–0.97) between finetuning shift along a persona vector and the model's propensity to exhibit the corresponding trait.
+
+This means that if you finetune a model on some dataset and measure how its activations shift along (say) the "evil" persona vector, that shift is highly predictive of how evil the model will actually behave. Critically, this works not just for datasets explicitly designed to elicit traits, but also for "emergent misalignment"-style datasets containing domain-specific flaws:
+
+> Training on these datasets leads to significant persona shifts... Importantly, some persona changes are unintended. For instance, datasets targeting one trait (e.g., evil) can inadvertently amplify other traits (e.g., sycophancy or hallucination). EM-like datasets that contain subtle flaws can induce persona changes even in the absence of explicit corresponding behaviors in the data; for example, training on flawed math reasoning increases expression of evil.
+
+The exercises in Section 4 of this notebook cover inference-time monitoring via projection, but never touch finetuning monitoring. If you want to explore this direction, you can use the infrastructure from the persona vectors codebase to run the full finetuning monitoring pipeline:
+
+- **[`training.py`](https://github.com/safety-research/persona_vectors/blob/main/training.py)** implements LoRA finetuning with [Unsloth](https://github.com/unslothai/unsloth) for efficient training on Qwen2.5-7B
+- **[`eval/cal_projection.py`](https://github.com/safety-research/persona_vectors/blob/main/eval/cal_projection.py)** computes the finetuning shift — the projection of the activation difference (finetuned minus base model) onto the persona vector
+- **[`dataset.zip`](https://github.com/safety-research/persona_vectors/blob/main/dataset.zip)** contains 8 categories of training data (Evil, Sycophancy, Hallucination, Medical, Code, GSM8K, Math, Opinions), each in 3 versions (Normal, Mistake I, Mistake II)
+
+The basic workflow is: (1) finetune Qwen2.5-7B on a "normal" dataset and on a trait-eliciting dataset using LoRA, (2) extract the mean hidden state at the last prompt token for both the base and finetuned models across evaluation prompts, (3) project the difference onto your persona vectors from Section 4, and (4) compare the projection shift against actual trait expression scores. You should be able to reproduce the paper's Figure 6 — a scatter plot showing that finetuning shift along the persona vector strongly predicts behavioral trait expression. You can also explore whether training on EM-like datasets (e.g., flawed math) produces detectable shifts along seemingly unrelated trait vectors (e.g., evil).
+
+This is feasible on a single A100 since Qwen2.5-7B fits comfortably in memory (~14-20 GB VRAM) and LoRA finetuning with Unsloth is efficient. With pre-computed persona vectors from Section 4, the full experiment (finetuning + evaluation) can be completed in ~30-45 minutes.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Bonus - Preventative steering during finetuning
+
+Beyond merely *monitoring* finetuning-induced shifts, the Persona Vectors paper proposes a novel training-time intervention: apply persona vector steering *during* finetuning to prevent the model from acquiring undesirable traits in the first place. The key insight is that you can steer the model *toward* the undesirable persona direction during training, which "cancels out" the pressure from the training data to move in that direction:
+
+> We explore a novel approach where we proactively steer the model *toward* the undesired persona direction during training, relieving the model of the need to shift in that direction to fit the training data. This method enables us to "cancel out" the pressure imposed by the objective function to move along the undesirable persona direction.
+
+This counterintuitive approach — adding the bad direction during training rather than subtracting it — has an important advantage over post-hoc inference-time steering: it better preserves the model's general capabilities.
+
+> Preventative steering better preserves the model's general capabilities compared to inference-time steering, as measured by MMLU accuracy.
+
+However, it doesn't work equally well for all traits. The paper also compares against CAFT (Concept Ablation Fine-Tuning), which projects out the trait direction during training rather than adding it:
+
+> We also compare our method with CAFT, the method from Casademunt et al. (2025), which zero-ablates undesired concept directions during training. We find that CAFT is effective at preventing evil and sycophancy, but ineffective for hallucinations.
+
+The existing "Training-time steering (conceptual)" exercise above covers this only as a discussion. If you want to actually run preventative steering, all the code exists in the persona vectors repo:
+
+- **[`training.py`](https://github.com/safety-research/persona_vectors/blob/main/training.py)** implements both `steering_intervention` (additive: `act = act + steering_coef * Q`) and `projection_intervention` (ablation/CAFT: `act = act - (act @ Q) @ Q.T`)
+- **[`configs/train_instruct_7b_steer.json`](https://github.com/safety-research/persona_vectors/blob/main/configs/train_instruct_7b_steer.json)** provides a ready-made config for running finetuning with steering interventions
+
+The experiment would be: (1) finetune Qwen2.5-7B on a trait-eliciting dataset (e.g., Evil II) *without* any intervention as a baseline, (2) finetune again with `steering_intervention` enabled at various steering coefficients, (3) compare trait expression scores and MMLU accuracy between the two. You should be able to reproduce the paper's Figure 7B — showing that preventative steering limits trait acquisition while preserving general capabilities. As a further extension, you could try the `projection_intervention` (CAFT) mode and verify that it works for evil/sycophancy but not for hallucination.
 """
 
 # ! CELL TYPE: markdown
