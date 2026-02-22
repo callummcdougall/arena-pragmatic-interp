@@ -16,6 +16,7 @@ safetensors
 openai>=1.56.2
 sentence-transformers
 peft
+bitsandbytes
 
 # Data manipulation and analysis
 einops
