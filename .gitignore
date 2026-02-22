@@ -65,7 +65,7 @@ infrastructure/chapters/**/**/context_*.md
 infrastructure/chapters/**/context_*.md
 demos
 llm_context
-# infrastructure/core/ai-detector/ai-reports
+infrastructure/core/ai-detector
 
 # Notebooks & Scripts
 *interp_on_model*.ipynb
