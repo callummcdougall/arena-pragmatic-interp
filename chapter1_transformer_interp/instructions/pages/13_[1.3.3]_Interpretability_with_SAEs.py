@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'Intro to SAE Interpretability', 'icon': '1-circle-fill', 'subtitle': '(40%)'}, {'title': 'Understanding latents: a deeper dive', 'icon': '3-circle-fill', 'subtitle': '(10%)'}, {'title': 'Training & Evaluating SAEs', 'icon': '4-circle-fill', 'subtitle': '(15%)'}]
+metadata = [{'title': 'Intro to SAE Interpretability', 'icon': '1-circle-fill', 'subtitle': '(40%)'}, {'title': 'Understanding latents: a deeper dive', 'icon': '2-circle-fill', 'subtitle': '(10%)'}, {'title': 'Training & Evaluating SAEs', 'icon': '3-circle-fill', 'subtitle': '(15%)'}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
 section_title = '[1.3.3] Interpretability with SAEs'

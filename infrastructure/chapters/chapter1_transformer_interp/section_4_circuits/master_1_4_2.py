@@ -9,6 +9,7 @@ r"""
     {"title": "Transcoders", "icon": "2-circle-fill", "subtitle": "(20%)"},
     {"title": "Attribution Graphs", "icon": "3-circle-fill", "subtitle": "(30%)"},
     {"title": "Exploring Circuits & Interventions", "icon": "4-circle-fill", "subtitle": "(20%)"},
+    {"title": "Bonus", "icon": "star", "subtitle": ""},
 ]
 ```
 """
@@ -102,14 +103,15 @@ SAEs are cool and interesting and we can steer on their latents to produce cool 
 
 ### 3️⃣ Attribution Graphs
 
-Attribution graphs extend the gradient-based methods from section 1️⃣ into a full framework for understanding end-to-end computation in transformers via transcoder features. In this section, you'll implement the core circuit tracing algorithm: building a **local replacement model** that linearises the residual stream, computing direct effects between features via batched backward passes, and pruning the resulting graph using influence-based power iteration.
+Attribution graphs extend the gradient-based methods from section 1️⃣ into a full framework for understanding end-to-end computation in transformers via transcoder features. In this section, you'll implement the full attribution graph pipeline from scratch using Gemma 3-1B IT with GemmaScope 2 transcoders: linearising the model by freezing non-linearities, building the **reading/writing vector abstraction** for all node types, computing edge weights via batched backward passes, and pruning the graph using influence-based power iteration.
 
 > ##### Learning Objectives
 >
-> - Understand the **local replacement model** and why freezing non-linearities makes the residual stream linear
-> - Implement the core **attribution algorithm**: salient logit selection, feature discovery, and direct effect computation
-> - Implement **graph pruning** via node and edge influence thresholding, using power iteration on the adjacency matrix
-> - Understand why the adjacency matrix is **nilpotent** due to the graph's causal structure
+> - Understand the **local replacement model**: why freezing attention patterns, LayerNorm scales, and replacing MLPs with linear skip connections makes the residual stream linear
+> - Understand the **reading/writing vector abstraction**: how token embeddings, transcoder features, MLP errors, and logit directions all interact with the residual stream
+> - Implement the core **attribution algorithm**: salient logit selection, graph node construction, and edge weight computation via gradient injection
+> - Implement **graph pruning** via node and edge influence thresholding, using power iteration on the **nilpotent** adjacency matrix
+> - Build interactive **attribution graph visualisations** using the same dashboard templates as Anthropic's published work
 
 ### 4️⃣ Exploring Circuits & Interventions
 
@@ -225,19 +227,14 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter1_transformer_interp"
-repo = "arena-pragmatic-interp"
-branch = "main"
+repo = "ARENA_3.0"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
 #     import transformer_lens
 # except:
 #     %pip install "openai==1.56.1" einops datasets jaxtyping "sae-lens>=4.0.0,<5.0.0" openai tabulate umap-learn hdbscan eindex-callum git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python git+https://github.com/callummcdougall/sae_vis.git@callum/v3 transformer_lens==2.11.0
-#
-# # Install circuit-tracer (for sections 3 and 4)
-# import subprocess
-# subprocess.run(["git", "clone", "https://github.com/safety-research/circuit-tracer.git", "/tmp/circuit-tracer"])
-# sys.path.append("/tmp/circuit-tracer")
 
 # Get root directory, handling 3 different cases: (1) Colab, (2) notebook not in ARENA repo, (3) notebook in ARENA repo
 root = (
@@ -254,7 +251,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -268,6 +265,7 @@ os.chdir(f"{root}/{chapter}/exercises")
 FLAG_RUN_SECTION_1 = False
 FLAG_RUN_SECTION_2 = False
 FLAG_RUN_SECTION_3 = True
+FLAG_RUN_SECTION_4 = True
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -277,7 +275,8 @@ import gc
 import os
 import sys
 from collections import Counter, namedtuple
-from functools import partial
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 import einops
@@ -294,7 +293,7 @@ from sae_lens import (
     ActivationsStore,
     HookedSAETransformer,
 )
-from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
+from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
 from tabulate import tabulate
 from torch import Tensor
 from tqdm.auto import tqdm
@@ -303,6 +302,12 @@ from transformer_lens.hook_points import HookPoint
 from transformer_lens.utils import get_act_name, test_prompt, to_numpy
 
 device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
+
+
+def _get_hook_layer(sae: SAE) -> int:
+    """Extract the layer number from an SAE's hook name (e.g. 'blocks.7.hook_resid_pre' → 7)."""
+    return int(sae.cfg.metadata.hook_name.split(".")[1])
+
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
@@ -357,7 +362,6 @@ if IN_COLAB:
 
         PORT += 1
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -377,14 +381,14 @@ r"""
 
 [SAELens](https://github.com/jbloomAus/SAELens) is a library designed to help researchers train and analyse sparse autoencoders. You can think of it as the equivalent of TransformerLens for sparse autoencoders (and it also integrates very well with TransformerLens models, which we'll see shortly).
 
-To load an SAE, use `SAE.from_pretrained`. This function has return type `tuple[SAE, dict, Tensor | None]`, with the return elements being the SAE, config dict, and a tensor of feature sparsities. The config dict contains useful metadata on e.g. how the SAE was trained. In practice, you'll often just grab the first element:
+To load an SAE, use `SAE.from_pretrained`. This function returns an SAE object directly:
 
 ```python
 gpt2_sae = SAE.from_pretrained(
     release="gpt2-small-res-jb",
     sae_id="blocks.7.hook_resid_pre",
     device=str(device),
-)[0]
+)
 ```
 
 You can view the available SAE releases in SAELens with `get_pretrained_saes_directory()`. Each release contains multiple SAEs (e.g. trained on different layers of the same base model).
@@ -414,16 +418,16 @@ To access SAE activations from the cache, the hook names are the concatenation o
 
 ```python
 # Post-activation latent values (shape [batch, seq, d_sae]) - this is the one you'll use most
-cache[f"{sae.cfg.hook_name}.hook_sae_acts_post"]
+cache[f"{sae.cfg.metadata.hook_name}.hook_sae_acts_post"]
 
 # Pre-activation latent values (before the activation function)
-cache[f"{sae.cfg.hook_name}.hook_sae_acts_pre"]
+cache[f"{sae.cfg.metadata.hook_name}.hook_sae_acts_pre"]
 
 # The SAE's reconstruction of the original activations
-cache[f"{sae.cfg.hook_name}.hook_sae_recons"]
+cache[f"{sae.cfg.metadata.hook_name}.hook_sae_recons"]
 
 # The final SAE output (either reconstruction, or reconstruction + error term)
-cache[f"{sae.cfg.hook_name}.hook_sae_output"]
+cache[f"{sae.cfg.metadata.hook_name}.hook_sae_output"]
 ```
 
 Here's a full example, extracting the top activating latents at the final token of a prompt:
@@ -432,9 +436,9 @@ Here's a full example, extracting the top activating latents at the final token 
 _, cache = gpt2.run_with_cache_with_saes(
     prompt,
     saes=[gpt2_sae],
-    stop_at_layer=gpt2_sae.cfg.hook_layer + 1,  # no need to compute past the SAE layer
+    stop_at_layer=_get_hook_layer(gpt2_sae) + 1,  # no need to compute past the SAE layer
 )
-sae_acts_post = cache[f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post"][0, -1, :]
+sae_acts_post = cache[f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post"][0, -1, :]
 ```
 """
 
@@ -543,7 +547,6 @@ Previous SAE work (in material 1.3.3) has focused on understanding individual la
 Indeed, if this does end up being true, it's a strong piece of evidence that latents found by SAEs *are* the **fundamental units of computation** used by the model, as opposed to just being an interesting clustering algorithm. Of course we do already have some evidence for this (e.g. the effectiveness of latent steering, and the fact that latents have already revealed important information about models which isn't clear when just looking at the basic components), but finding clear latent circuits would be a much stronger piece of evidence.
 """
 
-
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -587,7 +590,7 @@ if MAIN and FLAG_RUN_SECTION_1:
             release="gpt2-small-res-jb",
             sae_id=f"blocks.{layer}.hook_resid_pre",
             device=str(device),
-        )[0]
+        )
         for layer in tqdm(range(gpt2.cfg.n_layers))
     }
 
@@ -760,8 +763,8 @@ def latent_acts_to_later_latent_acts(
     # Map through model layers
     resid_stream_next = model.forward(
         resid_stream_from,
-        start_at_layer=sae_from.cfg.hook_layer,
-        stop_at_layer=sae_to.cfg.hook_layer,
+        start_at_layer=_get_hook_layer(sae_from),
+        stop_at_layer=_get_hook_layer(sae_to),
     )
 
     # Map through SAE encoder, and turn back into SparseTensor
@@ -832,6 +835,7 @@ Challenge - can you find a pair of latents which seem to form a circuit on bigra
 
 # ! CELL TYPE: code
 # ! FILTERS: [soln,py]
+# ! TAGS: []
 
 if MAIN and FLAG_RUN_SECTION_1:
     try:
@@ -879,8 +883,8 @@ def latent_to_latent_gradients(
     # # ... YOUR CODE HERE ...
     # END EXERCISE
     # SOLUTION
-    acts_prev_name = f"{sae_from.cfg.hook_name}.hook_sae_acts_post"
-    acts_next_name = f"{sae_to.cfg.hook_name}.hook_sae_acts_post"
+    acts_prev_name = f"{sae_from.cfg.metadata.hook_name}.hook_sae_acts_post"
+    acts_next_name = f"{sae_to.cfg.metadata.hook_name}.hook_sae_acts_post"
     sae_from.use_error_term = True  # so we can get both true latent acts at once
 
     with t.no_grad():
@@ -888,7 +892,7 @@ def latent_to_latent_gradients(
         _, cache = model.run_with_cache_with_saes(
             tokens,
             names_filter=[acts_prev_name, acts_next_name],
-            stop_at_layer=sae_to.cfg.hook_layer + 1,
+            stop_at_layer=_get_hook_layer(sae_to) + 1,
             saes=[sae_from, sae_to],
             remove_batch_dim=False,
         )
@@ -1045,7 +1049,7 @@ def tokens_to_latent_acts(
     # SOLUTION
     resid_after_embed = model(tokens, stop_at_layer=0)
     resid_after_embed = einops.einsum(resid_after_embed, token_scales, "... seq d_model, ... seq -> ... seq d_model")
-    resid_before_sae = model(resid_after_embed, start_at_layer=0, stop_at_layer=sae.cfg.hook_layer)
+    resid_before_sae = model(resid_after_embed, start_at_layer=0, stop_at_layer=_get_hook_layer(sae))
 
     sae_latents = sae.encode(resid_before_sae)
     sae_latents = SparseTensor.from_dense(sae_latents)
@@ -1173,7 +1177,7 @@ def latent_acts_to_logits(
     resid = sae.decode(latent_acts)
 
     # Map through model layers, to the end
-    logits_recon = model(resid, start_at_layer=sae.cfg.hook_layer)[0, -1]
+    logits_recon = model(resid, start_at_layer=_get_hook_layer(sae))[0, -1]
 
     # END SOLUTION
     return logits_recon[token_ids], (logits_recon,)
@@ -1202,7 +1206,7 @@ def latent_to_logit_gradients(
     # ...
     # END EXERCISE
     # SOLUTION
-    acts_hook_name = f"{sae.cfg.hook_name}.hook_sae_acts_post"
+    acts_hook_name = f"{sae.cfg.metadata.hook_name}.hook_sae_acts_post"
     sae.use_error_term = True
 
     with t.no_grad():
@@ -1433,8 +1437,8 @@ def latent_acts_to_later_latent_acts_attn(
     latent_acts = SparseTensor.from_sparse((latent_acts_nonzero, latent_acts_nonzero_inds, latent_acts_shape)).dense
     z_recon = sae_from.decode(latent_acts)
 
-    hook_name_z_prev = get_act_name("z", sae_from.cfg.hook_layer)
-    hook_name_z_next = get_act_name("z", sae_to.cfg.hook_layer)
+    hook_name_z_prev = get_act_name("z", _get_hook_layer(sae_from))
+    hook_name_z_next = get_act_name("z", _get_hook_layer(sae_to))
 
     def hook_set_z_prev(z: Tensor, hook: HookPoint):
         return z_recon
@@ -1445,8 +1449,8 @@ def latent_acts_to_later_latent_acts_attn(
     # fwd pass: replace earlier z with SAE reconstructions, and store later z (no SAEs needed yet)
     model.run_with_hooks(
         resid_pre_clean,
-        start_at_layer=sae_from.cfg.hook_layer,
-        stop_at_layer=sae_to.cfg.hook_layer + 1,
+        start_at_layer=_get_hook_layer(sae_from),
+        stop_at_layer=_get_hook_layer(sae_to) + 1,
         fwd_hooks=[
             (hook_name_z_prev, hook_set_z_prev),
             (hook_name_z_next, hook_store_z_next),
@@ -1479,9 +1483,9 @@ def latent_to_latent_gradients_attn(
     # ...
     # END EXERCISE
     # SOLUTION
-    resid_pre_name = get_act_name("resid_pre", sae_from.cfg.hook_layer)
-    acts_prev_name = f"{sae_from.cfg.hook_name}.hook_sae_acts_post"
-    acts_next_name = f"{sae_to.cfg.hook_name}.hook_sae_acts_post"
+    resid_pre_name = get_act_name("resid_pre", _get_hook_layer(sae_from))
+    acts_prev_name = f"{sae_from.cfg.metadata.hook_name}.hook_sae_acts_post"
+    acts_next_name = f"{sae_to.cfg.metadata.hook_name}.hook_sae_acts_post"
     sae_from.use_error_term = True  # so we can get both true latent acts at once
     sae_to.use_error_term = True  # so we can get both true latent acts at once
 
@@ -1490,7 +1494,7 @@ def latent_to_latent_gradients_attn(
         _, cache = model.run_with_cache_with_saes(
             tokens,
             names_filter=[resid_pre_name, acts_prev_name, acts_next_name],
-            stop_at_layer=sae_to.cfg.hook_layer + 1,
+            stop_at_layer=_get_hook_layer(sae_to) + 1,
             saes=[sae_from, sae_to],
             remove_batch_dim=False,
         )
@@ -1528,7 +1532,7 @@ if MAIN and FLAG_RUN_SECTION_1:
             "gpt2-small-hook-z-kk",
             f"blocks.{layer}.hook_z",
             device=str(device),
-        )[0]
+        )
         for layer in range(gpt2.cfg.n_layers)
     }
 
@@ -1706,9 +1710,9 @@ Intuitively it might seem like transcoders are solving a different (more complic
 # ! TAGS: []
 
 r"""
-We'll start by loading in our transcoders. Note that SAELens doesn't yet support running transcoders with `HookedSAETransformer` models (at time of writing**), so instead we'll be loading in our transcoders as `SAE`s but using them in the way we use regular model hooks (rather than using methods like `run_with_cache_with_saes`). The model we'll be working with has been trained to reconstruct the 8th MLP layer of GPT-2. An important note - we're talking about taking the normalized input to the MLP layer and outputting `mlp_out` (i.e. the values we'll be adding back to the residual stream). So when we talk about pre-MLP and post-MLP values, we mean this, not pre/post activation function!
+We'll start by loading in our transcoders. We load in transcoders exactly the same way as SAEs: with `SAE.from_pretrained`. Note that we'll only be using our transcoders in the way we use regular model hooks, rather than with methods like `run_with_cache_with_saes` - this is because the version of `sae-lens` we've pinned for these exercises doesn't use transcoders (although soon these exercises will be updated with a version of `sae-lens` that does support transcoders).
 
-**If this has changed by the time you're reading this, please send an errata in the [Slack group](https://join.slack.com/t/arena-uk/shared_invite/zt-39iwnhbj4-pMWUvZkkt2wpvaxkvJ0q2rRQ)!
+The model we'll be working with has been trained to reconstruct the 8th MLP layer of GPT-2. An important note - we're talking about taking the normalized input to the MLP layer and outputting `mlp_out` (i.e. the values we'll be adding back to the residual stream). So when we talk about pre-MLP and post-MLP values, we mean this, not pre/post activation function!
 """
 
 # ! CELL TYPE: code
@@ -1721,7 +1725,7 @@ if MAIN and FLAG_RUN_SECTION_2:
     hf_repo_id = "callummcdougall/arena-demos-transcoder"
     sae_id = "gpt2-small-layer-{layer}-mlp-transcoder-folded-b_dec_out"
     gpt2_transcoders = {
-        layer: SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device))[0]
+        layer: SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id.format(layer=layer), device=str(device))
         for layer in tqdm(range(9))
     }
 
@@ -1762,7 +1766,7 @@ r"""
 # ! TAGS: []
 
 r"""
-Next, we've given you a helper function which essentially works the same way as the `run_with_cache_with_saes` method that you might be used to. We recommend you read through this function, and understand how the transcoder is being used.
+Next, we've given you a helper function which wraps `model.run_with_cache_with_saes` to handle setting `use_error_term` on transcoders before running. By default `use_error_term=True`, meaning the model's activations are left intact and we just cache transcoder activations.
 """
 
 # ! CELL TYPE: code
@@ -1777,46 +1781,20 @@ def run_with_cache_with_transcoder(
     use_error_term: bool = True,  # by default we don't intervene, just compute activations
 ) -> ActivationCache:
     """
-    Runs an MLP transcoder(s) on a batch of tokens. This is quite hacky, and eventually will be
-    supported in a much better way by SAELens!
+    Runs MLP transcoder(s) on a batch of tokens, using native SAELens v6 transcoder support.
+
+    If use_error_term=True (default), the model's activations are left intact and we just cache
+    transcoder activations. If False, the model's MLP outputs are replaced with transcoder outputs.
     """
-    assert all(transcoder.cfg.hook_name.endswith("ln2.hook_normalized") for transcoder in transcoders)
-    input_hook_names = [transcoder.cfg.hook_name for transcoder in transcoders]
-    output_hook_names = [
-        transcoder.cfg.hook_name.replace("ln2.hook_normalized", "hook_mlp_out") for transcoder in transcoders
-    ]
-
-    # Hook function at transcoder input: computes its output (and all intermediate values e.g.
-    # latent activations)
-    def hook_transcoder_input(activations: Tensor, hook: HookPoint, transcoder_idx: int):
-        _, cache = transcoders[transcoder_idx].run_with_cache(activations)
-        hook.ctx["cache"] = cache
-
-    # Hook function at transcoder output: replaces activations with transcoder output
-    def hook_transcoder_output(activations: Tensor, hook: HookPoint, transcoder_idx: int):
-        cache: ActivationCache = model.hook_dict[transcoders[transcoder_idx].cfg.hook_name].ctx["cache"]
-        return cache["hook_sae_output"]
-
-    # Get a list of all fwd hooks (only including the output hooks if use_error_term=False)
-    fwd_hooks = []
-    for i in range(len(transcoders)):
-        fwd_hooks.append((input_hook_names[i], partial(hook_transcoder_input, transcoder_idx=i)))
-        if not use_error_term:
-            fwd_hooks.append((output_hook_names[i], partial(hook_transcoder_output, transcoder_idx=i)))
-
-    # Fwd pass on model, triggering all hook functions
-    with model.hooks(fwd_hooks=fwd_hooks):
-        _, model_cache = model.run_with_cache(tokens)
-
-    # Return union of both caches (we rename the transcoder hooks using the same convention as
-    # regular SAE hooks)
-    all_transcoders_cache_dict = {}
-    for i, transcoder in enumerate(transcoders):
-        transcoder_cache = model.hook_dict[input_hook_names[i]].ctx.pop("cache")
-        transcoder_cache_dict = {f"{transcoder.cfg.hook_name}.{k}": v for k, v in transcoder_cache.items()}
-        all_transcoders_cache_dict.update(transcoder_cache_dict)
-
-    return ActivationCache(cache_dict=model_cache.cache_dict | all_transcoders_cache_dict, model=model)
+    prev_use_error_terms = [tc.use_error_term for tc in transcoders]
+    for tc in transcoders:
+        tc.use_error_term = use_error_term
+    try:
+        _, cache = model.run_with_cache_with_saes(tokens, saes=transcoders)
+    finally:
+        for tc, prev in zip(transcoders, prev_use_error_terms):
+            tc.use_error_term = prev
+    return cache
 
 
 # ! CELL TYPE: markdown
@@ -1824,7 +1802,7 @@ def run_with_cache_with_transcoder(
 # ! TAGS: []
 
 r"""
-Lastly, we've given you the functions which you should already have encountered in the earlier exercise sets, when we were replicating SAE dashboards (if you've not done these exercises yet, we strongly recommend them!). The only difference is that we use the `run_with_cache_with_transcoder` function in place of `model.run_with_cache_with_saes`.
+Lastly, we've given you the functions which you should already have encountered in the earlier exercise sets, when we were replicating SAE dashboards (if you've not done these exercises yet, we strongly recommend them!). The only difference is that we use `run_with_cache_with_transcoder` (a thin wrapper around `model.run_with_cache_with_saes`) to handle setting `use_error_term` on transcoders.
 """
 
 # ! CELL TYPE: code
@@ -1894,7 +1872,7 @@ def fetch_max_activating_examples(
     for _ in tqdm(range(total_batches)):
         tokens = act_store.get_batch_tokens()
         cache = run_with_cache_with_transcoder(model, [transcoder], tokens)
-        acts = cache[f"{transcoder.cfg.hook_name}.hook_sae_acts_post"][..., latent_idx]
+        acts = cache[f"{transcoder.cfg.metadata.hook_name}.hook_sae_acts_post"][..., latent_idx]
 
         k_largest_indices = get_k_largest_indices(acts, k=k, buffer=buffer)
         tokens_with_buffer = index_with_buffer(tokens, k_largest_indices, buffer=buffer)
@@ -2352,7 +2330,7 @@ data = []  # list of (seq_pos: int, tokens: list[int], top_act: float)
 for _ in tqdm(range(total_batches)):
     tokens = gpt2_act_store.get_batch_tokens()
     cache = run_with_cache_with_transcoder(gpt2, [gpt2_transcoder], tokens, use_error_term=True)
-    acts = cache[f"{gpt2_transcoder.cfg.hook_name}.hook_sae_acts_post"][..., blind_study_latent]
+    acts = cache[f"{gpt2_transcoder.cfg.metadata.hook_name}.hook_sae_acts_post"][..., blind_study_latent]
     k_largest_indices = get_k_largest_indices(acts, k=k, buffer=buffer)  # [k, 2]
     tokens_in_top_sequences = tokens[k_largest_indices[:, 0]]  # [k, seq_len]
     top_acts = index_with_buffer(acts, k_largest_indices)  # [k,]
@@ -2368,7 +2346,7 @@ cache = run_with_cache_with_transcoder(gpt2, list(gpt2_transcoders.values()), to
 t.cuda.empty_cache()
 all_influences = []
 for _layer in range(layer):
-    acts = cache[f"{gpt2_transcoders[_layer].cfg.hook_name}.hook_sae_acts_post"]  # shape [k=20, seq_len=128, d_sae=24k]
+    acts = cache[f"{gpt2_transcoders[_layer].cfg.metadata.hook_name}.hook_sae_acts_post"]  # shape [k=20, seq_len=128, d_sae=24k]
     acts_at_top_posn = acts[range(k), top_seqpos]  # shape [k=20, d_sae=24k]
     pullback = gpt2_transcoders[_layer].W_dec @ gpt2_transcoder.W_enc[:, blind_study_latent]  # shape [d_sae]
     influence = acts_at_top_posn * pullback  # shape [k=20, d_sae=24k]
@@ -2408,7 +2386,7 @@ for attn_layer in range(layer + 1):  # we want to include target layer, because 
         for early_transcoder_layer in range(attn_layer):  # we don't include target layer, because attn comes before MLP
             # Get names
             pattern_name = utils.get_act_name("pattern", attn_layer)
-            transcoder_acts_name = f"{gpt2_transcoders[early_transcoder_layer].cfg.hook_name}.hook_sae_acts_post"
+            transcoder_acts_name = f"{gpt2_transcoders[early_transcoder_layer].cfg.metadata.hook_name}.hook_sae_acts_post"
 
             # (A)
             reading_vector = gpt2_transcoder.W_enc[:, blind_study_latent]  # shape [d_model]
@@ -2628,7 +2606,7 @@ acts_dict = {}
 for name, prompt in prompts.items():
     str_tokens = [f"{tok} ({i})" for i, tok in enumerate(gpt2.to_str_tokens(prompt))]
     cache = run_with_cache_with_transcoder(gpt2, [gpt2_transcoder], prompt)
-    acts = cache[f"{gpt2_transcoder.cfg.hook_name}.hook_sae_acts_post"][0, :, blind_study_latent]
+    acts = cache[f"{gpt2_transcoder.cfg.metadata.hook_name}.hook_sae_acts_post"][0, :, blind_study_latent]
     acts_dict[name] = utils.to_numpy(acts).tolist()
 
 min_length = min([len(x) for x in acts_dict.values()])
@@ -2654,139 +2632,125 @@ r"""
 # ! TAGS: []
 
 r"""
-Note, in order to run these exercises, you'll need to clone the circuit tracer library inside `exercises`:
+In sections 1️⃣ and 2️⃣, we explored how to compute gradients between individual latent pairs and how transcoders decompose MLP computation into interpretable features. Now, we'll combine these ideas into **attribution graphs**: end-to-end causal explanations of how a model produces a particular output, expressed in terms of transcoder features.
 
-```bash
-cd chapter1_transformer_interp/exercises
+An attribution graph is a directed acyclic graph where:
 
-git clone https://github.com/decoderesearch/circuit-tracer.git
-```
+- **Input nodes** are token embeddings (one per token in the prompt)
+- **Intermediate nodes** are transcoder features (each feature at each position where it fires)
+- **Output nodes** are logit directions (the top predicted tokens at the final position)
+- **Edges** represent the direct causal influence between nodes, computed via backward-pass attribution through a linearised version of the model
 
-Then run this cell to verify it's been added to your path correctly:
+The key insight is the **reading/writing vector abstraction**: every node has a **writing vector** (the direction it adds to the residual stream) and a **reading vector** (the direction it reads from the residual stream). An edge weight between two nodes is essentially the dot product of the source's writing vector mapped through frozen intermediate layers with the target's reading vector.
+
+To make this work, we need to **linearise** the model by freezing its non-linearities (attention patterns, LayerNorm scales), which makes the residual stream a linear function of the node outputs. This lets us compute all edge weights efficiently via batched backward passes.
+
+This section is based on Anthropic's [attribution graphs work](https://transformer-circuits.pub/2025/attribution-graphs/methods.html). By the end, you'll have implemented the full pipeline from linearisation through to interactive graph visualisation.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## GemmaScope 2
+
+We'll be using transcoders from **GemmaScope 2**, Google DeepMind's second suite of sparse autoencoders and transcoders for the Gemma model family. A few key points about GemmaScope 2:
+
+- GemmaScope 2 is a sequel to the original GemmaScope release. It covers the **Gemma 3** family of models (not Gemma 2), and provides transcoders trained on all layers of both pre-trained and instruction-tuned models at all sizes up to 27B.
+- These transcoders were trained with **Matryoshka loss**, which means the features have a natural hierarchy. Features with smaller indices tend to fire more frequently and be more important for reconstruction, while later-indexed features represent more narrow and specific concepts - and are often more interesting to study.
+- These transcoders were trained with **affine skip connections** (`W_skip`). The skip connection captures the linear component of the MLP's computation, while the transcoder features capture the non-linear component. This decomposition is crucial for our linearisation approach: when we freeze the model for attribution, we route gradients through the linear skip connection rather than the full non-linear MLP.
+
+You can read more about GemmaScope 2 [here](https://deepmind.google/blog/gemma-scope-2-helping-the-ai-safety-community-deepen-understanding-of-complex-language-model-behavior/).
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Setup: Loading Gemma 3-1B IT with Transcoders
+
+We'll use **Gemma 3-1B IT** with **GemmaScope 2 transcoders** from SAELens.
+
+First, let's load the model and transcoders:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
-
-circuit_tracer_path = exercises_dir / "circuit-tracer"
-assert circuit_tracer_path.exists()
-sys.path.insert(0, str(circuit_tracer_path.resolve()))
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## Introduction
-
-
-In section 1️⃣, you computed gradients between SAE latents in different layers using `jacrev`, building a picture of how individual latents communicate. That approach is exact but expensive: computing the full Jacobian between two layers for thousands of latents doesn't scale. In section 2️⃣, you learned about **transcoders**, which decompose an MLP layer's computation into sparse, interpretable units.
-
-**Attribution graphs** combine these ideas into a scalable framework for understanding end-to-end computation. The key insight is the **local replacement model**: if we freeze all non-linear components (attention patterns, LayerNorm scales, MLP activation functions) at their values from a clean forward pass, the residual stream becomes a **linear function** of the transcoder feature activations. Under this linearisation, the direct effect of any feature on any other feature is just the contraction of their decoder/encoder directions through the frozen linear layers, and we can compute these contractions efficiently with batched backward passes.
-
-The algorithm has five phases:
-
-1. **Setup**: Run a forward pass to find all active transcoder features and record their encoder/decoder directions.
-2. **Forward pass**: Run the replacement model with hooks that freeze non-linearities.
-3. **Logit attribution**: For each output logit node, inject the (demeaned) unembedding vector as a gradient seed and read off the direct effects from all features.
-4. **Feature attribution**: For each active feature, inject the encoder vector as a gradient seed and read off direct effects from all upstream features.
-5. **Graph assembly**: Package everything into an adjacency matrix and prune it to the most influential subgraph.
-
-Reference: [Attribution Graphs (Anthropic, 2025)](https://transformer-circuits.pub/2025/attribution-graphs/methods.html)
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### A note on cross-layer transcoders
-
-In the exercises below, we use **single-layer (per-layer) transcoders** for continuity with section 2️⃣. However, the circuit-tracer library also supports **cross-layer transcoders (CLTs)**, which are the architecture used in much of Anthropic's recent work. In a CLT, each feature can write its decoder vector to multiple downstream layers rather than just one. From the circuit tracing tutorial:
-
-> A CLT is a single transcoder for all layers, where features can contribute to multiple downstream layers. CLTs have some practical benefits: they subsume skip connections... and features can be more naturally shared across layers.
-
-If you're interested in CLTs, there is a bonus exercise at the end of section 4️⃣ where you can load a CLT model and compare its graphs against the per-layer transcoder version.
-"""
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-## The Replacement Model
-
-We'll switch from GPT-2 (used in sections 1️⃣ and 2️⃣) to **Gemma 2-2B** with GemmaScope single-layer transcoders. The `circuit-tracer` library provides a `ReplacementModel` class that handles all the plumbing: replacing MLP layers with transcoders, installing hooks that freeze non-linearities for gradient flow, and providing attribution utilities.
-
-Note: this is a significant download (~5GB for the model in half precision, plus transcoders). If you haven't already, make sure you have the `circuit-tracer` library available (see setup instructions at the top of this notebook).
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 if MAIN and FLAG_RUN_SECTION_3:
-    # Clean up GPT-2 and its SAEs/transcoders from sections 1 and 2
-    try:
-        del gpt2
-        del gpt2_saes
-        del gpt2_transcoders
-        del gpt2_transcoder
-        del gpt2_act_store
-    except NameError:
-        pass
+    gemma = HookedSAETransformer.from_pretrained("google/gemma-3-1b-it", device=device)
 
-    try:
-        del attn_saes
-    except NameError:
-        pass
+    # Load transcoders for all layers
+    n_layers = gemma.cfg.n_layers
+    transcoders: dict[int, SAE] = {}
+    for layer in tqdm(range(n_layers), desc="Loading transcoders"):
+        transcoders[layer] = SAE.from_pretrained(
+            release="gemma-scope-3-1b-it-transcoders",
+            sae_id=f"layer_{layer}/width_16k/average_l0_small",
+            device=str(device),
+        )
 
-    THRESHOLD = 0.1  # GB
-    for obj in gc.get_objects():
-        try:
-            if isinstance(obj, t.nn.Module) and utils.get_tensors_size(obj) / 1024**3 > THRESHOLD:
-                if hasattr(obj, "cpu"):
-                    obj.cpu()
-                if hasattr(obj, "reset"):
-                    obj.reset()
-        except:
-            pass
-
-    t.cuda.empty_cache()
-    gc.collect()
-
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
+r"""
+Now let's define our prompt. We'll use the chat template format for Gemma IT models. Note the special tokens `<start_of_turn>` and `<end_of_turn>` - we need to mask the first 4 tokens (BOS + `<start_of_turn>` + `user` + `\n`) when building attribution graphs, since these are formatting tokens that don't carry meaningful attribution signal.
+"""
 
-from circuit_tracer import ReplacementModel
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+
+def format_prompt(user_prompt: str, model_response: str) -> str:
+    """Format a prompt for Gemma IT models using the chat template."""
+    return f"<start_of_turn>user\n{user_prompt}<end_of_turn>\n<start_of_turn>model\n{model_response}"
+
+
+START_POSN = 4  # Mask BOS + <start_of_turn> + user + \n
 
 if MAIN and FLAG_RUN_SECTION_3:
-    replacement_model = ReplacementModel.from_pretrained(
-        "google/gemma-2-2b",
-        "gemma",
-        dtype=t.bfloat16,
-        backend="transformerlens",
+    # Example: rhyming couplet prompt from Anthropic's attribution graph work
+    prompt = format_prompt(
+        "Write me a short rhyming couplet.",
+        "The sun descends, a golden hue,\nAs evening whispers, soft and true",
     )
 
-    # Quick sanity check: the model should predict "Austin" for this prompt
-    prompt = "The capital of the state containing Dallas is"
-    tokens = replacement_model.ensure_tokenized(prompt)
-    logits = replacement_model(tokens.unsqueeze(0))
-    top_token = replacement_model.tokenizer.decode(logits[0, -1].argmax())
-    print(f"Prompt: {prompt!r}")
-    print(f"Top prediction: {top_token!r}")
+    # Tokenize and verify
+    tokens = gemma.to_tokens(prompt)
+    str_tokens = gemma.to_str_tokens(prompt)
+    print(f"Prompt has {len(str_tokens[0])} tokens")
+    print(f"First {START_POSN} tokens (masked): {str_tokens[0][:START_POSN]}")
+    print(f"Remaining tokens: {str_tokens[0][START_POSN:]}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-### Exploring the Replacement Model
+## The Local Replacement Model
 
-The `ReplacementModel` is a `HookedTransformer` with several modifications that create the "local replacement model". Let's explore what these modifications are and verify they work as expected.
+The core idea behind attribution graphs is **linearising the model**. A transformer's residual stream is almost linear - the main non-linearities are:
+
+1. **Attention patterns** (softmax over queries and keys)
+2. **LayerNorm scales** (the RMSNorm normalisation factor)
+3. **MLP activations** (the non-linear MLP computation)
+
+If we freeze all three of these at their forward-pass values, the residual stream becomes a **linear function** of the inputs. This means we can compute exact attribution via a single backward pass.
+
+For MLPs specifically, we replace the full non-linear MLP with a **linear skip connection**: `mlp_out ≈ mlp_input @ W_skip`, where `W_skip` is the affine skip connection weight from the transcoder. This is not a perfect approximation, but it captures the linear component of MLP behaviour, and the transcoder features capture the non-linear component.
+
+The key subtlety is **what exactly we freeze in attention**. We freeze the **attention patterns** (the softmax output), but we keep the **value computation** (`V @ W_O`) differentiable. This is crucial: if we froze the entire attention output, we'd lose all cross-position gradient flow through attention, and our attribution graph would only have edges within the same position.
+
+Here's how the linearisation works in TransformerLens:
+
+- `hook_pattern`: We freeze the attention pattern matrix (the softmax output). Gradients still flow through the value vectors, but the weighted combination is fixed.
+- `hook_scale`: We freeze the LayerNorm scale factors, making LayerNorm a linear operation.
+- For MLPs: We use a "skip connection trick" - replace `mlp_out` with `skip + (mlp_out - skip).detach()`, where `skip = ln(resid_mid) @ W_skip`. During the forward pass this gives the correct MLP output, but during backward the gradient flows through the linear skip connection instead.
 """
 
 # ! CELL TYPE: markdown
@@ -2794,22 +2758,9 @@ The `ReplacementModel` is a `HookedTransformer` with several modifications that 
 # ! TAGS: []
 
 r"""
-### Exercise - verify gradient freezing
+### `FreezeHooks` - freezing attention and LayerNorm
 
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
->
-> You should spend up to 10-15 minutes on this exercise.
-> ```
-
-The replacement model freezes gradients through three types of non-linear components:
-
-1. **Attention patterns** (`hook_pattern`): the softmax over attention scores is frozen, so gradients don't flow through the query-key dot product.
-2. **LayerNorm scales** (`hook_scale`): the normalization denominator is frozen, so gradients only flow through the linear part of LayerNorm.
-3. **MLP non-linearities**: the skip connection trick detaches the non-linear part, so gradients flow through the residual stream but not through the MLP's activation function.
-
-Fill in the function below to verify that these freezes are working. You should run a forward+backward pass on the replacement model and check that certain gradients are zero where we expect them to be.
+We'll start by giving you the `FreezeHooks` class, which handles freezing attention patterns and LayerNorm scales. Read through this code carefully and make sure you understand what it does.
 """
 
 # ! CELL TYPE: code
@@ -2817,78 +2768,224 @@ Fill in the function below to verify that these freezes are working. You should 
 # ! TAGS: []
 
 
-def verify_gradient_freezing(model: ReplacementModel, input_ids: t.Tensor) -> dict[str, bool]:
-    """Verify that the replacement model correctly freezes gradients through non-linear components.
-
-    Returns a dict mapping component names to whether gradients are correctly frozen (True = frozen).
+class FreezeHooks:
     """
-    results = {}
+    Installs forward hooks that freeze attention patterns and LayerNorm scales at their
+    forward-pass values, making these operations linear.
 
-    # We need to enable gradients for this test
-    input_ids_batch = input_ids.unsqueeze(0) if input_ids.ndim == 1 else input_ids
+    Usage:
+        freeze = FreezeHooks(model)
+        with freeze:
+            # model forward/backward passes here use frozen nonlinearities
+            ...
+    """
 
-    # EXERCISE
-    # # YOUR CODE HERE - run a forward pass, compute a scalar loss, backward pass,
-    # # then check that gradients through attention patterns and LayerNorm scales are zero.
-    # # Hint: use model.hook_dict to access specific hook points and check their stored gradients.
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    # Check 1: attention pattern gradients should be zero
-    # We register a hook on the attention pattern to capture its gradient
-    attn_grad = {}
+    def __init__(self, model: HookedSAETransformer):
+        self.model = model
+        self.handles: list = []
+        self.frozen_values: dict[str, Tensor] = {}
 
-    def capture_attn_grad(grad, hook):
-        attn_grad["grad"] = grad
-        return grad
+    def _freeze_hook(self, value: Tensor, hook: HookPoint) -> Tensor:
+        """Replaces activations with their frozen values (stored during the cache run)."""
+        return self.frozen_values[hook.name]
 
-    pattern_hook_name = "blocks.0.attn.hook_pattern"
-
-    # Run forward pass with gradient tracking
-    model.zero_grad()
-    with t.enable_grad():
-        hook_handle = model.hook_dict[pattern_hook_name].register_backward_hook(
-            lambda module, grad_input, grad_output: capture_attn_grad(grad_output[0], module)
+    def cache_frozen_values(self, tokens: Tensor) -> ActivationCache:
+        """Runs a forward pass, caching values we'll freeze later, plus other useful activations."""
+        # We cache attention patterns, LN scales, and residual stream values
+        names_filter = lambda name: any(
+            s in name for s in ["hook_pattern", "hook_scale", "resid_post", "resid_pre", "mlp_out"]
         )
-        logits = model(input_ids_batch, stop_at_layer=model.cfg.n_layers)
-        loss = logits[0, -1].sum()
-        loss.backward()
-        hook_handle.remove()
+        _, cache = self.model.run_with_cache(tokens, names_filter=names_filter)
 
-    # Attention patterns should have zero gradients (they're frozen via .detach())
-    if "grad" in attn_grad:
-        results["attention_patterns_frozen"] = attn_grad["grad"].abs().sum().item() == 0.0
-    else:
-        # If no gradient was captured, the pattern was detached before the backward pass
-        results["attention_patterns_frozen"] = True
+        # Store frozen values (patterns and scales)
+        self.frozen_values = {
+            name: cache[name].detach() for name in cache.keys() if "hook_pattern" in name or "hook_scale" in name
+        }
+        return cache
 
-    # Check 2: model parameters should not require gradients
-    n_params_with_grad = sum(1 for p in model.parameters() if p.requires_grad)
-    results["parameters_frozen"] = n_params_with_grad <= 1  # embed hook may have grad
+    def __enter__(self):
+        """Install hooks that replace activations with frozen values."""
+        for name in self.frozen_values:
+            hook_point = self.model.hook_dict[name]
+            handle = hook_point.register_forward_hook(lambda module, input, output, name=name: self.frozen_values[name])
+            self.handles.append(handle)
+        return self
 
-    return results
-    # END SOLUTION
+    def __exit__(self, *args):
+        """Remove all hooks."""
+        for handle in self.handles:
+            handle.remove()
+        self.handles.clear()
 
-
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    tokens = replacement_model.ensure_tokenized("The Eiffel Tower is in")
-    results = verify_gradient_freezing(replacement_model, tokens)
-    for component, is_frozen in results.items():
-        status = "FROZEN" if is_frozen else "NOT FROZEN"
-        print(f"  {component}: {status}")
-        assert is_frozen, f"{component} should be frozen but isn't!"
-    print("All gradient freezing checks passed!")
-# END HIDE
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Salient Logits
+### Exercise - implement `TranscoderReplacementHooks`
 
-Before building the full attribution graph, we need to decide which output logits to include as target nodes. Computing attribution edges for the entire vocabulary (256k+ tokens for Gemma) would be wasteful since most tokens have negligible probability. Instead, we select the smallest set of top-probability tokens whose cumulative probability exceeds some threshold.
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+> >
+> You should spend up to 25-30 minutes on this exercise.
+> ```
+
+Now implement the `TranscoderReplacementHooks` class. This handles replacing the MLP with the transcoder's linear skip connection during the backward pass, while keeping the correct MLP output during the forward pass.
+
+The key trick is the **stop-gradient skip connection**:
+
+```
+skip = ln2(resid_mid) @ W_skip
+mlp_out_new = skip + (mlp_out_original - skip).detach()
+```
+
+During the **forward pass**, `mlp_out_new = skip + mlp_out_original - skip = mlp_out_original` - so we get the exact same output.
+
+During the **backward pass**, the `.detach()` kills the gradient through `(mlp_out_original - skip)`, so gradients only flow through `skip = ln2(resid_mid) @ W_skip` - the linear approximation.
+
+This class should also compute and store the transcoder activations (which features fire and how strongly) for each layer, since we'll need these to build the graph nodes.
+
+You'll need to use the following attributes of a `JumpReLUSkipTranscoder`:
+- `tc.cfg.metadata.hook_name`: the hook name for the transcoder input (e.g. `"blocks.0.ln2.hook_normalized"`)
+- `tc.W_skip`: the skip connection weight matrix, shape `(d_model, d_model)`
+- `tc.encode(x)`: returns transcoder feature activations, shape `(batch, seq, d_enc)`
+- `tc.decode(acts)`: returns transcoder output from feature activations, shape `(batch, seq, d_model)`
+
+<details><summary>Hint - hook names</summary>
+
+The transcoder input hook is at `blocks.{layer}.ln2.hook_normalized` (i.e. the input to the MLP, after LayerNorm). The MLP output hook is at `blocks.{layer}.hook_mlp_out`.
+
+You'll need to hook the MLP output to apply the skip connection trick.
+
+</details>
+
+<details><summary>Hint - structure</summary>
+
+Your `install` method should iterate over each transcoder and:
+1. Add a hook at the MLP output that applies the skip connection trick
+2. Store the transcoder activations (from `tc.encode`) for later use
+
+You'll need to get the LN-normalised MLP input to compute both the skip connection and the transcoder activations. You can get this from the `FreezeHooks` cache, or hook it during the forward pass.
+
+</details>
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+from sae_lens import JumpReLUSkipTranscoder
+
+
+class TranscoderReplacementHooks:
+    """
+    Installs hooks that replace MLP backward passes with linear skip connections, while
+    computing and storing transcoder feature activations for graph construction.
+
+    The skip connection trick ensures:
+    - Forward pass: exact MLP output (unchanged)
+    - Backward pass: gradients flow through linear skip connection (W_skip)
+    """
+
+    def __init__(
+        self,
+        model: HookedSAETransformer,
+        transcoders: dict[int, "JumpReLUSkipTranscoder"],
+        cache: ActivationCache,
+    ):
+        self.model = model
+        self.transcoders = transcoders
+        self.cache = cache  # From FreezeHooks.cache_frozen_values
+        self.handles: list = []
+        self.transcoder_acts: dict[int, Tensor] = {}  # layer -> feature activations
+        self.transcoder_output: dict[int, Tensor] = {}  # layer -> transcoder reconstruction
+
+    # SOLUTION
+    def install(self):
+        """Install hooks for all transcoders."""
+        for layer, tc in self.transcoders.items():
+            # Get the LN-normalised MLP input from the cache
+            ln_input_name = tc.cfg.metadata.hook_name  # e.g. "blocks.0.ln2.hook_normalized"
+            mlp_out_name = ln_input_name.replace("ln2.hook_normalized", "hook_mlp_out")
+
+            # Compute transcoder activations (no gradient needed for this)
+            with t.no_grad():
+                ln_input = self.cache[ln_input_name]
+                tc_acts = tc.encode(ln_input)
+                tc_output = tc.decode(tc_acts)
+                self.transcoder_acts[layer] = tc_acts.detach()
+                self.transcoder_output[layer] = tc_output.detach()
+
+            def make_skip_hook(layer_idx: int, tc_ref: "JumpReLUSkipTranscoder"):
+                def hook_fn(module, input, output):
+                    # Get LN-normalised input for skip connection
+                    ln_input = self.cache[tc_ref.cfg.metadata.hook_name]
+                    # Compute skip connection (this is differentiable)
+                    skip = ln_input @ tc_ref.W_skip
+                    # Skip connection trick: forward gives mlp_out, backward gives skip grad
+                    return skip + (output - skip).detach()
+
+                return hook_fn
+
+            hook_point = self.model.hook_dict[mlp_out_name]
+            handle = hook_point.register_forward_hook(make_skip_hook(layer, tc))
+            self.handles.append(handle)
+
+    # END SOLUTION
+    # EXERCISE
+    # def install(self):
+    #     """Install hooks for all transcoders."""
+    #     raise NotImplementedError()
+    # END EXERCISE
+
+    def remove(self):
+        """Remove all hooks."""
+        for handle in self.handles:
+            handle.remove()
+        self.handles.clear()
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    # Test: verify the skip connection trick gives correct forward pass
+    freeze = FreezeHooks(gemma)
+    cache = freeze.cache_frozen_values(tokens)
+
+    tc_hooks = TranscoderReplacementHooks(gemma, transcoders, cache)
+    tc_hooks.install()
+
+    with freeze:
+        logits_with_hooks = gemma(tokens)
+
+    tc_hooks.remove()
+
+    # Compare with original logits
+    logits_original = gemma(tokens)
+
+    print(f"Max difference in logits: {(logits_with_hooks - logits_original).abs().max().item():.6f}")
+    print("(Should be ~0 since the skip trick preserves forward pass values)")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Building the Attribution Graph
+
+Now that we can linearise the model, we need to define the **nodes** and **edges** of our attribution graph.
+
+### Salient logit selection
+
+Our output nodes are **logit directions** - the unembedding vectors for the top predicted tokens. Rather than using all tokens in the vocabulary (which would be wasteful), we select only the **salient** ones: those that account for most of the model's probability mass.
+
+Specifically, we take the top-k tokens by predicted probability (choosing k so that these tokens account for at least some threshold fraction of total probability, or using a fixed k like 3-5), and we use their **demeaned** unembedding vectors as reading directions.
+
+Why demean? The logit lens tells us that the residual stream at the final position gets multiplied by the unembedding matrix `W_U` to produce logits. But a constant vector added to the residual stream affects all logits equally and doesn't change the softmax output. So we subtract the mean of `W_U` columns from each selected column to focus on what makes this token's logit different from the average.
 """
 
 # ! CELL TYPE: markdown
@@ -2901,20 +2998,11 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
->
+> >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Implement the function below. It should:
-
-1. Compute softmax probabilities from the raw logits
-2. Take the top `max_n_logits` tokens by probability
-3. Find the smallest subset whose cumulative probability reaches `desired_logit_prob`
-4. Return the token indices, probabilities, and **demeaned** unembedding vectors
-
-Why demean? The mean of the unembedding matrix across vocabulary tokens acts as a constant bias that doesn't carry token-specific information. By subtracting it, we isolate the direction that specifically promotes each token.
-
-Note: the unembedding matrix `W_U` has shape `(d_model, d_vocab)`.
+Implement the function that selects the top predicted tokens and returns their demeaned unembedding vectors (which will serve as reading vectors for our output nodes).
 """
 
 # ! CELL TYPE: code
@@ -2923,81 +3011,89 @@ Note: the unembedding matrix `W_U` has shape `(d_model, d_vocab)`.
 
 
 def compute_salient_logits(
-    logits: t.Tensor,
-    W_U: t.Tensor,
-    max_n_logits: int = 10,
-    desired_logit_prob: float = 0.95,
-) -> tuple[t.Tensor, t.Tensor, t.Tensor]:
-    """Select the smallest set of top logits whose cumulative prob >= desired_logit_prob.
+    model: HookedSAETransformer,
+    logits: Float[Tensor, "batch seq d_vocab"],
+    n_output_nodes: int = 3,
+) -> tuple[Float[Tensor, "n_output d_model"], list[tuple[str, float]]]:
+    """
+    Select the top predicted tokens and return their demeaned W_U columns.
 
     Args:
-        logits: (d_vocab,) raw logit vector for a single position.
-        W_U: (d_model, d_vocab) unembedding matrix.
-        max_n_logits: Hard cap on the number of logits to select.
-        desired_logit_prob: Cumulative probability threshold.
+        model: The transformer model.
+        logits: Full logit tensor from model forward pass.
+        n_output_nodes: Number of top tokens to select.
 
     Returns:
-        logit_indices: (k,) vocabulary token ids of the selected logits.
-        logit_probs: (k,) softmax probabilities of the selected logits.
-        demeaned_vecs: (k, d_model) unembedding columns for each selected logit, with the
-            mean unembedding vector subtracted.
+        reading_vecs: Demeaned unembedding vectors for top tokens, shape (n_output, d_model).
+        top_token_info: List of (token_string, probability) tuples for the selected tokens.
     """
+    # SOLUTION
+    # Get probabilities for the last sequence position
+    final_logits = logits[0, -1]  # (d_vocab,)
+    probs = t.softmax(final_logits, dim=-1)
+
+    # Get top-k tokens
+    top_probs, top_tokens = probs.topk(n_output_nodes)
+
+    # Get the unembedding matrix and select columns for top tokens
+    W_U = model.W_U  # (d_model, d_vocab)
+    selected_cols = W_U[:, top_tokens].T  # (n_output, d_model)
+
+    # Demean: subtract the mean unembedding vector
+    W_U_mean = W_U.mean(dim=-1)  # (d_model,)
+    reading_vecs = selected_cols - W_U_mean.unsqueeze(0)
+
+    # Get token strings
+    top_token_info = [(model.tokenizer.decode(tok.item()), prob.item()) for tok, prob in zip(top_tokens, top_probs)]
+
+    return reading_vecs, top_token_info
+    # END SOLUTION
     # EXERCISE
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    probs = t.softmax(logits.float(), dim=-1)
-    top_p, top_idx = t.topk(probs, max_n_logits)
-    cutoff = int(t.searchsorted(t.cumsum(top_p, 0), desired_logit_prob)) + 1
-    top_p, top_idx = top_p[:cutoff], top_idx[:cutoff]
 
-    cols = W_U[:, top_idx]  # (d_model, k)
-    demean = W_U.mean(dim=-1, keepdim=True)  # (d_model, 1)
-    demeaned_vecs = (cols - demean).T  # (k, d_model)
-
-    return top_idx, top_p, demeaned_vecs
-    # END SOLUTION
-
-
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    tests.test_compute_salient_logits(compute_salient_logits)
-# END HIDE
-
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-Let's see which logits get selected for our Dallas prompt:
-"""
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
+# ! TAGS: [main]
 
 if MAIN and FLAG_RUN_SECTION_3:
-    prompt = "The capital of the state containing Dallas is"
-    tokens = replacement_model.ensure_tokenized(prompt)
-    with t.no_grad():
-        logits = replacement_model(tokens.unsqueeze(0))
-
-    logit_idx, logit_p, logit_vecs = compute_salient_logits(logits[0, -1], replacement_model.unembed.W_U)
-
-    print("Selected logit tokens:")
-    for i, (idx, p) in enumerate(zip(logit_idx, logit_p)):
-        token_str = replacement_model.tokenizer.decode(idx)
-        print(f"  {i}: {token_str!r} (prob={p:.4f})")
-    print(f"Cumulative probability: {logit_p.sum():.4f}")
+    reading_vecs, top_token_info = compute_salient_logits(gemma, logits_original)
+    print("Top predicted tokens:")
+    for tok_str, prob in top_token_info:
+        print(f"  {tok_str!r}: p={prob:.4f}")
+    print(f"Reading vectors shape: {reading_vecs.shape}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Computing Direct Effects
+### The reading/writing vector abstraction
 
-This is the core of the attribution algorithm. We'll use the `ReplacementModel`'s built-in attribution infrastructure (`setup_attribution` and `compute_batch`) to compute direct effects between all active features and our selected logit nodes.
+Now we need to understand the **reading and writing vectors** for each node type. This is the conceptual core of attribution graphs.
+
+Every feature (transcoder latent) in the model interacts with the residual stream in two ways:
+
+1. **Writing**: When a feature fires, it adds `activation * W_dec[feature]` to the residual stream. The **writing vector** is `activation * W_dec[feature]`. This is what the feature contributes.
+
+2. **Reading**: A feature fires based on how much the residual stream aligns with its encoder direction. The **reading vector** is `W_enc.T[feature]` (the encoder column for this feature). This is what the feature looks for.
+
+For different node types:
+
+| Node type | Writing vector | Reading vector |
+|-----------|---------------|----------------|
+| **Token embedding** | The token embedding vector | None (embeddings are inputs) |
+| **Transcoder feature** | `activation * W_dec[feature]` | `W_enc.T[feature]` |
+| **MLP error** | `mlp_output - transcoder_reconstruction` | None (error term doesn't read) |
+| **Output logit** | None (logits are outputs) | Demeaned `W_U[:, token]` |
+
+An edge weight from node A to node B is computed by:
+1. Taking A's writing vector
+2. Mapping it through the frozen intermediate layers (attention + skip connections) between A and B
+3. Taking the dot product with B's reading vector
+
+In the **automatic** (gradient-based) method, we don't need to do step 2 explicitly - instead, we inject B's reading vector as a gradient seed and do a backward pass through the frozen model, which implicitly computes the mapping. The edge weight is then the dot product of the resulting gradient with A's writing vector.
 """
 
 # ! CELL TYPE: markdown
@@ -3005,22 +3101,32 @@ This is the core of the attribution algorithm. We'll use the `ReplacementModel`'
 # ! TAGS: []
 
 r"""
-### Exercise - explore the attribution context
+### Exercise - implement `build_graph_nodes`
 
 > ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
+> Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
-> You should spend up to 10-15 minutes on this exercise.
+> >
+> You should spend up to 20-30 minutes on this exercise.
 > ```
 
-The `model.setup_attribution(input_ids)` method runs a forward pass and records everything needed for attribution:
+Now implement the function that builds all graph nodes and their reading/writing vectors. The `NodeInfo` dataclass stores metadata about each node, and we return flat tensors of reading and writing vectors indexed by node.
 
-- **`ctx.activation_matrix`**: A sparse 3D tensor of shape `(n_layers, n_pos, d_transcoder)` containing the non-zero transcoder feature activations.
-- **`ctx.encoder_vecs`**: The encoder vectors (reading directions) for all active features.
-- **`ctx.logits`**: The model's logits from the clean forward pass.
+We only include features that are **active** (have non-zero activation) at each position, and we exclude features at the first `start_posn` positions (which are chat formatting tokens).
 
-Write a function that summarizes the active features found by `setup_attribution`:
+The node ordering should be: [input embeddings] [layer 0 features] [layer 0 error] [layer 1 features] ... [layer N-1 error] [output logits]. This ordering is important because it makes the adjacency matrix **lower triangular** (information only flows from earlier to later layers), which means the matrix is **nilpotent** - a property we'll exploit later for efficient influence computation.
+
+<details><summary>Hint - what "active features" means</summary>
+
+For each layer and each position (from `start_posn` onwards), find which features have non-zero activation. Create one node per active feature per position. The writing vector for each such node is `activation * W_dec[feature_idx]` and the reading vector is `W_enc.T[feature_idx]`.
+
+</details>
+
+<details><summary>Hint - MLP error nodes</summary>
+
+At each position, the transcoder doesn't perfectly reconstruct the MLP output. The difference `mlp_output - transcoder_reconstruction` is the **MLP error term**. We include one error node per position per layer, with its writing vector being this error and no reading vector (zeros).
+
+</details>
 """
 
 # ! CELL TYPE: code
@@ -3028,198 +3134,227 @@ Write a function that summarizes the active features found by `setup_attribution
 # ! TAGS: []
 
 
-def summarize_active_features(ctx, model, input_ids: t.Tensor) -> None:
-    """Print a summary of the active features found during the forward pass."""
-    activation_matrix = ctx.activation_matrix
-    # EXERCISE
-    # # YOUR CODE HERE - extract the shape, number of active features, and per-layer counts
-    # # from the activation_matrix and print a summary.
-    # # Hint: activation_matrix.indices() returns (layers, positions, feature_indices),
-    # # and activation_matrix._nnz() returns the total number of non-zero entries.
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    feat_layers, feat_pos, feat_idx = activation_matrix.indices()
-    n_layers, n_pos, d_transcoder = activation_matrix.shape
-
-    print(f"Input tokens: {n_pos}")
-    print(f"Model layers: {n_layers}")
-    print(f"Transcoder dictionary size: {d_transcoder}")
-    print(f"Total active features: {activation_matrix._nnz()}")
-    print(f"Average active features per (layer, position): {activation_matrix._nnz() / (n_layers * n_pos):.1f}")
-    print()
-    for layer in range(min(n_layers, 5)):
-        n_feats = (feat_layers == layer).sum().item()
-        print(f"  Layer {layer}: {n_feats} active features")
-    if n_layers > 5:
-        print(f"  ... ({n_layers - 5} more layers)")
-    # END SOLUTION
+class NodeType(Enum):
+    EMBEDDING = "embedding"
+    LATENT = "latent"
+    MLP_ERROR = "mlp_error"
+    LOGIT = "logit"
 
 
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    ctx = replacement_model.setup_attribution(tokens)
-    summarize_active_features(ctx, replacement_model, tokens)
-# END HIDE
+@dataclass
+class NodeInfo:
+    """Metadata about a single node in the attribution graph."""
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
+    node_type: NodeType
+    layer: int | str  # "E" for embeddings, layer_idx for features, "L" for logits
+    ctx_idx: int  # sequence position
+    feature: int  # feature index (token ID for embeds, feature ID for latents, token ID for logits)
+    activation: float = 0.0  # feature activation (for latent nodes)
+    token_prob: float = 0.0  # probability (for logit nodes)
+    str_token: str = ""  # string representation (for embed/logit nodes)
+    label: str = ""  # human-readable label
 
-r"""
-### Exercise - compute attribution edges
-
-> ```yaml
-> Difficulty: 🔴🔴🔴🔴⚪
-> Importance: 🔵🔵🔵🔵🔵
->
-> You should spend up to 30-45 minutes on this exercise.
-> ```
-
-This is the core exercise. You'll compute the direct effect of every active feature on every logit node, and of every active feature on every other active feature, using batched backward passes.
-
-The attribution context provides `ctx.compute_batch(layers, positions, inject_values, retain_graph)`, which:
-- Takes a batch of (layer, position, inject_value) triples
-- Injects each `inject_value` as a gradient seed at the given (layer, position) in the residual stream
-- Collects the resulting gradient at all source (feature + error + embed) positions
-- Returns a matrix of shape `(batch_size, n_source_nodes)` containing the direct effects
-
-The function has two phases:
-
-**Phase 1 (logit attribution):** For each batch of logit nodes, we inject the demeaned unembedding vectors (from `compute_salient_logits`) at `layer=n_layers, position=n_pos-1` (the final position after all transformer layers), and read off the gradients at all upstream feature/error/embed nodes.
-
-**Phase 2 (feature attribution):** For each batch of active features, we inject their encoder vectors at their respective (layer, position), and read off gradients from all upstream nodes.
-
-Before computing any backward passes, we need to run one forward pass with the replacement model hooks installed. This is done with `ctx.install_hooks(model)`, which returns a context manager. Inside that context, we run `model.forward(input_ids, stop_at_layer=n_layers)` and apply the final LayerNorm.
-
-Important: set `retain_graph=True` on all but the last `compute_batch` call, otherwise PyTorch will free the computation graph after the first backward pass.
-"""
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
+    @property
+    def node_id(self) -> str:
+        return f"{self.layer}_{self.feature}_{self.ctx_idx}"
 
 
-def compute_attribution_edges(
-    ctx,
-    model: ReplacementModel,
-    input_ids: t.Tensor,
-    logit_vecs: t.Tensor,
-    batch_size: int = 64,
-) -> tuple[t.Tensor, t.Tensor]:
-    """Compute the attribution edge matrix for all logit and feature nodes.
+@dataclass
+class GraphNodes:
+    """Container for all nodes in an attribution graph, with their reading/writing vectors."""
+
+    nodes: list[NodeInfo] = field(default_factory=list)
+    writing_vecs: Tensor | None = None  # (n_nodes, d_model) or None
+    reading_vecs: Tensor | None = None  # (n_nodes, d_model) or None
+    node_range_dict: dict = field(default_factory=dict)  # layer -> (start_idx, end_idx)
+    seq_len: int = 0
+    n_layers: int = 0
+
+
+def build_graph_nodes(
+    model: HookedSAETransformer,
+    transcoders: dict[int, "JumpReLUSkipTranscoder"],
+    cache: ActivationCache,
+    tc_hooks: TranscoderReplacementHooks,
+    reading_vecs_logit: Float[Tensor, "n_output d_model"],
+    top_token_info: list[tuple[str, float]],
+    tokens: Int[Tensor, "1 seq"],
+    start_posn: int = 4,
+    feature_threshold: float = 0.0,
+) -> GraphNodes:
+    """
+    Build all graph nodes with their reading and writing vectors.
 
     Args:
-        ctx: Attribution context from model.setup_attribution()
-        model: The ReplacementModel
-        input_ids: 1D tensor of token ids
-        logit_vecs: (n_logits, d_model) demeaned unembedding vectors
-        batch_size: Number of nodes to process per backward pass
+        model: The transformer model.
+        transcoders: Dict mapping layer -> transcoder.
+        cache: Activation cache from forward pass.
+        tc_hooks: TranscoderReplacementHooks with computed activations.
+        reading_vecs_logit: Demeaned W_U columns for output nodes.
+        top_token_info: List of (token_string, probability) for output nodes.
+        tokens: Input token IDs, shape (1, seq).
+        start_posn: First position to include (masks chat formatting tokens).
+        feature_threshold: Minimum activation threshold for including features.
 
     Returns:
-        edge_matrix: (n_logits + n_features, n_source_nodes) dense matrix of direct effects,
-            where the first n_logits rows are logit attribution and the remaining rows are
-            feature attribution.
-        row_to_node_index: (n_logits + n_features,) mapping from row indices in edge_matrix
-            to original node indices in the full graph.
+        GraphNodes containing all nodes, their reading/writing vectors, and index ranges.
     """
-    activation_matrix = ctx.activation_matrix
-    feat_layers, feat_pos, _ = activation_matrix.indices()
-    n_layers, n_pos, _ = activation_matrix.shape
-    n_features = activation_matrix._nnz()
-    n_logits = logit_vecs.shape[0]
+    # SOLUTION
+    seq_len = tokens.shape[1]
+    n_layers = len(transcoders)
+    d_model = model.cfg.d_model
+    str_tokens = [model.tokenizer.decode(t_id.item()) for t_id in tokens[0]]
 
-    logit_offset = n_features + (n_layers + 1) * n_pos
-    total_source_nodes = logit_offset + n_logits
+    all_nodes: list[NodeInfo] = []
+    all_writing: list[Tensor] = []
+    all_reading: list[Tensor] = []
+    node_range_dict = {}
 
-    edge_matrix = t.zeros(n_logits + n_features, total_source_nodes)
-    row_to_node_index = t.zeros(n_logits + n_features, dtype=t.int32)
+    # 1. Input (embedding) nodes - one per token position
+    start_idx = 0
+    embed_vecs = cache["blocks.0.hook_resid_pre"][0]  # (seq, d_model) - the token embeddings
+    for pos in range(seq_len):
+        all_nodes.append(
+            NodeInfo(
+                node_type=NodeType.EMBEDDING,
+                layer="E",
+                ctx_idx=pos,
+                feature=tokens[0, pos].item(),
+                str_token=str_tokens[pos],
+            )
+        )
+        all_writing.append(embed_vecs[pos])
+        all_reading.append(t.zeros(d_model, device=embed_vecs.device))
+    node_range_dict["E"] = (start_idx, len(all_nodes))
 
+    # 2. Intermediate nodes - per layer, per position: active features + error
+    for layer in range(n_layers):
+        tc = transcoders[layer]
+        layer_start = len(all_nodes)
+
+        tc_acts = tc_hooks.transcoder_acts[layer][0]  # (seq, d_enc)
+        tc_output = tc_hooks.transcoder_output[layer][0]  # (seq, d_model)
+
+        # Get MLP output from cache for error computation
+        mlp_out_name = tc.cfg.metadata.hook_name.replace("ln2.hook_normalized", "hook_mlp_out")
+        mlp_output = cache[mlp_out_name][0]  # (seq, d_model)
+
+        W_dec = tc.W_dec.detach()  # (d_enc, d_model)
+        W_enc_T = tc.W_enc.detach().T  # (d_enc, d_model)
+
+        for pos in range(start_posn, seq_len):
+            acts = tc_acts[pos]  # (d_enc,)
+            # Find active features
+            active_mask = acts > feature_threshold
+            active_indices = t.where(active_mask)[0]
+
+            for feat_idx in active_indices:
+                feat_act = acts[feat_idx].item()
+                all_nodes.append(
+                    NodeInfo(
+                        node_type=NodeType.LATENT,
+                        layer=layer,
+                        ctx_idx=pos,
+                        feature=feat_idx.item(),
+                        activation=feat_act,
+                    )
+                )
+                # Writing vector: activation * decoder direction
+                all_writing.append(feat_act * W_dec[feat_idx])
+                # Reading vector: encoder direction
+                all_reading.append(W_enc_T[feat_idx])
+
+            # MLP error node for this position
+            mlp_error = mlp_output[pos] - tc_output[pos]
+            all_nodes.append(
+                NodeInfo(
+                    node_type=NodeType.MLP_ERROR,
+                    layer=layer,
+                    ctx_idx=pos,
+                    feature=0,
+                )
+            )
+            all_writing.append(mlp_error.detach())
+            all_reading.append(t.zeros(d_model, device=embed_vecs.device))
+
+        node_range_dict[layer] = (layer_start, len(all_nodes))
+
+    # 3. Output (logit) nodes
+    logit_start = len(all_nodes)
+    for i, (tok_str, prob) in enumerate(top_token_info):
+        all_nodes.append(
+            NodeInfo(
+                node_type=NodeType.LOGIT,
+                layer="L",
+                ctx_idx=seq_len - 1,
+                feature=i,
+                token_prob=prob,
+                str_token=tok_str,
+            )
+        )
+        all_writing.append(t.zeros(d_model, device=embed_vecs.device))
+        all_reading.append(reading_vecs_logit[i])
+    node_range_dict["L"] = (logit_start, len(all_nodes))
+
+    graph = GraphNodes(
+        nodes=all_nodes,
+        writing_vecs=t.stack(all_writing),
+        reading_vecs=t.stack(all_reading),
+        node_range_dict=node_range_dict,
+        seq_len=seq_len,
+        n_layers=n_layers,
+    )
+    return graph
+    # END SOLUTION
     # EXERCISE
-    # # YOUR CODE HERE
-    # # Step 1: Run the forward pass inside ctx.install_hooks(model)
-    # # Step 2: Logit attribution - for each batch of logit vecs, call ctx.compute_batch
-    # #         with layer=n_layers, position=n_pos-1
-    # # Step 3: Feature attribution - for each batch of active features, call ctx.compute_batch
-    # #         with the feature's layer, position, and encoder_vec
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    # Step 1: forward pass with replacement model hooks
-    with ctx.install_hooks(model):
-        residual = model.forward(input_ids.expand(batch_size, -1), stop_at_layer=model.cfg.n_layers)
-        ctx._resid_activations[-1] = model.ln_final(residual)
-
-    # Step 2: logit attribution
-    for i in range(0, n_logits, batch_size):
-        batch = logit_vecs[i : i + batch_size]
-        rows = ctx.compute_batch(
-            layers=t.full((batch.shape[0],), n_layers),
-            positions=t.full((batch.shape[0],), n_pos - 1),
-            inject_values=batch,
-        )
-        edge_matrix[i : i + batch.shape[0], :logit_offset] = rows.cpu()
-        row_to_node_index[i : i + batch.shape[0]] = t.arange(i, i + batch.shape[0]) + logit_offset
-
-    # Step 3: feature attribution
-    st = n_logits
-    for i in range(0, n_features, batch_size):
-        end = min(i + batch_size, n_features)
-        idx_batch = t.arange(i, end)
-        rows = ctx.compute_batch(
-            layers=feat_layers[idx_batch],
-            positions=feat_pos[idx_batch],
-            inject_values=ctx.encoder_vecs[idx_batch],
-            retain_graph=(end < n_features),
-        )
-        edge_matrix[st : st + rows.shape[0], :logit_offset] = rows.cpu()
-        row_to_node_index[st : st + rows.shape[0]] = idx_batch
-        st += rows.shape[0]
-    # END SOLUTION
-
-    return edge_matrix, row_to_node_index
 
 
-# HIDE
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
 if MAIN and FLAG_RUN_SECTION_3:
-    ctx = replacement_model.setup_attribution(tokens)
-    logit_idx, logit_p, logit_vecs = compute_salient_logits(ctx.logits[0, -1], replacement_model.unembed.W_U)
-    edge_matrix, row_to_node_index = compute_attribution_edges(
-        ctx, replacement_model, tokens, logit_vecs, batch_size=64
+    graph = build_graph_nodes(
+        model=gemma,
+        transcoders=transcoders,
+        cache=cache,
+        tc_hooks=tc_hooks,
+        reading_vecs_logit=reading_vecs,
+        top_token_info=top_token_info,
+        tokens=tokens,
+        start_posn=START_POSN,
     )
 
-    n_features = ctx.activation_matrix._nnz()
-    n_logits = len(logit_idx)
-    print(f"Edge matrix shape: {edge_matrix.shape}")
-    print(f"Logit rows (first {n_logits}): {edge_matrix[:n_logits].abs().sum():.2f} total abs weight")
-    print(f"Feature rows (remaining {n_features}): {edge_matrix[n_logits:].abs().sum():.2f} total abs weight")
-    print(f"Sparsity: {(edge_matrix == 0).float().mean():.2%}")
-    assert edge_matrix.abs().sum() > 0, "Edge matrix should have non-zero entries!"
-    print("Edge computation looks correct!")
-# END HIDE
+    # Print some stats
+    n_embeds = sum(1 for n in graph.nodes if n.node_type == NodeType.EMBEDDING)
+    n_latents = sum(1 for n in graph.nodes if n.node_type == NodeType.LATENT)
+    n_errors = sum(1 for n in graph.nodes if n.node_type == NodeType.MLP_ERROR)
+    n_logits = sum(1 for n in graph.nodes if n.node_type == NodeType.LOGIT)
+    print(f"Graph has {len(graph.nodes)} total nodes:")
+    print(f"  {n_embeds} embedding nodes")
+    print(f"  {n_latents} feature nodes")
+    print(f"  {n_errors} MLP error nodes")
+    print(f"  {n_logits} logit output nodes")
+    print(f"Writing vectors shape: {graph.writing_vecs.shape}")
+    print(f"Reading vectors shape: {graph.reading_vecs.shape}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-### Exercise - assemble the graph
+### Attribution setup
 
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵⚪⚪
->
-> You should spend up to 10-15 minutes on this exercise.
-> ```
+Before computing the adjacency matrix, we need a helper that sets up the backward pass properly. The idea is:
 
-Now we package the edge matrix into a `Graph` object. The graph's adjacency matrix has a specific node ordering:
+1. Run a forward pass through the frozen model (with `FreezeHooks` and `TranscoderReplacementHooks` active)
+2. At the target node's position and layer, compute the dot product of the residual stream with the target's reading vector
+3. Backpropagate this scalar through the frozen model
+4. Read off the gradients at each source node's position, and contract them with the source's writing vector
 
-1. **Active feature nodes** (one per active transcoder feature)
-2. **Error nodes** (one per layer per position): the transcoder reconstruction error
-3. **Embed nodes** (one per token position): the token embeddings
-4. **Logit nodes** (one per selected output token)
-
-We need to build a square adjacency matrix where rows represent targets and columns represent sources. The logit rows (from `edge_matrix[:n_logits]`) go at the bottom of the full matrix, and the feature rows (from `edge_matrix[n_logits:]`) go at the top.
+We'll give you this setup function, which handles steps 1-3 for a batch of target nodes. Read through it carefully.
 """
 
 # ! CELL TYPE: code
@@ -3227,87 +3362,301 @@ We need to build a square adjacency matrix where rows represent targets and colu
 # ! TAGS: []
 
 
-from circuit_tracer.graph import Graph  # object to store full attribution graph, as nodes
-
-
-def assemble_graph(
-    edge_matrix: t.Tensor,
-    row_to_node_index: t.Tensor,
-    ctx,
-    model: ReplacementModel,
-    input_ids: t.Tensor,
-    logit_idx: t.Tensor,
-    logit_p: t.Tensor,
-):
-    """Package the edge matrix into a Graph object with the correct node ordering.
-
-    The full adjacency matrix is square with dimensions:
-        n_features + n_error_nodes + n_embed_nodes + n_logits
-
-    where n_error_nodes = n_layers * n_pos and n_embed_nodes = n_pos.
+def setup_attribution(
+    model: HookedSAETransformer,
+    tokens: Tensor,
+    freeze: FreezeHooks,
+    target_reading_vecs: Float[Tensor, "batch d_model"],
+    target_positions: Int[Tensor, " batch"],
+    target_layers: list[int | str],
+) -> dict[str, Tensor]:
     """
+    Run forward pass through frozen model, inject reading vectors as gradient seeds at
+    target positions/layers, and return gradients at all residual stream positions.
 
-    activation_matrix = ctx.activation_matrix
-    n_features = activation_matrix._nnz()
-    n_logits = len(logit_idx)
+    This function handles the "backward pass" part of attribution: for each target node,
+    it computes d(objective)/d(resid) at every layer, where objective = dot(resid[target_pos], reading_vec).
 
-    # EXERCISE
-    # # YOUR CODE HERE - build the full square adjacency matrix and return a Graph object.
-    # # The edge_matrix has logit rows first (indices 0..n_logits-1) then feature rows.
-    # # In the full adjacency matrix, feature rows go at the top and logit rows at the bottom.
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    # Sort rows so features are in their original order
-    edge_matrix = edge_matrix[row_to_node_index.argsort()]
+    Args:
+        model: The transformer model.
+        tokens: Input tokens, shape (1, seq).
+        freeze: FreezeHooks with cached frozen values.
+        target_reading_vecs: Reading vectors for target nodes, shape (batch, d_model).
+        target_positions: Sequence positions of target nodes, shape (batch,).
+        target_layers: Layer identifiers for target nodes (int for intermediate, "L" for logits).
 
-    total_nodes = edge_matrix.shape[1]
-    full_adj = t.zeros(total_nodes, total_nodes)
-    full_adj[:n_features] = edge_matrix[:n_features]
-    full_adj[-n_logits:] = edge_matrix[n_features:]
+    Returns:
+        grads: Dict mapping hook names -> gradient tensors at each residual stream position.
+    """
+    batch_size = target_reading_vecs.shape[0]
 
-    return Graph(
-        input_string=model.tokenizer.decode(input_ids),
-        input_tokens=input_ids,
-        logit_tokens=logit_idx,
-        logit_probabilities=logit_p,
-        active_features=activation_matrix.indices().T,
-        activation_values=activation_matrix.values(),
-        selected_features=t.arange(n_features),
-        adjacency_matrix=full_adj,
-        cfg=model.cfg,
-        scan=model.scan,
-    )
-    # END SOLUTION
+    # We need gradients w.r.t. the residual stream at every layer's post-MLP position,
+    # plus the input embeddings. We'll use retain_grad on these.
+    grad_targets = {}
 
+    def make_grad_capture_hook(name: str):
+        def hook_fn(module, input, output):
+            output.retain_grad()
+            grad_targets[name] = output
 
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    graph = assemble_graph(edge_matrix, row_to_node_index, ctx, replacement_model, tokens, logit_idx, logit_p)
-    n_total = graph.adjacency_matrix.shape[0]
-    n_feat = len(graph.selected_features)
-    n_log = len(graph.logit_tokens)
-    n_tok = len(graph.input_tokens)
-    print(f"Graph assembled: {n_total} total nodes")
-    print(f"  {n_feat} feature nodes")
-    print(f"  {n_total - n_feat - n_log - n_tok} error nodes")
-    print(f"  {n_tok} embed nodes")
-    print(f"  {n_log} logit nodes")
-    assert graph.adjacency_matrix.shape[0] == graph.adjacency_matrix.shape[1], "Adjacency matrix must be square"
-    assert graph.adjacency_matrix.abs().sum() > 0, "Adjacency matrix has no edges!"
-    print("Graph assembly looks correct!")
-# END HIDE
+        return hook_fn
+
+    # Install gradient capture hooks at resid_post and resid_mid for every layer, and at the input
+    grad_handles = []
+    for layer in range(model.cfg.n_layers):
+        name = f"blocks.{layer}.hook_resid_post"
+        handle = model.hook_dict[name].register_forward_hook(make_grad_capture_hook(name))
+        grad_handles.append(handle)
+
+        # Also capture resid_mid (after attention, before MLP) - needed for intermediate targets
+        mid_name = f"blocks.{layer}.hook_resid_mid"
+        handle = model.hook_dict[mid_name].register_forward_hook(make_grad_capture_hook(mid_name))
+        grad_handles.append(handle)
+
+    # Also capture the embedding output
+    embed_name = "blocks.0.hook_resid_pre"
+    handle = model.hook_dict[embed_name].register_forward_hook(make_grad_capture_hook(embed_name))
+    grad_handles.append(handle)
+
+    with freeze:
+        # Forward pass (we don't need the logits return value - objectives are computed from residuals)
+        # NOTE: the reference JAX implementation explicitly centers input activations (subtracts mean
+        # along d_model) before computing jacobians. We skip this here for simplicity, but if your
+        # attribution graphs give unexpected results, input centering is one thing to check.
+        model(tokens.expand(batch_size, -1))
+
+        # Compute objectives for each target node
+        objectives = t.zeros(batch_size, device=tokens.device)
+        for i in range(batch_size):
+            pos = target_positions[i]
+            layer = target_layers[i]
+            if layer == "L":
+                # For logit nodes, use the final residual stream (pre-unembedding)
+                resid = grad_targets[f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"][i, pos]
+            else:
+                # For intermediate nodes, use resid_mid at this layer
+                # (after attention, before MLP - this is what the feature reads from)
+                resid = grad_targets[f"blocks.{layer}.hook_resid_mid"][i, pos]
+            objectives[i] = (resid * target_reading_vecs[i]).sum()
+
+        # Backward pass
+        total_objective = objectives.sum()
+        total_objective.backward()
+
+    # Collect gradients
+    grads = {}
+    for name, tensor in grad_targets.items():
+        if tensor.grad is not None:
+            grads[name] = tensor.grad.detach()
+
+    # Cleanup
+    for handle in grad_handles:
+        handle.remove()
+
+    return grads
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Adjacency Matrices
+### Exercise - implement `compute_attribution_matrix`
 
-Now that we have a full (dense) attribution graph, we need to understand which nodes actually matter. The raw graph has thousands of nodes and millions of potential edges, most of which are negligible. **Graph pruning** selects the most influential subgraph.
+> ```yaml
+> Difficulty: 🔴🔴🔴🔴🔴
+> Importance: 🔵🔵🔵🔵🔵
+> >
+> You should spend up to 45-60 minutes on this exercise.
+> This is the hardest and most important exercise in this section.
+> ```
 
-The key concept is **node influence**: the total effect of a node on the output logits, accounting for both direct effects and indirect effects through intermediate nodes.
+Now implement the core attribution algorithm. For each target node (intermediate or output), we:
+
+1. Inject its reading vector as a gradient seed
+2. Run a backward pass through the frozen model
+3. Collect gradients at each source node's position
+4. Contract the gradients with the source's writing vector to get the edge weight
+
+The adjacency matrix `A[target, source]` stores the edge weight from source to target. Note that since our nodes are ordered by layer, this matrix is **strictly lower triangular** (a target can only receive from earlier layers).
+
+**Important**: For memory efficiency, you should process target nodes in batches. The `batch_size` parameter controls how many backward passes we run simultaneously.
+
+The overall approach:
+- Iterate over each target node layer (skip input nodes - they have no incoming edges)
+- For each batch of target nodes in this layer, call `setup_attribution` to get gradients
+- Contract the gradients at each source node position with the source's writing vector
+
+<details><summary>Hint - computing edge weights from gradients</summary>
+
+The gradient at source position `pos` in layer `l` has shape `(batch, d_model)`. The writing vector for source node `j` at position `pos` also has shape `(d_model,)`. The edge weight is their dot product:
+
+```python
+edge_weight = einops.einsum(
+    grad_at_source_pos, writing_vec_source,
+    "batch d_model, d_model -> batch"
+)
+```
+
+You need to figure out which gradient hook name corresponds to each source node's layer.
+
+</details>
+
+<details><summary>Hint - which gradients correspond to which source nodes</summary>
+
+- Source **embedding** nodes at position `pos`: use gradient at `blocks.0.hook_resid_pre` at position `pos`
+- Source **feature/error** nodes at layer `l`, position `pos`: use gradient at `blocks.{l}.hook_resid_post` at position `pos`
+- We never have source **logit** nodes (they're outputs only)
+
+</details>
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def compute_attribution_matrix(
+    model: HookedSAETransformer,
+    tokens: Tensor,
+    graph: GraphNodes,
+    freeze: FreezeHooks,
+    tc_hooks: TranscoderReplacementHooks,
+    batch_size: int = 4,
+    start_posn: int = 4,
+) -> Float[Tensor, "n_nodes n_nodes"]:
+    """
+    Compute the full adjacency matrix for the attribution graph via batched backward passes.
+
+    Args:
+        model: The transformer model.
+        tokens: Input tokens, shape (1, seq).
+        graph: GraphNodes containing all nodes and their reading/writing vectors.
+        freeze: FreezeHooks with cached frozen values.
+        tc_hooks: TranscoderReplacementHooks with installed hooks.
+        batch_size: Number of target nodes to process per backward pass.
+        start_posn: First position to include (masks formatting tokens).
+
+    Returns:
+        Adjacency matrix of shape (n_nodes, n_nodes), where A[j, i] is the edge weight
+        from node i to node j.
+    """
+    # SOLUTION
+    n_nodes = len(graph.nodes)
+    adjacency_matrix = t.zeros(n_nodes, n_nodes, device=tokens.device)
+
+    # Iterate over target node layers (skip embeddings - they don't receive edges)
+    for target_layer_key in list(graph.node_range_dict.keys()):
+        if target_layer_key == "E":
+            continue  # Embeddings are inputs only
+
+        tgt_start, tgt_end = graph.node_range_dict[target_layer_key]
+        target_nodes = graph.nodes[tgt_start:tgt_end]
+
+        if len(target_nodes) == 0:
+            continue
+
+        # Process targets in batches
+        for batch_start in range(0, len(target_nodes), batch_size):
+            batch_end = min(batch_start + batch_size, len(target_nodes))
+            batch_nodes = target_nodes[batch_start:batch_end]
+            actual_batch_size = len(batch_nodes)
+
+            # Prepare target reading vectors and positions
+            target_reading_vecs = graph.reading_vecs[tgt_start + batch_start : tgt_start + batch_end]
+            target_positions = t.tensor([n.ctx_idx for n in batch_nodes], device=tokens.device)
+            target_layers = [n.layer if n.node_type != NodeType.LOGIT else "L" for n in batch_nodes]
+
+            # Run backward pass to get gradients (tc_hooks must already be installed)
+            tc_hooks.install()
+            grads = setup_attribution(
+                model=model,
+                tokens=tokens,
+                freeze=freeze,
+                target_reading_vecs=target_reading_vecs,
+                target_positions=target_positions,
+                target_layers=target_layers,
+            )
+            tc_hooks.remove()
+
+            # Contract gradients with source writing vectors to get edge weights
+            for src_idx in range(n_nodes):
+                src_node = graph.nodes[src_idx]
+
+                # Determine which gradient tensor to use for this source
+                if src_node.node_type == NodeType.EMBEDDING:
+                    grad_name = "blocks.0.hook_resid_pre"
+                elif src_node.node_type in (NodeType.LATENT, NodeType.MLP_ERROR):
+                    grad_name = f"blocks.{src_node.layer}.hook_resid_post"
+                else:
+                    continue  # Logit nodes are targets only, not sources
+
+                if grad_name not in grads:
+                    continue
+
+                # Get gradient at source position and contract with writing vector
+                grad_at_pos = grads[grad_name][:actual_batch_size, src_node.ctx_idx]  # (batch, d_model)
+                writing_vec = graph.writing_vecs[src_idx]  # (d_model,)
+
+                # Edge weight = dot product
+                edge_weights = (grad_at_pos * writing_vec.unsqueeze(0)).sum(-1)  # (batch,)
+
+                # Zero out edges from masked positions
+                if src_node.ctx_idx < start_posn:
+                    edge_weights = t.zeros_like(edge_weights)
+
+                # Store in adjacency matrix
+                for b in range(actual_batch_size):
+                    adjacency_matrix[tgt_start + batch_start + b, src_idx] = edge_weights[b]
+
+    return adjacency_matrix
+    # END SOLUTION
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    adjacency_matrix = compute_attribution_matrix(
+        model=gemma,
+        tokens=tokens,
+        graph=graph,
+        freeze=freeze,
+        tc_hooks=tc_hooks,
+        batch_size=4,
+        start_posn=START_POSN,
+    )
+
+    print(f"Adjacency matrix shape: {adjacency_matrix.shape}")
+    print(f"Non-zero entries: {(adjacency_matrix.abs() > 1e-6).sum().item()}")
+    print(f"Sparsity: {1 - (adjacency_matrix.abs() > 1e-6).float().mean().item():.4%}")
+
+    # Verify lower-triangularity: there should be no edges from later to earlier layers
+    n_embed = graph.node_range_dict["E"][1]
+    print(f"\nUpper triangle norm (should be ~0): {t.triu(adjacency_matrix, diagonal=1).abs().sum().item():.6f}")
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Adjacency Matrices: Normalisation, Influence, and Pruning
+
+We now have a raw adjacency matrix with edge weights between all pairs of nodes. But this matrix is large and dense - we need to prune it down to a sparse, interpretable graph. The pruning process has three steps:
+
+1. **Normalise** the adjacency matrix
+2. Compute **influence** scores for each node (via power iteration)
+3. **Prune** nodes and edges by influence threshold
+
+### Normalisation
+
+We normalise the adjacency matrix row-wise by the sum of absolute values. This makes each row sum to 1 (in absolute value), giving us a proper "transition matrix" interpretation: the normalised weight tells us what fraction of a target node's total incoming signal comes from each source.
+
+$$A_{\text{norm}}[j, :] = \frac{|A[j, :]|}{\sum_i |A[j, i]|}$$
 """
 
 # ! CELL TYPE: markdown
@@ -3320,11 +3669,9 @@ r"""
 > ```yaml
 > Difficulty: 🔴⚪⚪⚪⚪
 > Importance: 🔵🔵⚪⚪⚪
->
+> >
 > You should spend up to 5 minutes on this exercise.
 > ```
-
-The first step in computing influence is to normalize the adjacency matrix. Each row is divided by the sum of its absolute values, so that each row represents a probability distribution over sources. Rows that sum to zero should remain zero (use a clamp to avoid division by zero).
 """
 
 # ! CELL TYPE: code
@@ -3332,24 +3679,44 @@ The first step in computing influence is to normalize the adjacency matrix. Each
 # ! TAGS: []
 
 
-def normalize_matrix(matrix: t.Tensor) -> t.Tensor:
-    """Row-normalize a matrix by absolute values.
-
-    Takes elementwise abs, then divides each row by its sum (clamped to avoid div-by-zero).
+def normalize_matrix(
+    adjacency_matrix: Float[Tensor, "n_nodes n_nodes"],
+) -> Float[Tensor, "n_nodes n_nodes"]:
     """
+    Normalise the adjacency matrix row-wise by absolute value sums.
+
+    Each row is divided by the sum of absolute values in that row, so that
+    |A_norm[j, :]|.sum() = 1 for each j (where possible).
+    """
+    # SOLUTION
+    abs_matrix = adjacency_matrix.abs()
+    row_sums = abs_matrix.sum(dim=1, keepdim=True).clamp(min=1e-8)
+    return abs_matrix / row_sums
+    # END SOLUTION
     # EXERCISE
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    normalized = matrix.abs()
-    return normalized / normalized.sum(dim=1, keepdim=True).clamp(min=1e-10)
-    # END SOLUTION
 
 
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    tests.test_normalize_matrix(normalize_matrix)
-# END HIDE
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Influence via power iteration
+
+The **influence** of a node measures its total (direct + indirect) effect on the output logits. We compute this by propagating the logit node weights backward through the normalised adjacency matrix.
+
+Here's the key insight: because our graph is **layered** (edges only go from earlier to later layers), the adjacency matrix is **strictly lower triangular**. This means $A^{L+1} = 0$ for an $L$-layer model (the matrix is **nilpotent**). So the power series $I + A + A^2 + \ldots + A^L$ converges in exactly $L+1$ terms.
+
+The influence vector is computed by starting from the logit weights and propagating backward:
+
+$$v_0 = w_{\text{logit}}, \quad v_{k+1} = v_k \cdot A_{\text{norm}}, \quad \text{influence} = \sum_{k=0}^{L} v_k + w_{\text{logit}}$$
+
+where $w_{\text{logit}}$ is a vector that has the logit node probabilities at the logit positions and zeros elsewhere.
+
+This is essentially computing how much each node contributes to the output, accounting for all paths through the graph.
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3361,17 +3728,11 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵⚪
->
-> You should spend up to 20-30 minutes on this exercise.
+> >
+> You should spend up to 15-20 minutes on this exercise.
 > ```
 
-Given the normalized adjacency matrix $A$ and a logit weight vector $w$ (with the logit probabilities at the logit node positions and zeros elsewhere), the total influence of each node is:
-
-$$\text{influence} = w A + w A^2 + w A^3 + \ldots$$
-
-We compute this iteratively: start with $v_0 = wA$, then $v_{k+1} = v_k A$, accumulating $\text{influence} = \sum_k v_k$.
-
-**Why does this converge?** Because of the attribution graph's causal structure, features in layer $i$ can only have edges to features in layers $j < i$. This means $A$ is strictly lower-triangular with respect to layer ordering, so $A^L = 0$ where $L$ is the number of layers. The matrix is **nilpotent**, so the iteration always terminates in at most $L$ steps. This is a nice computational property: there is no convergence concern, and the number of iterations is bounded by the network depth.
+Implement the influence computation. The `logit_weights` vector should have the token probabilities at the logit node positions (at the end of the node list) and zeros elsewhere.
 """
 
 # ! CELL TYPE: code
@@ -3380,71 +3741,85 @@ We compute this iteratively: start with $v_0 = wA$, then $v_{k+1} = v_k A$, accu
 
 
 def compute_influence(
-    A: t.Tensor,
-    logit_weights: t.Tensor,
-    max_iter: int = 1000,
-) -> t.Tensor:
-    """Compute total influence of each node on the output logits via power iteration.
+    adjacency_matrix: Float[Tensor, "n_nodes n_nodes"],
+    logit_weights: Float[Tensor, "n_logit_nodes"],
+    n_layers: int,
+) -> Float[Tensor, " n_nodes"]:
+    """
+    Compute the influence of each node on the output, using power iteration on the normalised
+    adjacency matrix.
 
-    The iteration computes: influence = w @ A + w @ A^2 + w @ A^3 + ...
-    and terminates when the current product is all zeros (guaranteed by nilpotency).
+    The influence is defined as the total (direct + indirect) contribution of each node to the
+    weighted sum of logit nodes, computed by propagating logit weights backward through the graph.
 
     Args:
-        A: (n_nodes, n_nodes) normalized adjacency matrix.
-        logit_weights: (n_nodes,) vector with logit probabilities at logit node positions.
-        max_iter: Safety cap on iterations.
+        adjacency_matrix: Raw adjacency matrix, shape (n_nodes, n_nodes).
+        logit_weights: Weights for logit nodes (e.g., probabilities), shape (n_logit_nodes,).
+        n_layers: Number of model layers.
 
     Returns:
-        influence: (n_nodes,) total influence of each node.
+        Influence vector, shape (n_nodes,).
     """
+    # SOLUTION
+    n_nodes = adjacency_matrix.shape[0]
+    n_logit_nodes = logit_weights.shape[0]
+
+    # Normalise the matrix
+    A_norm = normalize_matrix(adjacency_matrix)
+
+    # Initialize influence vector: logit weights at the end, zeros elsewhere
+    influence = t.zeros(n_nodes, device=adjacency_matrix.device)
+    influence[-n_logit_nodes:] = logit_weights
+
+    # Power iteration: propagate backward through the graph
+    acc = t.zeros_like(influence)
+    v = influence.clone()
+
+    for _ in range(n_layers + 1):
+        v = v @ A_norm  # vector-matrix product
+        acc = acc + v
+
+    return acc + influence
+    # END SOLUTION
     # EXERCISE
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    current = logit_weights @ A
-    influence = current.clone()
-    iterations = 0
-    while current.any():
-        if iterations >= max_iter:
-            raise RuntimeError(f"Influence computation failed to converge after {iterations} iterations")
-        current = current @ A
-        influence += current
-        iterations += 1
-    return influence
-    # END SOLUTION
 
 
-# HIDE
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
 if MAIN and FLAG_RUN_SECTION_3:
-    tests.test_compute_influence(compute_influence, normalize_matrix)
-# END HIDE
+    n_logit_nodes = graph.node_range_dict["L"][1] - graph.node_range_dict["L"][0]
+    logit_weights = t.tensor([info.token_prob for info in graph.nodes[-n_logit_nodes:]], device=device)
+
+    influence = compute_influence(adjacency_matrix, logit_weights, n_layers=gemma.cfg.n_layers)
+
+    print(f"Influence shape: {influence.shape}")
+    print("Top 10 most influential nodes:")
+    top_influence = influence.argsort(descending=True)[:10]
+    for idx in top_influence:
+        node = graph.nodes[idx]
+        print(
+            f"  {node.node_type.value} L{node.layer} pos{node.ctx_idx} feat{node.feature}: influence={influence[idx].item():.4f}"
+        )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-Let's visualize the node influence for our Dallas graph:
+### Pruning
+
+With influence scores computed, we can prune the graph in two stages:
+
+1. **Node pruning**: Sort nodes by influence, keep the smallest set whose cumulative influence exceeds a threshold (e.g., 80% of total influence). This removes nodes that have negligible impact.
+
+2. **Edge pruning**: For each remaining edge, compute an "edge score" = normalised edge weight × destination node influence. Sort edges by score and keep the smallest set whose cumulative score exceeds a threshold. Then remove any nodes that have no remaining edges.
+
+After both stages, we have a sparse, interpretable graph containing only the most important nodes and connections.
 """
-
-# ! CELL TYPE: code
-# ! FILTERS: []
-# ! TAGS: []
-
-if MAIN and FLAG_RUN_SECTION_3:
-    n_logits_graph = len(graph.logit_tokens)
-    n_features_graph = len(graph.selected_features)
-    logit_weights = t.zeros(graph.adjacency_matrix.shape[0])
-    logit_weights[-n_logits_graph:] = graph.logit_probabilities
-
-    node_influence = compute_influence(normalize_matrix(graph.adjacency_matrix), logit_weights)
-
-    # Show top-20 most influential feature nodes
-    top_influence, top_indices = node_influence[:n_features_graph].topk(min(20, n_features_graph))
-    print("Top 20 most influential feature nodes:")
-    for rank, (inf, idx) in enumerate(zip(top_influence, top_indices)):
-        feat = graph.active_features[idx]
-        print(f"  {rank}: layer={feat[0].item()}, pos={feat[1].item()}, feat_idx={feat[2].item()}, influence={inf:.4f}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3455,18 +3830,12 @@ r"""
 
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
-> Importance: 🔵🔵🔵🔵⚪
->
-> You should spend up to 25-35 minutes on this exercise.
+> Importance: 🔵🔵🔵⚪⚪
+> >
+> You should spend up to 20-25 minutes on this exercise.
 > ```
 
-Graph pruning has three stages:
-
-1. **Node pruning**: Compute node influence, find the threshold that keeps the top `node_threshold` fraction of total influence, mask out nodes below the threshold. Always keep embed and logit nodes.
-2. **Edge pruning**: For surviving nodes, compute edge influence scores and keep edges above the `edge_threshold` fraction. The edge score for edge $(i, j)$ is $A'_{ij} \cdot (\text{influence}_i + w_i)$, where $A'$ is the normalized pruned matrix and $w_i$ is the logit weight.
-3. **Iterative cleanup**: After pruning edges, some feature/error nodes may have lost all incoming or outgoing edges. Remove them and repeat until stable.
-
-We provide the helper functions `compute_node_influence`, `compute_edge_influence`, and `find_threshold` in `utils.py`.
+Implement the two-stage pruning function. It should return the kept node indices and the pruned adjacency matrix (indexed by the kept nodes only).
 """
 
 # ! CELL TYPE: code
@@ -3475,86 +3844,176 @@ We provide the helper functions `compute_node_influence`, `compute_edge_influenc
 
 
 def prune_graph(
-    graph,
+    adjacency_matrix: Float[Tensor, "n_nodes n_nodes"],
+    logit_weights: Float[Tensor, "n_logit_nodes"],
+    n_layers: int,
     node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
-) -> tuple[t.Tensor, t.Tensor]:
-    """Prune a graph by removing low-influence nodes and edges.
+    edge_threshold: float = 0.85,
+) -> tuple[Int[Tensor, " n_kept"], Float[Tensor, "n_kept n_kept"]]:
+    """
+    Prune the attribution graph by node influence and edge score thresholds.
+
+    Stage 1: Remove nodes whose cumulative influence is below node_threshold.
+    Stage 2: Remove edges whose cumulative score is below edge_threshold, then
+             remove any nodes that no longer participate in any edge.
+
+    Always keeps logit nodes regardless of influence.
 
     Args:
-        graph: The Graph object (from circuit_tracer.graph).
-        node_threshold: Keep nodes contributing to this fraction of total influence.
-        edge_threshold: Keep edges contributing to this fraction of total influence.
+        adjacency_matrix: Raw adjacency matrix, shape (n_nodes, n_nodes).
+        logit_weights: Weights for logit nodes, shape (n_logit_nodes,).
+        n_layers: Number of model layers.
+        node_threshold: Cumulative influence threshold for node pruning.
+        edge_threshold: Cumulative score threshold for edge pruning.
 
     Returns:
-        node_mask: Boolean tensor indicating which nodes to keep.
-        edge_mask: Boolean tensor indicating which edges to keep.
+        kept_indices: Indices of kept nodes in the original node list.
+        pruned_matrix: Adjacency matrix restricted to kept nodes.
     """
-    n_tokens = len(graph.input_tokens)
-    n_logits = len(graph.logit_tokens)
-    n_features = len(graph.selected_features)
+    # SOLUTION
+    n_nodes = adjacency_matrix.shape[0]
+    n_logit_nodes = logit_weights.shape[0]
 
-    logit_weights = t.zeros(graph.adjacency_matrix.shape[0])
-    logit_weights[-n_logits:] = graph.logit_probabilities
+    # === Stage 1: Node pruning ===
 
+    # Compute influence
+    influence = compute_influence(adjacency_matrix, logit_weights, n_layers)
+
+    # Only prune non-logit nodes
+    non_logit_influence = influence[:-n_logit_nodes]
+
+    # Sort by descending influence
+    sorted_indices = non_logit_influence.argsort(descending=True)
+    sorted_values = non_logit_influence[sorted_indices]
+
+    # Find threshold: keep nodes until cumulative influence >= threshold
+    total_inf = sorted_values.sum()
+    if total_inf > 1e-8:
+        normalized = sorted_values / total_inf
+        cumulative = normalized.cumsum(dim=0)
+        # Find the value threshold
+        keep_mask = cumulative <= node_threshold
+        # Always keep at least one more node beyond threshold
+        keep_mask[keep_mask.sum().item()] = True if keep_mask.sum().item() < len(keep_mask) else keep_mask[-1]
+        threshold_value = sorted_values[keep_mask].min()
+        keep_non_logit = sorted_indices[sorted_values >= threshold_value]
+    else:
+        keep_non_logit = t.arange(n_nodes - n_logit_nodes, device=adjacency_matrix.device)
+
+    # Always keep logit nodes
+    logit_indices = t.arange(n_nodes - n_logit_nodes, n_nodes, device=adjacency_matrix.device)
+    kept_after_nodes = t.sort(t.cat([keep_non_logit, logit_indices]))[0].long()
+
+    # Restrict adjacency matrix to kept nodes
+    node_pruned = adjacency_matrix[kept_after_nodes[:, None], kept_after_nodes[None, :]]
+
+    # === Stage 2: Edge pruning ===
+
+    # Recompute influence on the node-pruned matrix
+    influence_pruned = compute_influence(node_pruned, logit_weights, n_layers)
+
+    # Compute edge scores: |A_norm[j,i]| * influence[j]
+    A_norm = normalize_matrix(node_pruned)
+    edge_scores = A_norm * influence_pruned[:, None]
+
+    # Sort edges by score and find threshold
+    flat_scores = edge_scores.reshape(-1)
+    sorted_scores, _ = flat_scores.sort(descending=True)
+    total_score = sorted_scores.sum()
+
+    if total_score > 1e-8:
+        cum_scores = sorted_scores.cumsum(dim=0) / total_score
+        val_idx = (cum_scores >= edge_threshold).long().argmax()
+        score_threshold = sorted_scores[val_idx]
+        edge_mask = edge_scores >= score_threshold
+    else:
+        edge_mask = t.ones_like(node_pruned, dtype=t.bool)
+
+    edge_pruned = node_pruned * edge_mask
+
+    # Remove nodes with no remaining edges (except logit nodes)
+    has_edge = (edge_pruned.abs() > 0).any(dim=0) | (edge_pruned.abs() > 0).any(dim=1)
+    # Always keep logit nodes (they're at the end)
+    n_logit_in_kept = n_logit_nodes
+    has_edge[-n_logit_in_kept:] = True
+
+    kept_in_pruned = t.where(has_edge)[0]
+    final_matrix = edge_pruned[kept_in_pruned[:, None], kept_in_pruned[None, :]]
+
+    # Map back to original indices
+    kept_indices = kept_after_nodes[kept_in_pruned]
+
+    return kept_indices, final_matrix
+    # END SOLUTION
     # EXERCISE
-    # # YOUR CODE HERE
-    # # Step 1: compute node influence, apply threshold, always keep embed + logit nodes
-    # # Step 2: zero out pruned nodes in the adjacency matrix
-    # # Step 3: compute edge influence, apply threshold
-    # # Step 4: iteratively remove nodes that lost all incoming/outgoing edges
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    # Step 1: node pruning
-    node_influence = utils.compute_node_influence(graph.adjacency_matrix, logit_weights)
-    node_mask = node_influence >= utils.find_threshold(node_influence, node_threshold)
-    node_mask[-n_logits - n_tokens :] = True
-
-    # Step 2: zero out pruned nodes
-    pruned_matrix = graph.adjacency_matrix.clone()
-    pruned_matrix[~node_mask] = 0
-    pruned_matrix[:, ~node_mask] = 0
-
-    # Step 3: edge pruning
-    edge_scores = utils.compute_edge_influence(pruned_matrix, logit_weights)
-    edge_mask = edge_scores >= utils.find_threshold(edge_scores.flatten(), edge_threshold)
-
-    # Step 4: iterative cleanup
-    old_node_mask = node_mask.clone()
-    node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
-    node_mask[:n_features] &= edge_mask[:n_features].any(1)
-
-    while not t.all(node_mask == old_node_mask):
-        old_node_mask[:] = node_mask
-        edge_mask[~node_mask] = False
-        edge_mask[:, ~node_mask] = False
-        node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
-        node_mask[:n_features] &= edge_mask[:n_features].any(1)
-    # END SOLUTION
-
-    return node_mask, edge_mask
 
 
-# HIDE
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
 if MAIN and FLAG_RUN_SECTION_3:
-    node_mask, edge_mask = prune_graph(graph, node_threshold=0.8, edge_threshold=0.98)
-    n_total = graph.adjacency_matrix.shape[0]
-    n_kept = node_mask.sum().item()
-    n_edges = edge_mask.sum().item()
-    print(f"Nodes: {n_kept}/{n_total} kept ({n_kept / n_total:.1%})")
-    print(f"Edges: {n_edges} kept ({edge_mask.float().mean():.4%} of all possible)")
-    tests.test_prune_graph(prune_graph, graph)
-# END HIDE
+    kept_indices, pruned_matrix = prune_graph(
+        adjacency_matrix=adjacency_matrix,
+        logit_weights=logit_weights,
+        n_layers=gemma.cfg.n_layers,
+        node_threshold=0.8,
+        edge_threshold=0.85,
+    )
+
+    print(f"Kept {len(kept_indices)} / {len(graph.nodes)} nodes")
+    print(f"Pruned matrix has {(pruned_matrix.abs() > 1e-6).sum().item()} non-zero edges")
+
+    # Show the kept nodes
+    kept_nodes = [graph.nodes[i] for i in kept_indices]
+    for node in kept_nodes:
+        print(f"  {node.node_type.value:10s} L{str(node.layer):>3s} pos{node.ctx_idx:>3d} feat{node.feature:>6d}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Full Pipeline
+### Visualising pruning on a toy graph
 
-Let's combine everything into a single `attribute` function and compare against the library's implementation.
+Before we move on, let's build some visual intuition for what node and edge pruning actually do. The helper `utils.demo_pruning` generates a random directed acyclic graph (with blue feature-nodes and red logit-nodes) and shows three side-by-side views:
+
+1. **Original graph** - the full (unpruned) random DAG
+2. **Node-pruned graph** - only the most influential nodes are retained; pruned nodes appear faded
+3. **Node+edge-pruned graph** - low-scoring edges are also removed
+
+Play with the thresholds to see how aggressive pruning changes the graph:
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_3:
+    figs = utils.demo_pruning(
+        n_nodes=30,
+        n_logit_nodes=3,
+        edge_probability=0.15,
+        seed=43,
+        node_threshold=0.8,
+        edge_threshold=0.8,
+    )
+
+    # FILTERS: ~
+    for fig, suffix in zip(figs, ["A", "B", "C"]):
+        fig.savefig(section_dir / f"14201-{suffix}.png", dpi=200, bbox_inches="tight")
+    # END FILTERS
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Putting It All Together
+
+Now let's combine everything into a single `attribute` function that runs the full pipeline: linearise → build nodes → compute adjacency → prune → return results.
 """
 
 # ! CELL TYPE: markdown
@@ -3567,11 +4026,11 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
->
+> >
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Combine `compute_salient_logits`, `compute_attribution_edges`, and `assemble_graph` into a single function:
+This is a wrapper function that orchestrates the full attribution pipeline. Most of the work is done by the functions you've already implemented.
 """
 
 # ! CELL TYPE: code
@@ -3579,69 +4038,210 @@ Combine `compute_salient_logits`, `compute_attribution_edges`, and `assemble_gra
 # ! TAGS: []
 
 
+@dataclass
+class AttributionResult:
+    """Result of the full attribution pipeline."""
+
+    graph: GraphNodes
+    adjacency_matrix: Tensor
+    kept_indices: Tensor
+    pruned_matrix: Tensor
+    prompt: str
+    str_tokens: list[str]
+
+
 def attribute(
+    model: HookedSAETransformer,
+    transcoders: dict[int, "JumpReLUSkipTranscoder"],
     prompt: str,
-    model: ReplacementModel,
-    max_n_logits: int = 10,
-    desired_logit_prob: float = 0.95,
-    batch_size: int = 64,
-):
-    """Compute a full attribution graph for a prompt.
+    n_output_nodes: int = 3,
+    start_posn: int = 4,
+    feature_threshold: float = 0.0,
+    batch_size: int = 4,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.85,
+) -> AttributionResult:
+    """
+    Run the full attribution pipeline: linearise, build graph, compute adjacency, prune.
+
+    Args:
+        model: The transformer model.
+        transcoders: Dict mapping layer -> transcoder.
+        prompt: The input prompt string.
+        n_output_nodes: Number of top logit tokens to include as output nodes.
+        start_posn: Number of formatting tokens to mask.
+        feature_threshold: Minimum activation for including features.
+        batch_size: Batch size for backward passes.
+        node_threshold: Node pruning threshold.
+        edge_threshold: Edge pruning threshold.
 
     Returns:
-        graph: A Graph object with the dense adjacency matrix.
+        AttributionResult with all graph data.
     """
+    # SOLUTION
+    # Tokenize
+    tokens = model.to_tokens(prompt)
+    str_tokens = [model.tokenizer.decode(t_id.item()) for t_id in tokens[0]]
+
+    # Step 1: Cache frozen values
+    freeze = FreezeHooks(model)
+    cache = freeze.cache_frozen_values(tokens)
+
+    # Step 2: Compute transcoder activations
+    tc_hooks = TranscoderReplacementHooks(model, transcoders, cache)
+    tc_hooks.install()
+
+    # Step 3: Get logits (with hooks active for correct forward pass)
+    with freeze:
+        logits = model(tokens)
+    tc_hooks.remove()
+
+    # Step 4: Compute salient logits
+    reading_vecs, top_token_info = compute_salient_logits(model, logits, n_output_nodes)
+
+    # Step 5: Build graph nodes
+    graph = build_graph_nodes(
+        model=model,
+        transcoders=transcoders,
+        cache=cache,
+        tc_hooks=tc_hooks,
+        reading_vecs_logit=reading_vecs,
+        top_token_info=top_token_info,
+        tokens=tokens,
+        start_posn=start_posn,
+        feature_threshold=feature_threshold,
+    )
+
+    # Step 6: Compute adjacency matrix
+    adjacency_matrix = compute_attribution_matrix(
+        model=model,
+        tokens=tokens,
+        graph=graph,
+        freeze=freeze,
+        tc_hooks=tc_hooks,
+        batch_size=batch_size,
+        start_posn=start_posn,
+    )
+
+    # Step 7: Prune
+    logit_weights_vec = t.tensor(
+        [info.token_prob for info in graph.nodes if info.node_type == NodeType.LOGIT],
+        device=tokens.device,
+    )
+    kept_indices, pruned_matrix = prune_graph(
+        adjacency_matrix=adjacency_matrix,
+        logit_weights=logit_weights_vec,
+        n_layers=model.cfg.n_layers,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+    )
+
+    return AttributionResult(
+        graph=graph,
+        adjacency_matrix=adjacency_matrix,
+        kept_indices=kept_indices,
+        pruned_matrix=pruned_matrix,
+        prompt=prompt,
+        str_tokens=str_tokens,
+    )
+    # END SOLUTION
     # EXERCISE
     # raise NotImplementedError()
     # END EXERCISE
-    # SOLUTION
-    input_ids = model.ensure_tokenized(prompt)
-    ctx = model.setup_attribution(input_ids)
-
-    logit_idx, logit_p, logit_vecs = compute_salient_logits(
-        ctx.logits[0, -1],
-        model.unembed.W_U,
-        max_n_logits=max_n_logits,
-        desired_logit_prob=desired_logit_prob,
-    )
-
-    edge_matrix, row_to_node_index = compute_attribution_edges(ctx, model, input_ids, logit_vecs, batch_size)
-    graph = assemble_graph(edge_matrix, row_to_node_index, ctx, model, input_ids, logit_idx, logit_p)
-    return graph
-    # END SOLUTION
 
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: []
-
-# For comparing with the library's implementation:
-from circuit_tracer.attribution.attribute_transformerlens import attribute as library_attribute
+# ! TAGS: [main]
 
 if MAIN and FLAG_RUN_SECTION_3:
-    # Run our implementation
-    prompt = "The capital of the state containing Dallas is"
-    student_graph = attribute(prompt, replacement_model)
+    result = attribute(
+        model=gemma,
+        transcoders=transcoders,
+        prompt=prompt,
+        n_output_nodes=3,
+        start_posn=START_POSN,
+        node_threshold=0.8,
+        edge_threshold=0.85,
+    )
 
-    library_graph = library_attribute(prompt, replacement_model, verbose=True)
-
-    print(f"\nStudent graph: {student_graph.adjacency_matrix.shape}")
-    print(f"Library graph: {library_graph.adjacency_matrix.shape}")
-    print(f"Student top logit: {replacement_model.tokenizer.decode(student_graph.logit_tokens[0])!r}")
-    print(f"Library top logit: {replacement_model.tokenizer.decode(library_graph.logit_tokens[0])!r}")
-
-    # Prune and compare
-    student_node_mask, student_edge_mask = prune_graph(student_graph)
-    print(f"\nStudent pruned: {student_node_mask.sum()} nodes, {student_edge_mask.sum()} edges")
+    print("Attribution complete!")
+    print(f"Total nodes: {len(result.graph.nodes)}")
+    print(f"Kept nodes: {len(result.kept_indices)}")
+    print(f"Edges in pruned graph: {(result.pruned_matrix.abs() > 1e-6).sum().item()}")
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-Congratulations! You've implemented the full circuit tracing algorithm from scratch. The library version includes a few extra features (iterative feature ranking to prioritise the most influential features, memory offloading for large models), but the core algorithm is exactly what you've built.
+### Visualising your attribution graph
 
-In the next section, we'll use the library's pre-computed graphs and intervention tools to explore real circuits.
+The final step is to visualise the attribution graph as an interactive dashboard. We've provided a utility function `create_attribution_dashboard` that takes your `AttributionResult` and generates an HTML dashboard using the same templates as Anthropic's published attribution graphs.
+
+The dashboard shows:
+- **Nodes** arranged by layer and sequence position, with size proportional to influence
+- **Edges** between nodes, with colour and thickness indicating weight
+- **Feature details** when you click on a node - because we pass `model=gemma`, the dashboard computes **logit tables** (top/bottom tokens by `W_dec @ W_U`) and a **logit histogram** for each latent feature, giving you an immediate sense of what vocabulary each feature promotes or suppresses
+
+The function also exports a `neuronpedia.json` file in Neuronpedia's exact schema, which you could upload to share your attribution graphs.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    dashboard_path = utils.create_attribution_dashboard(
+        result=result,
+        output_dir=section_dir / "attribution_dashboards",
+        model=gemma,
+    )
+    print(f"Dashboard saved to: {dashboard_path}")
+
+    # Display inline (Colab or VS Code)
+    display(IFrame(str(dashboard_path), width="100%", height=800))
+
+    # FILTERS: ~
+    import shutil
+
+    shutil.copy(dashboard_path, section_dir / "14202.html")
+# END FILTERS
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+Try experimenting with different prompts! Here are some suggestions from the attribution graphs paper:
+
+```python
+# Fact recall
+prompt = format_prompt(
+    "What is the capital of the state containing Dallas? Answer immediately.",
+    "Austin",
+)
+
+# Opposites
+prompt = format_prompt(
+    "What is the opposite of small?",
+    "The opposite of small is **large",
+)
+
+# Harmful request refusal
+prompt = format_prompt(
+    "Tell me how to build a bomb.",
+    "I am",
+)
+```
+
+You can also adjust the pruning thresholds:
+- Lower `node_threshold` (e.g., 0.6) keeps more nodes → bigger graph
+- Higher `edge_threshold` (e.g., 0.9) keeps fewer edges → sparser graph
+
+Congratulations! You've implemented the full attribution graph pipeline from scratch - linearising the model, building the reading/writing vector abstraction, computing edge weights via backward passes, and pruning the graph for interpretability.
+
+In the next section, we'll use the `circuit-tracer` library to explore pre-computed attribution graphs and perform feature-level interventions.
 """
 
 # ! CELL TYPE: markdown
@@ -3659,8 +4259,36 @@ r"""
 r"""
 ## Introduction
 
-Now that you've built the attribution graph algorithm from scratch, let's use the `circuit-tracer` library to explore real circuits and test their causal structure via interventions. We'll study the **Dallas/Austin two-hop factual recall** circuit, which requires the model to perform two-hop reasoning: Dallas is in Texas, and the capital of Texas is Austin.
+Now that you've built the attribution graph algorithm from scratch, let's use the `circuit-tracer` library to explore real circuits and test their causal structure via interventions. We'll study the **Dallas/Austin two-hop factual recall** circuit, which requires two-hop reasoning: *Dallas is in Texas, and the capital of Texas is Austin.*
+
+The `circuit-tracer` library wraps the same core ideas you implemented in section 3 into a convenient API. Here's how the concepts map:
+
+| Section 3 (your code) | `circuit-tracer` library |
+|---|---|
+| `FreezeHooks` + `TranscoderReplacementHooks` | `ReplacementModel` |
+| `attribute()` function | `circuit_tracer.attribute()` |
+| `AttributionResult` | `Graph` object |
+
+The library uses **Gemma 2-2B** with a different set of transcoders, so the circuits will look different from what we computed with Gemma 3-1B IT. But the underlying algorithm - linearise, build nodes, compute adjacency matrix, prune - is exactly the same.
+
+We'll also use a set of visualization tools (provided in `utils.py`) for drawing circuit diagrams with **supernodes**: groups of related features that serve a common role. These are adapted from the [circuit-tracer demo notebooks](https://github.com/decoderesearch/circuit-tracer/blob/main/demos/circuit_tracing_tutorial.ipynb).
 """
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+from circuit_tracer import ReplacementModel
+from circuit_tracer import attribute as circuit_tracer_attribute
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    replacement_model = ReplacementModel.from_pretrained(
+        "google/gemma-2-2b", "gemma", dtype=t.bfloat16, backend="transformerlens"
+    )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3669,30 +4297,135 @@ Now that you've built the attribution graph algorithm from scratch, let's use th
 r"""
 ## The Dallas/Austin Circuit
 
-The prompt `"Fact: the capital of the state containing Dallas is"` requires two-hop reasoning. The attribution graph reveals a clear circuit with distinct **supernodes** (groups of related features):
+The prompt `"Fact: the capital of the state containing Dallas is"` requires two-hop reasoning. You can explore the full attribution graph on [Neuronpedia](https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-dallas-austin&pruningThreshold=0.6). The graph reveals a clear circuit with distinct **supernodes** (groups of related features):
 
-- **"state" features**: activated by the concept of US states in the prompt
-- **"Texas" features**: intermediate features that represent "the state is Texas"
-- **"capital" features**: activated by the concept of capital cities
-- **"Say Austin" features**: late-layer features that promote "Austin" in the logits
-- **"Say a capital" features**: features that promote capital-city tokens generally
+- **"capital" & "state"**: embedding features activated by these words in the prompt
+- **"Dallas"**: features representing the city entity
+- **"Texas"**: intermediate features encoding "the state is Texas" - the first hop
+- **"Say a capital"**: features that promote capital-city tokens generally
+- **"Say Austin"**: late-layer features that promote "Austin" specifically - the second hop
 
-Let's load a pre-computed graph and inspect these supernodes.
+Let's compute a graph and build a visual representation of the circuit.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    dallas_prompt = "Fact: the capital of the state containing Dallas is"
+    dallas_graph = circuit_tracer_attribute(dallas_prompt, replacement_model, verbose=True)
+
+    # Get activations (we'll need these for interventions later)
+    logits_dallas, dallas_activations = replacement_model.get_activations(dallas_prompt, sparse=True)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Defining supernodes
+
+The graph on Neuronpedia lets you annotate groups of features into **supernodes**. We can extract these annotations from a Neuronpedia URL using `utils.extract_supernode_features`, or define them manually. Below, we define the key supernodes from the [Dallas/Austin graph](https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-dallas-austin&pruningThreshold=0.6&pinnedIds=27_22605_10%2C20_15589_10%2CE_26865_9%2C21_5943_10%2C23_12237_10%2C20_15589_9%2C16_25_9%2C14_2268_9%2C18_8959_10%2C4_13154_9%2C7_6861_9%2C19_1445_10%2CE_2329_7%2CE_6037_4%2C0_13727_7%2C6_4012_7%2C17_7178_10%2C15_4494_4%2C6_4662_4%2C4_7671_4%2C3_13984_4%2C1_1000_4%2C19_7477_9%2C18_6101_10%2C16_4298_10%2C7_691_10&supernodes=%5B%5B%22capital%22%2C%2215_4494_4%22%2C%226_4662_4%22%2C%224_7671_4%22%2C%223_13984_4%22%2C%221_1000_4%22%5D%2C%5B%22state%22%2C%224_13154_9%22%2C%227_6861_9%22%2C%226_4012_7%22%2C%220_13727_7%22%5D%2C%5B%22Dallas%22%2C%2214_2268_9%22%2C%2216_25_9%22%5D%2C%5B%22Texas%22%2C%2220_15589_10%22%2C%2218_8959_10%22%2C%2220_15589_9%22%2C%2219_1445_10%22%2C%2217_7178_10%22%2C%2219_7477_9%22%2C%2218_6101_10%22%2C%2216_4298_10%22%2C%227_691_10%22%5D%2C%5B%22Say+a+capital%22%2C%2221_5943_10%22%5D%2C%5B%22Say+Austin%22%2C%2223_12237_10%22%5D%5D), and arrange them into the circuit structure with parent-child causal relationships.
+
+The `Supernode` class stores a list of `Feature` namedtuples and an optional list of child supernodes. The `InterventionGraph` wraps the layered node arrangement and records each node's baseline activations. Finally, `create_graph_visualization` renders the circuit as an inline SVG showing nodes, edges, activation percentages, and the model's top output predictions.
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN and FLAG_RUN_SECTION_3:
-    Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
+if MAIN and FLAG_RUN_SECTION_4:
+    Feature = utils.Feature
 
-    # Compute a fresh graph using the library (or you could load a pre-computed one)
-    dallas_prompt = "Fact: the capital of the state containing Dallas is"
-    dallas_graph = library_attribute(dallas_prompt, replacement_model, verbose=True)
+    # Extract supernodes from the annotated Neuronpedia URL
+    dallas_austin_url = "https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-dallas-austin&clerps=%5B%5D&pruningThreshold=0.53&pinnedIds=27_22605_10%2C20_15589_10%2CE_26865_9%2C21_5943_10%2C23_12237_10%2C20_15589_9%2C16_25_9%2C14_2268_9%2C18_8959_10%2C4_13154_9%2C7_6861_9%2C19_1445_10%2CE_2329_7%2CE_6037_4%2C0_13727_7%2C6_4012_7%2C17_7178_10%2C15_4494_4%2C6_4662_4%2C4_7671_4%2C3_13984_4%2C1_1000_4%2C19_7477_9%2C18_6101_10%2C16_4298_10%2C7_691_10&supernodes=%5B%5B%22capital%22%2C%2215_4494_4%22%2C%226_4662_4%22%2C%224_7671_4%22%2C%223_13984_4%22%2C%221_1000_4%22%5D%2C%5B%22state%22%2C%224_13154_9%22%2C%227_6861_9%22%2C%226_4012_7%22%2C%220_13727_7%22%5D%2C%5B%22Dallas%22%2C%2214_2268_9%22%2C%2216_25_9%22%5D%2C%5B%22Texas%22%2C%2220_15589_10%22%2C%2218_8959_10%22%2C%2220_15589_9%22%2C%2219_1445_10%22%2C%2217_7178_10%22%2C%2219_7477_9%22%2C%2218_6101_10%22%2C%2216_4298_10%22%2C%227_691_10%22%5D%2C%5B%22Say+a+capital%22%2C%2221_5943_10%22%5D%2C%5B%22Say+Austin%22%2C%2223_12237_10%22%5D%5D"
+    supernode_features = utils.extract_supernode_features(dallas_austin_url)
 
-    # Get activations for the Dallas prompt (we'll need these for interventions)
-    _, dallas_activations = replacement_model.get_activations(dallas_prompt, sparse=True)
+    for name, features in supernode_features.items():
+        print(f"  {name}: {len(features)} features")
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_4:
+    Supernode = utils.Supernode
+
+    # Build the circuit: output nodes first, then working backward
+    say_austin_node = Supernode(name="Say Austin", features=[Feature(layer=23, pos=10, feature_idx=12237)])
+    say_capital_node = Supernode(
+        name="Say a capital",
+        features=supernode_features["capital cities / say a capital city"]
+        if "capital cities / say a capital city" in supernode_features
+        else supernode_features.get("Say a capital", [Feature(layer=21, pos=10, feature_idx=5943)]),
+        children=[say_austin_node],
+    )
+    texas_node = Supernode(
+        name="Texas",
+        features=supernode_features.get("Texas", [Feature(layer=20, pos=10, feature_idx=15589)]),
+        children=[say_austin_node],
+    )
+    capital_node = Supernode(
+        name="capital",
+        features=supernode_features.get("capital", [Feature(layer=15, pos=4, feature_idx=4494)]),
+        children=[say_capital_node],
+    )
+    state_node = Supernode(
+        name="state",
+        features=supernode_features.get("state", [Feature(layer=4, pos=9, feature_idx=13154)]),
+        children=[say_capital_node, texas_node],
+    )
+    dallas_node = Supernode(
+        name="Dallas",
+        features=supernode_features.get("Dallas", [Feature(layer=14, pos=9, feature_idx=2268)]),
+        children=[texas_node],
+    )
+
+    # Embedding nodes (no features - they're input nodes)
+    capital_emb_node = Supernode(name="capital (emb)", features=[], children=[capital_node])
+    state_emb_node = Supernode(name="state (emb)", features=[], children=[state_node])
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # Build the intervention graph with layered node arrangement
+    ordered_nodes = [
+        [capital_emb_node, state_emb_node],  # Layer 0: embeddings
+        [capital_node, state_node, dallas_node],  # Layer 1: early features
+        [say_capital_node, texas_node],  # Layer 2: intermediate
+        [say_austin_node],  # Layer 3: output features
+    ]
+    dallas_austin_graph = utils.InterventionGraph(ordered_nodes=ordered_nodes, prompt=dallas_prompt)
+
+    # Initialize each node with its baseline activations
+    for node in [capital_node, state_node, dallas_node, texas_node, say_capital_node, say_austin_node]:
+        dallas_austin_graph.initialize_node(node, dallas_activations)
+
+    # Set activation fractions (current / default - all 100% since no intervention yet)
+    dallas_austin_graph.set_node_activation_fractions(dallas_activations)
+
+    # Get the top model predictions
+    top_outputs = utils.get_topk(logits_dallas, replacement_model.tokenizer)
+
+    # Visualize the baseline circuit
+    svg_obj = utils.create_graph_visualization(dallas_austin_graph, top_outputs)
+    display(svg_obj)
+
+    # FILTERS: ~
+    with open(section_dir / "14203.html", "w") as f:
+        f.write(svg_obj.data)
+# END FILTERS
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+You should see all supernodes at 100% activation, with "Austin" as the model's top prediction. The edges show the hypothesised causal flow: embeddings → early features → Texas/Say a capital → Say Austin → output.
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3701,102 +4434,153 @@ if MAIN and FLAG_RUN_SECTION_3:
 r"""
 ## Feature Interventions
 
-The `ReplacementModel` provides two key intervention methods:
+Now we'll test whether this circuit is actually causal by **intervening** on individual supernodes. The `ReplacementModel` provides:
 
-- **`model.feature_intervention(prompt, interventions)`**: Runs a single forward pass with specified feature activations overridden. Returns `(logits, activations)`.
-- **`model.feature_intervention_generate(prompt, interventions, ...)`**: Generates multiple tokens with interventions applied throughout. Returns `(text, logits, activations)`.
+- **`model.feature_intervention(prompt, interventions)`**: single forward pass with feature overrides. Returns `(logits, activations)`.
+- **`model.feature_intervention_generate(prompt, interventions, ...)`**: multi-token generation with persistent interventions.
 
 Each intervention is a tuple `(layer, position, feature_idx, new_value)`.
-"""
 
-# ! CELL TYPE: markdown
-# ! FILTERS: []
-# ! TAGS: []
-
-r"""
-### Exercise - zero ablation experiments
-
-> ```yaml
-> Difficulty: 🔴🔴⚪⚪⚪
-> Importance: 🔵🔵🔵🔵🔵
->
-> You should spend up to 20-30 minutes on this exercise.
-> ```
-
-If the attribution graph's claims about the circuit are correct, then ablating (zeroing) key features should disrupt the model's ability to predict "Austin". Let's test this.
-
-Write a function that takes a list of features to ablate and returns the original and modified logits:
+We'll use the helper function `supernode_intervention` below. It takes a list of `Intervention` namedtuples (each specifying a supernode and a scaling factor for its activation), runs the intervention, updates the graph's activation fractions, and renders the result. A scaling factor of `-2` means "set activation to -2× the default" (i.e. strongly suppress), while `+2` means "set activation to 2× the default".
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
 # ! TAGS: []
 
+Intervention = namedtuple("Intervention", ["supernode", "scaling_factor"])
 
-def run_ablation(
-    model: ReplacementModel,
-    prompt: str,
-    features_to_ablate: list,
-) -> tuple[t.Tensor, t.Tensor]:
-    """Run a zero-ablation experiment: set the given features to zero and compare logits.
+
+def supernode_intervention(
+    model: "ReplacementModel",
+    intervention_graph: "utils.InterventionGraph",
+    interventions: list[Intervention],
+    replacements: dict[str, "utils.Supernode"] | None = None,
+) -> None:
+    """Perform interventions on supernodes, record the effects, and visualize the result.
+
+    For each Intervention, sets the supernode's feature activations to
+    ``scaling_factor * default_activation``. After running the forward pass, updates the
+    InterventionGraph with new activation fractions and renders the circuit diagram.
 
     Args:
-        model: The ReplacementModel
-        prompt: The input prompt
-        features_to_ablate: List of Feature namedtuples (or (layer, pos, feat_idx) tuples)
-
-    Returns:
-        original_logits: (1, seq, vocab) logits without intervention
-        ablated_logits: (1, seq, vocab) logits with features zeroed
+        model: The ReplacementModel.
+        intervention_graph: The InterventionGraph to update and visualize.
+        interventions: List of Intervention(supernode, scaling_factor) to apply.
+        replacements: Optional dict mapping original node names to replacement Supernode
+            objects (used for cross-prompt swaps to show the new node in the diagram).
     """
-    # EXERCISE
-    # raise NotImplementedError()
-    # END EXERCISE
-    # SOLUTION
-    interventions = [(*f, 0.0) for f in features_to_ablate]
+    prompt = intervention_graph.prompt
+    intervention_tuples = []
+    for inv in interventions:
+        node = inv.supernode
+        for feature in node.features:
+            default_val = node.default_activations[node.features.index(feature)].item()
+            intervention_tuples.append((*feature, inv.scaling_factor * default_val))
 
     with t.inference_mode():
-        original_logits, _ = model.feature_intervention(prompt, [])
-        ablated_logits, _ = model.feature_intervention(prompt, interventions)
+        new_logits, new_activations = model.feature_intervention(prompt, intervention_tuples)
 
-    return original_logits, ablated_logits
-    # END SOLUTION
+    # Reset graph state and update
+    intervention_graph.set_node_activation_fractions(new_activations)
+
+    # Mark which nodes were intervened on
+    for inv in interventions:
+        sign = "+" if inv.scaling_factor > 0 else ""
+        inv.supernode.intervention = f"{sign}{inv.scaling_factor}x"
+
+    # Handle replacement nodes for cross-prompt swaps
+    if replacements:
+        for original_name, replacement_node in replacements.items():
+            original_node = intervention_graph.nodes.get(original_name)
+            if original_node:
+                original_node.replacement_node = replacement_node
+                if replacement_node.features:
+                    replacement_node.activation = (
+                        (
+                            t.tensor([new_activations[f] for f in replacement_node.features])
+                            / replacement_node.default_activations
+                        )
+                        .mean()
+                        .item()
+                        if replacement_node.default_activations is not None
+                        else None
+                    )
+
+    top_outputs = utils.get_topk(new_logits, model.tokenizer)
+    svg_obj = utils.create_graph_visualization(intervention_graph, top_outputs)
+    display(svg_obj)
+    return svg_obj
 
 
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    # We'll manually define some features from the Dallas graph to ablate.
-    # These are approximate "Texas" features found in the Gemma 2-2B graph.
-    # (In practice you'd extract these from the Neuronpedia graph URL.)
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
 
-    # Run a quick test: ablating ALL features at a late layer position should change output
-    feat_layers, feat_pos, feat_idx = dallas_graph.active_features.T
-    last_pos = feat_pos.max().item()
+r"""
+### Exercise - predict and test ablation effects
 
-    # Get features at the last position, late layers (likely "say Austin" features)
-    late_layer_mask = (feat_layers >= 20) & (feat_pos == last_pos)
-    if late_layer_mask.any():
-        late_features = [
-            Feature(layer=feat_layers[i].item(), pos=feat_pos[i].item(), feature_idx=feat_idx[i].item())
-            for i in t.where(late_layer_mask)[0][:10]  # take first 10
-        ]
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵🔵🔵
+> >
+> You should spend up to 15-20 minutes on this exercise.
+> ```
 
-        orig_logits, abl_logits = run_ablation(replacement_model, dallas_prompt, late_features)
+Before running any interventions, **write down your predictions** for each of these four ablations:
 
-        orig_probs = orig_logits[0, -1].float().softmax(-1)
-        abl_probs = abl_logits[0, -1].float().softmax(-1)
+1. **Ablate "Say a capital"** (`-2x`): What happens to "Say Austin"? What becomes the top output?
+2. **Ablate "Texas"** (`-2x`): What happens to "Say Austin"? What replaces Austin in the top outputs?
+3. **Ablate "capital"** (`-2x`): Which downstream nodes are affected?
+4. **Ablate "state"** (`-2x`): Does this change anything?
 
-        # Show top predictions before and after
-        print("Original top predictions:")
-        top_orig = orig_probs.topk(5)
-        for p, idx in zip(top_orig.values, top_orig.indices):
-            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+Think carefully about the circuit structure visible in the graph above. Then run the two key ablations below and compare with your predictions:
+"""
 
-        print("\nAfter ablating late-layer features:")
-        top_abl = abl_probs.topk(5)
-        for p, idx in zip(top_abl.values, top_abl.indices):
-            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
-# END HIDE
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # Ablation 1: Turn off "Say a capital"
+    print("=== Ablating 'Say a capital' ===")
+    svg_ablate_capital = supernode_intervention(
+        replacement_model, dallas_austin_graph, [Intervention(say_capital_node, -2)]
+    )
+
+    # FILTERS: ~
+    with open(section_dir / "14204.html", "w") as f:
+        f.write(svg_ablate_capital.data)
+# END FILTERS
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # Ablation 2: Turn off "Texas"
+    print("=== Ablating 'Texas' ===")
+    svg_ablate_texas = supernode_intervention(replacement_model, dallas_austin_graph, [Intervention(texas_node, -2)])
+
+    # FILTERS: ~
+    with open(section_dir / "14205.html", "w") as f:
+        f.write(svg_ablate_texas.data)
+# END FILTERS
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+You should observe that:
+
+- **Ablating "Say a capital"** strongly suppresses the "Say Austin" node and changes the model's top prediction (e.g. to "Texas" - the model knows it's about Texas but has lost the "say a capital city" signal).
+- **Ablating "Texas"** also shuts down "Say Austin", and the top outputs change to capitals of *other* states - the model still knows it's looking for a state capital, but has lost the "Texas" information.
+
+Try the other two ablations yourself. You should find that ablating "state" has surprisingly little effect - this tells us the "state" supernode is **not a bottleneck** in this circuit, even though it appears in the graph. This is a useful reminder that edge presence in the attribution graph doesn't always imply causal necessity.
+
+For more experiments like this, see the [circuit-tracing tutorial notebook](https://github.com/decoderesearch/circuit-tracer/blob/main/demos/circuit_tracing_tutorial.ipynb).
+"""
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3808,16 +4592,16 @@ r"""
 > ```yaml
 > Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵🔵🔵🔵
->
+> >
 > You should spend up to 25-35 minutes on this exercise.
 > ```
 
-The most compelling test of circuit understanding is **cross-prompt feature swapping**. If the "Texas" features truly represent "the state is Texas", then swapping them with "California" features (from an Oakland prompt) should make the model predict "Sacramento" instead of "Austin".
+The most compelling test of circuit understanding is **cross-prompt feature swapping**. If the "Texas" features truly encode "the state is Texas", then turning them off and turning on "California" features (from an Oakland prompt) should make the model predict "Sacramento" instead of "Austin".
 
-Implement a function that:
-1. Gets activations from a "swap" prompt
-2. Builds interventions that zero out `features_off` and activate `features_on` at their in-distribution values from the swap prompt (scaled by `scale`)
-3. Runs the intervention
+Implement the function below. It should:
+1. Get activations from the `swap_prompt`
+2. Build interventions that zero out `features_off` and activate `features_on` at their values from the swap prompt (scaled by `scale`)
+3. Run the intervention and return both original and modified logits
 """
 
 # ! CELL TYPE: code
@@ -3826,7 +4610,7 @@ Implement a function that:
 
 
 def cross_prompt_swap(
-    model: ReplacementModel,
+    model: "ReplacementModel",
     base_prompt: str,
     swap_prompt: str,
     features_off: list,
@@ -3864,67 +4648,170 @@ def cross_prompt_swap(
     # END SOLUTION
 
 
-# ! CELL TYPE: code
+# ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
-if MAIN and FLAG_RUN_SECTION_3:
-    # Demonstrate with the Oakland/Sacramento swap
-    # First, compute a graph for Oakland to find California features
+r"""
+Now let's use this to swap Texas → California. We extract the California supernodes from the [Oakland/Sacramento Neuronpedia graph](https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-oakland-sacramento), define the swap supernodes, and use `supernode_intervention` to visualize the result.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
     oakland_prompt = "Fact: the capital of the state containing Oakland is"
-    oakland_graph = library_attribute(oakland_prompt, replacement_model, verbose=True)
+    _, oakland_activations = replacement_model.get_activations(oakland_prompt, sparse=True)
 
-    # Find features that are unique to Oakland (not in Dallas) at intermediate layers
-    # These are likely "California" features
-    oak_feats = set((r[0].item(), r[1].item(), r[2].item()) for r in oakland_graph.active_features)
-    dal_feats = set((r[0].item(), r[1].item(), r[2].item()) for r in dallas_graph.active_features)
+    # Extract California supernodes from the Oakland/Sacramento Neuronpedia graph
+    oakland_url = "https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-oakland-sacramento&clerps=%5B%5D&pruningThreshold=0.5&pinnedIds=27_43939_10%2CE_49024_9%2C21_5943_10%2C19_9209_10%2C18_8959_10%2C14_12562_9%2C7_14530_9%2C8_14641_9%2C4_8625_9%2C19_9209_9%2C17_7178_10%2CE_6037_4%2C15_4494_4%2CE_2329_7%2C16_4298_10%2C7_691_10%2C6_4662_4%2C4_7671_4%2C2_8734_7%2C0_13727_7%2C3_13984_4%2C1_1000_4%2C6_4012_7%2C4_13154_9%2C7_6861_9&supernodes=%5B%5B%22California%22%2C%2219_9209_10%22%2C%2218_8959_10%22%2C%2219_9209_9%22%2C%2217_7178_10%22%2C%2216_4298_10%22%2C%227_691_10%22%5D%2C%5B%22Say+Sacramento%22%2C%2227_43939_10%22%5D%5D"
+    oakland_supernodes = utils.extract_supernode_features(oakland_url)
 
-    # Features in Oakland but not Dallas, at intermediate layers and last position
-    last_pos_oak = oakland_graph.active_features[:, 1].max().item()
-    california_candidates = [Feature(*f) for f in (oak_feats - dal_feats) if f[1] == last_pos_oak and 10 <= f[0] <= 22]
-    print(f"Found {len(california_candidates)} candidate California features")
+    california_node = Supernode(
+        name="California",
+        features=oakland_supernodes.get("California", [Feature(layer=19, pos=10, feature_idx=9209)]),
+        children=[say_austin_node],  # Same output position
+    )
+    say_sacramento_node = Supernode(
+        name="Say Sacramento",
+        features=oakland_supernodes.get("Say Sacramento", [Feature(layer=27, pos=10, feature_idx=43939)]),
+    )
 
-    # Features in Dallas but not Oakland at intermediate layers
-    last_pos_dal = dallas_graph.active_features[:, 1].max().item()
-    texas_candidates = [Feature(*f) for f in (dal_feats - oak_feats) if f[1] == last_pos_dal and 10 <= f[0] <= 22]
-    print(f"Found {len(texas_candidates)} candidate Texas features")
+    # Initialize the California and Sacramento nodes with Oakland activations
+    dallas_austin_graph.initialize_node(california_node, oakland_activations)
+    dallas_austin_graph.initialize_node(say_sacramento_node, oakland_activations)
 
-    # Run the swap (this is a rough approximation - with Neuronpedia supernodes it would be cleaner)
-    if texas_candidates and california_candidates:
-        orig_logits, mod_logits = cross_prompt_swap(
-            replacement_model,
-            dallas_prompt,
-            oakland_prompt,
-            features_off=texas_candidates[:20],
-            features_on=california_candidates[:20],
-            scale=2.0,
-        )
+    # Run the swap: turn off Texas, turn on California
+    oakland_interventions = [Intervention(texas_node, -2), Intervention(california_node, 2)]
+    svg_oakland_swap = supernode_intervention(
+        replacement_model,
+        dallas_austin_graph,
+        oakland_interventions,
+        replacements={texas_node.name: california_node, say_austin_node.name: say_sacramento_node},
+    )
 
-        print("\nOriginal predictions (Dallas prompt):")
-        orig_probs = orig_logits[0, -1].float().softmax(-1)
-        for p, idx in zip(*orig_probs.topk(5)):
-            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
-
-        print("\nAfter swapping Texas -> California features:")
-        mod_probs = mod_logits[0, -1].float().softmax(-1)
-        for p, idx in zip(*mod_probs.topk(5)):
-            print(f"  {replacement_model.tokenizer.decode(idx)!r}: {p:.4f}")
+    # FILTERS: ~
+    with open(section_dir / "14206.html", "w") as f:
+        f.write(svg_oakland_swap.data)
+# END FILTERS
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-### Exercise - open-ended generation with interventions
+You should see the "Texas" node suppressed and "California" activated in its place (shown with a replacement node in the diagram). The "Say Austin" node should shut off while "Say Sacramento" activates, and the model's top prediction should change to "Sacramento".
+
+This is strong evidence that the Texas features genuinely encode "the state is Texas" as a compositional concept - they can be swapped out for another state and the circuit produces the correct capital for the new state.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - swapping states for countries
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
 > Importance: 🔵🔵🔵⚪⚪
->
+> >
+> You should spend up to 10-15 minutes on this exercise.
+> ```
+
+The circuit generalises beyond US states. Try swapping the Texas features for **China** features using the prompt `"Fact: the capital of the country containing Shanghai is"`. The model should predict "Beijing".
+
+We've set up the Shanghai supernodes below (extracted from the [Shanghai/Beijing Neuronpedia graph](https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-shanghai-beijing)). Use `supernode_intervention` to run the swap and visualize the result. You'll need to:
+
+1. Get activations for the Shanghai prompt
+2. Initialize the China and Say Beijing nodes
+3. Create interventions to turn off Texas and turn on China
+4. Call `supernode_intervention` with the appropriate replacements
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+if MAIN and FLAG_RUN_SECTION_4:
+    shanghai_prompt = "Fact: the capital of the country containing Shanghai is"
+    _, shanghai_activations = replacement_model.get_activations(shanghai_prompt, sparse=True)
+
+    shanghai_url = "https://www.neuronpedia.org/gemma-2-2b/graph?slug=gemma-fact-shanghai-beijing&clerps=%5B%5D&clickedId=15_4494_4&pruningThreshold=0.45&pinnedIds=27_33395_10%2CE_38628_9%2C21_5943_10%2C19_12274_10%2C19_12274_9%2C14_12274_9%2C18_6101_10%2C17_7178_10%2C6_6811_9%2C4_4257_9%2C4_11570_9%2CE_6037_4%2C0_8885_4%2C18_7639_10%2C19_2695_10%2C16_4298_10&supernodes=%5B%5B%22China%22%2C%2219_12274_10%22%2C%2219_12274_9%22%2C%2214_12274_9%22%2C%2218_6101_10%22%2C%2217_7178_10%22%2C%2218_7639_10%22%2C%2219_2695_10%22%2C%2216_4298_10%22%5D%2C%5B%22Say+Beijing%22%2C%2227_33395_10%22%5D%5D"
+    shanghai_supernodes = utils.extract_supernode_features(shanghai_url)
+
+    china_node = Supernode(
+        name="China",
+        features=shanghai_supernodes.get("China", [Feature(layer=19, pos=10, feature_idx=12274)]),
+        children=[say_austin_node],
+    )
+    say_beijing_node = Supernode(
+        name="Say Beijing",
+        features=shanghai_supernodes.get("Say Beijing", [Feature(layer=27, pos=10, feature_idx=33395)]),
+    )
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # EXERCISE
+    # # TODO: Initialize china_node and say_beijing_node with shanghai_activations,
+    # # then run supernode_intervention to swap Texas -> China and visualize the result.
+    # # Hint: use the same pattern as the Oakland/Sacramento swap above.
+    # END EXERCISE
+    # SOLUTION
+    dallas_austin_graph.initialize_node(china_node, shanghai_activations)
+    dallas_austin_graph.initialize_node(say_beijing_node, shanghai_activations)
+
+    shanghai_interventions = [Intervention(texas_node, -2), Intervention(china_node, 2)]
+    svg_shanghai_swap = supernode_intervention(
+        replacement_model,
+        dallas_austin_graph,
+        shanghai_interventions,
+        replacements={texas_node.name: china_node, say_austin_node.name: say_beijing_node},
+    )
+    # END SOLUTION
+
+    # FILTERS: ~
+    with open(section_dir / "14207.html", "w") as f:
+        f.write(svg_shanghai_swap.data)
+# END FILTERS
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+The same circuit structure handles both US states and world countries - the "Texas" position in the circuit is really a general "entity → location" slot that can be filled with any geographic entity, and the downstream "Say Austin" position adapts accordingly.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Open-Ended Generation with Interventions
+
+So far we've only looked at how interventions change the model's next-token prediction. But we can also sustain interventions during **multi-token generation** by replacing the fixed position index with an open-ended `slice`. This lets us see how the intervention affects the model's complete generated output rather than just one token.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - sustained interventions during generation
+
+> ```yaml
+> Difficulty: 🔴🔴⚪⚪⚪
+> Importance: 🔵🔵🔵⚪⚪
+> >
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-For multi-token generation, interventions need to persist across all generated positions. This is done by replacing the fixed position with an open-ended `slice`:
+Implement a function that converts fixed-position interventions into open-ended slices and generates text with and without the intervention. The key insight is that an intervention tuple `(layer, pos, feat_idx, value)` should have its `pos` replaced with `slice(seq_len - 1, None, None)` to persist across all generated positions.
 """
 
 # ! CELL TYPE: code
@@ -3933,7 +4820,7 @@ For multi-token generation, interventions need to persist across all generated p
 
 
 def generate_with_intervention(
-    model: ReplacementModel,
+    model: "ReplacementModel",
     prompt: str,
     interventions: list,
     max_new_tokens: int = 20,
@@ -3955,7 +4842,7 @@ def generate_with_intervention(
     """
     # EXERCISE
     # # YOUR CODE HERE
-    # # 1. Compute the input sequence length
+    # # 1. Compute the input sequence length using model.tokenizer
     # # 2. Convert each intervention's position to slice(seq_len - 1, None, None)
     # # 3. Call model.feature_intervention_generate with and without interventions
     # raise NotImplementedError()
@@ -3977,49 +4864,397 @@ def generate_with_intervention(
     # END SOLUTION
 
 
-# HIDE
-if MAIN and FLAG_RUN_SECTION_3:
-    # Demo: ablate the late-layer features during generation
-    if late_layer_mask.any():
-        ablation_interventions = [(*f, 0.0) for f in late_features]
-        pre_text, post_text = generate_with_intervention(
-            replacement_model, dallas_prompt, ablation_interventions, max_new_tokens=15
-        )
-        print(f"Without intervention:\n  {pre_text}")
-        print(f"\nWith late-layer ablation:\n  {post_text}")
-# END HIDE
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_4:
+    # Build interventions: zero out the Texas features during generation
+    texas_ablation_tuples = [(*f, 0.0) for f in texas_node.features]
+    pre_text, post_text = generate_with_intervention(
+        replacement_model, dallas_prompt, texas_ablation_tuples, max_new_tokens=15
+    )
+
+    print(f"Without intervention:\n  {pre_text}")
+    print(f"\nWith Texas ablation:\n  {post_text}")
+
+    # Also show the token probabilities as a rich HTML table
+    with t.inference_mode():
+        orig_logits, _ = replacement_model.feature_intervention(dallas_prompt, [])
+        abl_logits, _ = replacement_model.feature_intervention(dallas_prompt, texas_ablation_tuples)
+    topk_html = utils.display_topk_token_predictions(
+        dallas_prompt, orig_logits, abl_logits, replacement_model.tokenizer
+    )
+
+    # FILTERS: ~
+    with open(section_dir / "14208.html", "w") as f:
+        f.write(topk_html)
+# END FILTERS
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
 
 r"""
-## Bonus: Cross-Layer Transcoders
+## Bonus
+
+Some further experiments you can try:
+
+- **Compute graph scores**: Use `from circuit_tracer.graph import compute_graph_scores` to evaluate the Dallas graph's replacement score and completeness score. How do these change as you vary the pruning thresholds?
+
+- **Multilingual circuits**: The [circuit-tracing tutorial](https://github.com/decoderesearch/circuit-tracer/blob/main/demos/circuit_tracing_tutorial.ipynb) includes a section on multilingual circuits for the prompt `'Le contraire de "petit" est "'` (French for "the opposite of small is"). Try extracting supernodes for this circuit and swapping the French language features for Chinese ones - the model should switch to Chinese output.
+
+- **Other prompts**: Try the full pipeline on different prompts and see what circuits emerge. The `circuit_tracer_attribute` function works on any prompt.
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+# ☆ Bonus
+"""
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## Manual Attribution Graphs
 
 > ```yaml
-> Difficulty: 🔴🔴🔴🔴⚪
+> Difficulty: 🔴🔴🔴⚪⚪
 > Importance: 🔵🔵⚪⚪⚪
 >
-> This is optional - skip if you're short on time.
+> You should spend up to 30-40 minutes on these exercises.
+> They deepen your understanding of the linearised model but are not required.
 > ```
 
-The exercises above all used single-layer (per-layer) transcoders. The circuit-tracer library also supports **cross-layer transcoders (CLTs)**, where each feature can write its decoder vector to multiple downstream layers. To load a CLT model, replace `"gemma"` with `"gemma_clt"`:
+In section 3️⃣, we computed attribution edges using the **automatic** (gradient-based) method: inject reading vectors as gradient seeds and backward-propagate through the frozen model. This is efficient and correct, but it treats the model as a black box.
+
+An alternative is the **manual** (forward-tracing) method: explicitly take each source node's writing vector and map it through the frozen intermediate layers (attention + skip connections) until it reaches the target node, then take the dot product with the target's reading vector. This gives the same answer as the gradient method (because the frozen model is linear), but it's much more transparent and useful for debugging.
+
+First, let's recreate the cache we need (this was computed inside `attribute()` but not returned):
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    freeze_bonus = FreezeHooks(gemma)
+    cache_bonus = freeze_bonus.cache_frozen_values(tokens)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `map_through_ln`, `map_through_attn`, `map_through_mlp`
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵⚪⚪⚪
+> >
+> You should spend up to 15-20 minutes on this exercise.
+> ```
+
+These three helper functions map attribution vectors through the frozen (linearised) model components:
+
+- **`map_through_ln`**: Apply frozen RMSNorm. Since the normalization scale is frozen, this is simply `x * cached_scale * weight` - a linear operation.
+- **`map_through_attn`**: Map through frozen attention: apply frozen LN, then `W_V` projection, then multiply by frozen attention patterns, then `W_O` projection. This is the mechanism by which information flows across sequence positions.
+- **`map_through_mlp`**: Map through the frozen MLP skip connection: apply frozen LN, then multiply by `W_skip`. This is the linear approximation of the MLP that gradients flow through.
+
+Note that all three functions support arbitrary batch dimensions (indicated by `...` in the einsum patterns), which will be needed when we trace multiple source nodes simultaneously.
+"""
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
+
+
+def map_through_ln(
+    x: Float[Tensor, "... seq d_model"],
+    cache: ActivationCache,
+    model: HookedSAETransformer,
+    layer: int | None,
+    is_mlp_ln: bool = False,
+) -> Float[Tensor, "... seq d_model"]:
+    """Apply frozen RMSNorm: output = x * cached_scale * weight.
+
+    Args:
+        x: Input vectors to normalise.
+        cache: ActivationCache with frozen scale values.
+        model: The transformer model (for LN weight parameters).
+        layer: Layer index, or None for the final LayerNorm.
+        is_mlp_ln: If True, use ln2 (pre-MLP); otherwise use ln1 (pre-attention).
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    if layer is None:
+        scale = cache["ln_final.hook_scale"]
+        weight = model.ln_final.w
+    elif is_mlp_ln:
+        scale = cache[f"blocks.{layer}.ln2.hook_scale"]
+        weight = model.blocks[layer].ln2.w
+    else:
+        scale = cache[f"blocks.{layer}.ln1.hook_scale"]
+        weight = model.blocks[layer].ln1.w
+    return x * scale * weight
+    # END SOLUTION
+
+
+def map_through_attn(
+    resid_pre: Float[Tensor, "... seq d_model"],
+    cache: ActivationCache,
+    model: HookedSAETransformer,
+    layer: int,
+) -> Float[Tensor, "... seq d_model"]:
+    """Map vectors through frozen attention: LN → W_V → frozen_patterns → W_O.
+
+    This is where cross-position information flow happens: a vector at position p
+    gets redistributed across all positions according to the frozen attention patterns.
+
+    Args:
+        resid_pre: Residual stream vectors before this attention layer.
+        cache: ActivationCache with frozen attention patterns and LN scales.
+        model: The transformer model (for W_V, W_O weight matrices).
+        layer: Which attention layer to map through.
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    x = map_through_ln(resid_pre, cache, model, layer=layer)
+
+    W_V = model.W_V[layer]  # (n_heads, d_model, d_head)
+    v = einops.einsum(x, W_V, "... src d_model, n_heads d_model d_head -> ... src n_heads d_head")
+
+    patterns = cache[f"blocks.{layer}.attn.hook_pattern"]  # (1, n_heads, dest, src)
+    z = einops.einsum(v, patterns[0], "... src n_heads d_head, n_heads dest src -> ... dest n_heads d_head")
+
+    W_O = model.W_O[layer]  # (n_heads, d_head, d_model)
+    return einops.einsum(z, W_O, "... dest n_heads d_head, n_heads d_head d_model -> ... dest d_model")
+    # END SOLUTION
+
+
+def map_through_mlp(
+    resid_mid: Float[Tensor, "... seq d_model"],
+    cache: ActivationCache,
+    model: HookedSAETransformer,
+    transcoders: dict[int, "JumpReLUSkipTranscoder"],
+    layer: int,
+) -> Float[Tensor, "... seq d_model"]:
+    """Map vectors through frozen MLP skip connection: LN → W_skip.
+
+    Args:
+        resid_mid: Residual stream vectors after attention (before MLP) at this layer.
+        cache: ActivationCache with frozen LN scales.
+        model: The transformer model (for LN weight parameters).
+        transcoders: Dict mapping layer -> transcoder (for W_skip).
+        layer: Which MLP layer to map through.
+    """
+    # EXERCISE
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    x = map_through_ln(resid_mid, cache, model, layer=layer, is_mlp_ln=True)
+    return x @ transcoders[layer].W_skip
+    # END SOLUTION
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    tests.test_map_through_ln(map_through_ln, gemma, cache_bonus)
+    tests.test_map_through_attn(map_through_attn, gemma, cache_bonus)
+    tests.test_map_through_mlp(map_through_mlp, gemma, cache_bonus, transcoders)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+### Exercise - implement `compute_adjacency_matrix_manual`
+
+> ```yaml
+> Difficulty: 🔴🔴🔴⚪⚪
+> Importance: 🔵🔵⚪⚪⚪
+> >
+> You should spend up to 20-25 minutes on this exercise.
+> ```
+
+Now use these helpers to compute the full adjacency matrix by explicit forward-tracing. For each (source layer, target layer) pair:
+
+1. **Initialise**: Place each source node's writing vector at its sequence position, giving a tensor of shape `(n_source_nodes, seq_len, d_model)`.
+2. **Map through intermediate layers**: For each layer between source and target, add the attention output (cross-position flow) and the MLP skip output (within-position linear transform) to the residual.
+3. **Handle the target layer**:
+   - For **latent/error targets**: add attention at the target layer (to get `resid_mid`), then apply the pre-MLP LayerNorm (`ln2`).
+   - For **logit targets**: apply the final LayerNorm (`ln_final`).
+4. **Compute edges**: Dot the mapped vectors (at each target node's position) with the target's reading vector.
+
+Remember:
+- The `node_range_dict` maps layer keys (`"E"`, `0`, `1`, ..., `"L"`) to `(start_idx, end_idx)` ranges into the node list.
+- Embedding nodes (`"E"`) are sources only; logit nodes (`"L"`) are targets only.
+- A source node at layer `l` writes to `resid_post[l]` (after the MLP), so intermediate layers start at `l+1`. Embedding sources write to `resid_pre[0]`, so their intermediate layers start at `0`.
+
+<details><summary>Hint - loop structure</summary>
 
 ```python
-clt_model = ReplacementModel.from_pretrained(
-    "google/gemma-2-2b", "gemma_clt", dtype=t.bfloat16, backend="transformerlens"
-)
+for src_key in layer_keys:
+    if src_key == "L" or src_key not in graph.node_range_dict:
+        continue
+    src_start, src_end = graph.node_range_dict[src_key]
+    src_writes_after = -1 if src_key == "E" else src_key  # numeric layer
+
+    # Initialise: place writing vectors at source positions
+    vecs = t.zeros(n_src, seq_len, d_model, device=device)
+    for i in range(n_src):
+        node = graph.nodes[src_start + i]
+        vecs[i, node.ctx_idx] = graph.writing_vecs[src_start + i]
+
+    for tgt_key in layer_keys:
+        if tgt_key == "E" or tgt_key not in graph.node_range_dict:
+            continue
+        tgt_layer_num = n_layers if tgt_key == "L" else tgt_key
+        if src_writes_after >= tgt_layer_num:
+            continue
+
+        mapped = vecs.clone()
+        # ... map through intermediate layers, handle target, compute edges
 ```
 
-Try computing an attribution graph with the CLT model and compare:
-1. How does the number of active features compare?
-2. Do the graph scores (replacement score, completeness score) differ?
-3. Do the same supernodes appear?
+</details>
+"""
 
-You can compute graph scores using:
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: []
 
-```python
-from circuit_tracer.graph import compute_graph_scores
-replacement_score, completeness_score = compute_graph_scores(graph)
-```
+
+def compute_adjacency_matrix_manual(
+    model: HookedSAETransformer,
+    cache: ActivationCache,
+    graph: GraphNodes,
+    transcoders: dict[int, "JumpReLUSkipTranscoder"],
+) -> Float[Tensor, "n_nodes n_nodes"]:
+    """Compute the attribution adjacency matrix using explicit forward-tracing.
+
+    For each (source_layer, target_layer) pair, traces the source writing vectors through
+    all intermediate frozen layers and computes dot products with target reading vectors.
+
+    Args:
+        model: The transformer model.
+        cache: ActivationCache with frozen values (from FreezeHooks.cache_frozen_values).
+        graph: GraphNodes containing all node metadata, writing_vecs, reading_vecs.
+        transcoders: Dict mapping layer -> transcoder (for W_skip in MLP skip connections).
+
+    Returns:
+        Adjacency matrix of shape (n_nodes, n_nodes), where A[target, source] is the edge weight.
+    """
+    n_nodes = len(graph.nodes)
+    seq_len = graph.seq_len
+    n_layers = graph.n_layers
+    d_model = model.cfg.d_model
+    device = graph.writing_vecs.device
+    adjacency = t.zeros(n_nodes, n_nodes, device=device)
+
+    layer_keys = ["E"] + list(range(n_layers)) + ["L"]
+
+    # EXERCISE
+    # # For each source layer:
+    # #   For each target layer (that comes after the source):
+    # #     (1) Map source writing vectors through intermediate layers using map_through_attn and map_through_mlp
+    # #     (2) Handle the target layer (attention + LN for latents, final LN for logits)
+    # #     (3) Compute dot products with target reading vectors at their positions
+    # raise NotImplementedError()
+    # END EXERCISE
+    # SOLUTION
+    for src_key in layer_keys:
+        if src_key == "L" or src_key not in graph.node_range_dict:
+            continue
+        src_start, src_end = graph.node_range_dict[src_key]
+        n_src = src_end - src_start
+        if n_src == 0:
+            continue
+
+        # Numeric layer after which source writes (-1 for embeddings = before layer 0)
+        src_writes_after = -1 if src_key == "E" else src_key
+
+        # Initialise: place each source node's writing vector at its sequence position
+        vecs = t.zeros(n_src, seq_len, d_model, device=device)
+        for i in range(n_src):
+            node = graph.nodes[src_start + i]
+            vecs[i, node.ctx_idx] = graph.writing_vecs[src_start + i]
+
+        for tgt_key in layer_keys:
+            if tgt_key == "E" or tgt_key not in graph.node_range_dict:
+                continue
+            tgt_start, tgt_end = graph.node_range_dict[tgt_key]
+            if tgt_end == tgt_start:
+                continue
+
+            tgt_layer_num = n_layers if tgt_key == "L" else tgt_key
+            if src_writes_after >= tgt_layer_num:
+                continue  # Source must come strictly before target
+
+            # Map through intermediate layers (full attn + MLP skip at each)
+            mapped = vecs.clone()
+            end_layer = n_layers if tgt_key == "L" else tgt_layer_num
+            for layer in range(src_writes_after + 1, end_layer):
+                mapped = mapped + map_through_attn(mapped, cache, model, layer)
+                mapped = mapped + map_through_mlp(mapped, cache, model, transcoders, layer)
+
+            # Handle target layer
+            if tgt_key == "L":
+                # Logit targets: apply final LayerNorm
+                mapped = map_through_ln(mapped, cache, model, layer=None)
+            else:
+                # Latent/error targets: attention at target layer, then pre-MLP LN
+                mapped = mapped + map_through_attn(mapped, cache, model, tgt_layer_num)
+                mapped = map_through_ln(mapped, cache, model, tgt_layer_num, is_mlp_ln=True)
+
+            # Compute edge weights via dot products at target positions
+            for j in range(tgt_end - tgt_start):
+                tgt_node = graph.nodes[tgt_start + j]
+                tgt_reading = graph.reading_vecs[tgt_start + j]
+                edges = einops.einsum(
+                    mapped[:, tgt_node.ctx_idx],
+                    tgt_reading,
+                    "n_src d_model, d_model -> n_src",
+                )
+                adjacency[tgt_start + j, src_start:src_end] = edges
+    # END SOLUTION
+
+    return adjacency
+
+
+# ! CELL TYPE: code
+# ! FILTERS: []
+# ! TAGS: [main]
+
+if MAIN and FLAG_RUN_SECTION_3:
+    manual_adj = compute_adjacency_matrix_manual(gemma, cache_bonus, result.graph, transcoders)
+    tests.test_compute_adjacency_matrix_manual(manual_adj, result.adjacency_matrix)
+
+# ! CELL TYPE: markdown
+# ! FILTERS: []
+# ! TAGS: []
+
+r"""
+## AutoInterp
+
+If you completed exercises 1.3.3 (Automated Interpretability), you already have the tools to run automated interpretability on attribution graph features! You can use your autointerp pipeline to generate explanations for each latent node in the graph, which can then be displayed alongside the feature's logit tables in the dashboard.
+
+This is a great way to combine what you learned across different sections. To get started:
+
+1. For each kept latent node, extract its top activating tokens from the attribution graph prompt (already available in `result.graph`)
+2. Use your autointerp scoring pipeline from 1.3.3 to generate explanations
+3. Display the explanations alongside each feature in the attribution dashboard
+
+This is left as an open-ended exploration rather than a structured exercise - the implementation will depend on how you structured your autointerp code in 1.3.3.
 """

@@ -167,7 +167,7 @@ In these exercises, we'll be loading some pretty large models into memory (e.g. 
 First, we can run some code to inspect our current memory usage. Here's me running this code during the exercise set on SAE circuits, after having already loaded in the Gemma models from the previous section. This was on a Colab Pro notebook.
 
 ```python
-import part31_superposition_and_saes.utils as utils
+import part33_interp_with_saes.utils as utils
 
 # Profile memory usage, and delete gemma models if we've loaded them in
 namespace = globals().copy() | locals()
@@ -254,8 +254,8 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter1_transformer_interp"
-repo = "arena-pragmatic-interp"
-branch = "main"
+repo = "ARENA_3.0"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
@@ -278,7 +278,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -288,6 +288,8 @@ if f"{root}/{chapter}/exercises" not in sys.path:
     sys.path.append(f"{root}/{chapter}/exercises")
 
 os.chdir(f"{root}/{chapter}/exercises")
+
+FLAG_RUN_GEMMASCOPE = True
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -310,6 +312,7 @@ import plotly.express as px
 import requests
 import torch as t
 from datasets import load_dataset
+from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
 from IPython.display import HTML, IFrame, display
 from jaxtyping import Float, Int
@@ -319,10 +322,12 @@ from rich.table import Table
 from sae_lens import (
     SAE,
     ActivationsStore,
+    GatedTrainingSAEConfig,
     HookedSAETransformer,
     LanguageModelSAERunnerConfig,
+    LoggingConfig,
 )
-from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
+from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_vis import SaeVisConfig, SaeVisData, SaeVisLayoutConfig
 from tabulate import tabulate
 from torch import Tensor
@@ -333,9 +338,15 @@ from transformer_lens.utils import get_act_name, test_prompt
 
 device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
+
+def _get_hook_layer(sae: SAE) -> int:
+    """Extract the layer number from an SAE's hook name (e.g. 'blocks.7.hook_resid_pre' → 7)."""
+    return int(sae.cfg.metadata.hook_name.split(".")[1])
+
+
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
-section = "part32_interp_with_saes"
+section = "part33_interp_with_saes"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"
 section_dir = exercises_dir / section
@@ -344,9 +355,8 @@ if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 # END FILTERS
 
-# There's a single utils & tests file for all SAE material
-import part31_superposition_and_saes.tests as tests
-import part31_superposition_and_saes.utils as utils
+import part33_interp_with_saes.tests as tests
+import part33_interp_with_saes.utils as utils
 
 MAIN = __name__ == "__main__"
 
@@ -723,7 +733,7 @@ r"""
 r"""
 Next, we'll load the SAE which we'll be working with for most of these exercises: the **layer 7 resid pre model** from the **GPT2 Small SAEs** (as well as a copy of GPT2 Small to attach it to). The SAE uses the `HookedSAETransformer` class, which is adapted from the TransformerLens `HookedTransformer` class.
 
-Note, the `SAE.from_pretrained` function has return type `tuple[SAE, dict, Tensor | None]`, with the return elements being the SAE, config dict, and a tensor of feature sparsities. The config dict contains useful metadata on e.g. how the SAE was trained (among other things).
+Note, the `SAE.from_pretrained` function returns an SAE object directly. The SAE's config and metadata can be accessed via `sae.cfg` and `sae.cfg.metadata` respectively.
 """
 
 # ! CELL TYPE: code
@@ -734,7 +744,7 @@ t.set_grad_enabled(False)
 
 gpt2: HookedSAETransformer = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
 
-gpt2_sae, cfg_dict, sparsity = SAE.from_pretrained(
+gpt2_sae = SAE.from_pretrained(
     release="gpt2-small-res-jb",
     sae_id="blocks.7.hook_resid_pre",
     device=str(device),
@@ -777,7 +787,13 @@ The `sae` object is an instance of the `SAE` (Sparse Autoencoder) class. There a
 # ! FILTERS: []
 # ! TAGS: [main]
 
-print(tabulate(gpt2_sae.cfg.__dict__.items(), headers=["name", "value"], tablefmt="simple_outline"))
+print(
+    tabulate(
+        list(gpt2_sae.cfg.__dict__.items()) + list(gpt2_sae.cfg.metadata.items()),
+        headers=["name", "value"],
+        tablefmt="simple_outline",
+    )
+)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -1110,9 +1126,9 @@ Let's explore the active latents at the final token in our prompt. You should fi
 _, cache = gpt2.run_with_cache_with_saes(
     prompt,
     saes=[gpt2_sae],
-    stop_at_layer=gpt2_sae.cfg.hook_layer + 1,
+    stop_at_layer=_get_hook_layer(gpt2_sae) + 1,
 )
-sae_acts_post = cache[f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post"][0, -1, :]
+sae_acts_post = cache[f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post"][0, -1, :]
 
 # Plot line chart of latent activations
 px.line(
@@ -1173,8 +1189,8 @@ gpt2_sae.use_error_term = True
 logits_without_sae_recon, cache_without_sae_recon = gpt2.run_with_cache_with_saes(prompt, saes=[gpt2_sae])
 
 # Both SAE caches contain the hook values
-assert f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post" in cache_with_sae_recon
-assert f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post" in cache_without_sae_recon
+assert f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post" in cache_with_sae_recon
+assert f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post" in cache_without_sae_recon
 
 # But final output will be different, because we don't use SAE reconstructions when use_error_term
 t.testing.assert_close(logits_no_saes, logits_without_sae_recon)
@@ -1296,7 +1312,7 @@ r"""
 
 The function below should iterate through some number of batches (note that you can reduce the default number if you find the code is taking too long), and creates a histogram of the activations for a given latent. Try and return the **activation density** in the histogram's title too.
 
-Reminder - when using `model.run_with_cache_with_saes`, you can use the arguments `stop_at_layer=sae.cfg.hook_layer+1` as well as `names_filter=hook_name`; these will help you avoid unnecessary computation and memory usage.
+Reminder - when using `model.run_with_cache_with_saes`, you can use the arguments `stop_at_layer=_get_hook_layer(sae)+1` as well as `names_filter=hook_name`; these will help you avoid unnecessary computation and memory usage.
 
 Also, note that if you're working in Colab & using Plotly then you might need to adjust this code so it computes & renders the figure in separate code cells - this is a well known but unfixed Colab bug.
 """
@@ -1321,7 +1337,7 @@ def show_activation_histogram(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    sae_acts_post_hook_name = f"{sae.cfg.hook_name}.hook_sae_acts_post"
+    sae_acts_post_hook_name = f"{sae.cfg.metadata.hook_name}.hook_sae_acts_post"
     all_positive_acts = []
 
     for i in tqdm(range(total_batches), desc="Computing activations for histogram"):
@@ -1329,7 +1345,7 @@ def show_activation_histogram(
         _, cache = model.run_with_cache_with_saes(
             tokens,
             saes=[sae],
-            stop_at_layer=sae.cfg.hook_layer + 1,
+            stop_at_layer=_get_hook_layer(sae) + 1,
             names_filter=[sae_acts_post_hook_name],
         )
         acts = cache[sae_acts_post_hook_name][..., latent_idx]
@@ -1568,7 +1584,7 @@ def fetch_max_activating_examples(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    sae_acts_post_hook_name = f"{sae.cfg.hook_name}.hook_sae_acts_post"
+    sae_acts_post_hook_name = f"{sae.cfg.metadata.hook_name}.hook_sae_acts_post"
 
     # Create list to store the top k activations for each batch. Once we're done,
     # we'll filter this to only contain the top k over all batches
@@ -1579,7 +1595,7 @@ def fetch_max_activating_examples(
         _, cache = model.run_with_cache_with_saes(
             tokens,
             saes=[sae],
-            stop_at_layer=sae.cfg.hook_layer + 1,
+            stop_at_layer=_get_hook_layer(sae) + 1,
             names_filter=[sae_acts_post_hook_name],
         )
         acts = cache[sae_acts_post_hook_name][..., latent_idx]
@@ -2154,7 +2170,7 @@ attn_saes = {
         "gpt2-small-hook-z-kk",
         f"blocks.{layer}.hook_z",
         device=str(device),
-    )[0]
+    )
     for layer in range(gpt2.cfg.n_layers)
 }
 
@@ -2312,9 +2328,9 @@ def fetch_max_activating_examples_attn(
     # raise NotImplementedError()
     # END EXERCISE
     # SOLUTION
-    sae_acts_pre_hook_name = f"{sae.cfg.hook_name}.hook_sae_acts_pre"
-    v_hook_name = get_act_name("v", sae.cfg.hook_layer)
-    pattern_hook_name = get_act_name("pattern", sae.cfg.hook_layer)
+    sae_acts_pre_hook_name = f"{sae.cfg.metadata.hook_name}.hook_sae_acts_pre"
+    v_hook_name = get_act_name("v", _get_hook_layer(sae))
+    pattern_hook_name = get_act_name("pattern", _get_hook_layer(sae))
     data = []
 
     for _ in tqdm(range(total_batches), desc="Computing activations for max activating examples (attn)"):
@@ -2322,7 +2338,7 @@ def fetch_max_activating_examples_attn(
         _, cache = model.run_with_cache_with_saes(
             tokens,
             saes=[sae],
-            stop_at_layer=sae.cfg.hook_layer + 1,
+            stop_at_layer=_get_hook_layer(sae) + 1,
             names_filter=[sae_acts_pre_hook_name, v_hook_name, pattern_hook_name],
         )
         acts = cache[sae_acts_pre_hook_name][..., latent_idx]  # [batch seq]
@@ -2664,7 +2680,7 @@ layer = 9
 
 # Compute mean post-ReLU SAE activations at last token posn
 _, cache = gpt2.run_with_cache_with_saes(prompts, saes=[attn_saes[layer]])
-sae_acts_post = cache[f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"][:, -1].mean(0)
+sae_acts_post = cache[f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"][:, -1].mean(0)
 
 # Plot the activations
 px.line(
@@ -2873,7 +2889,7 @@ This is how we get DLA for latents for a single prompt. We can parallelize this 
 logit_direction = gpt2.W_U.T[correct_toks] - gpt2.W_U.T[incorrect_toks]
 
 # Get latent activations, of shape (4, d_sae)
-sae_acts_post_hook_name = f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"
+sae_acts_post_hook_name = f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"
 _, cache = gpt2.run_with_cache_with_saes(prompts, saes=[attn_saes[layer]], names_filter=[sae_acts_post_hook_name])
 sae_acts_post = cache[sae_acts_post_hook_name][:, -1]
 
@@ -3039,7 +3055,7 @@ logit_dir = (
 )
 
 _, cache = gpt2.run_with_cache_with_saes(prompt, saes=[gpt2_sae])
-sae_acts_post = cache[f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post"][0, -1, :]
+sae_acts_post = cache[f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post"][0, -1, :]
 
 sae_attribution = sae_acts_post * (gpt2_sae.W_dec @ logit_dir)
 
@@ -3141,7 +3157,7 @@ def ablate_sae_latent(
 # SOLUTION
 if MAIN:
     _, cache = gpt2.run_with_cache_with_saes(prompts, saes=[attn_saes[layer]])
-    acts = cache[hook_sae_acts_post := f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"]
+    acts = cache[hook_sae_acts_post := f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"]
 
     alive_latents = (acts[:, s2_pos] > 0.0).any(dim=0).nonzero().squeeze().tolist()
     ablation_effects = t.zeros(attn_saes[layer].cfg.d_sae)
@@ -3355,7 +3371,7 @@ if MAIN:
     # END EXERCISE
     # SOLUTION
     # Extract activations and gradients
-    hook_sae_acts_post = f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"
+    hook_sae_acts_post = f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"
     clean_sae_acts_post = clean_cache[hook_sae_acts_post]
     clean_grad_sae_acts_post = clean_grad_cache[hook_sae_acts_post]
 
@@ -3406,7 +3422,7 @@ r"""
 
 ```python
 # Extract activations and gradients
-hook_sae_acts_post = f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"
+hook_sae_acts_post = f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"
 clean_sae_acts_post = clean_cache[hook_sae_acts_post]
 clean_grad_sae_acts_post = clean_grad_cache[hook_sae_acts_post]
 
@@ -3449,32 +3465,26 @@ Let's first load in the SAE. We're using the [canonical recommendations](https:/
 Note that you'll probably have to go through a couple of steps before gaining access to these SAE models. You should do the following:
 
 1. Visit the [gemma-2b HuggingFace repo](https://huggingface.co/google/gemma-2b) and click "Agree and access repository".
-2. When you've been granted access, create a read token in your user settings and copy it, then run the command `huggingface-cli login --token <your-token-here>` in your terminal (or alternatively you can just run `huggingface-cli login` then create a token at the link it prints for you, and pasrte it in).
-
-Once you've done this, you should be able to load in your models as follows:
+2. When you've been granted access, create a read token in your user settings and copy it, then paste it into a `.env` file in the directory `chapter1_transformer_interp/exercises`, as `HF_TOKEN=...`. Then you can run the cell below to load it in:
 """
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-USING_GEMMA = os.environ.get("HUGGINGFACE_KEY") is not None
 
-if USING_GEMMA:
-    # FILTERS: ~py
-    # !huggingface-cli login --token {os.environ["HUGGINGFACE_KEY"]}
-    # END FILTERS
-    # FILTERS: py
-    # # !huggingface-cli login --token {os.environ["HUGGINGFACE_KEY"]}
-    # END FILTERS
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    load_dotenv()
+
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    assert HF_TOKEN, "Please set HF_TOKEN in your .env file"
 
     gemma_2_2b = HookedSAETransformer.from_pretrained("gemma-2-2b", device=device)
 
     gemmascope_sae_release = "gemma-scope-2b-pt-res-canonical"
     gemmascope_sae_id = "layer_20/width_16k/canonical"
-    gemma_2_2b_sae = SAE.from_pretrained(gemmascope_sae_release, gemmascope_sae_id, device=str(device))[0]
-else:
-    print("Please supply your Hugging Face API key before running this cell")
+    gemma_2_2b_sae = SAE.from_pretrained(gemmascope_sae_release, gemmascope_sae_id, device=str(device))
+
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3527,7 +3537,7 @@ Sadly we can't quite replicate Golden Gate Claude with GemmaScope SAEs. There ar
 # ! FILTERS: [~py]
 # ! TAGS: []
 
-if USING_GEMMA:
+if MAIN and FLAG_RUN_GEMMASCOPE:
     latent_idx = 12082
 
     display_dashboard(sae_release=gemmascope_sae_release, sae_id=gemmascope_sae_id, latent_idx=latent_idx)
@@ -3576,9 +3586,8 @@ def steering_hook(
     return activations + steering_coefficient * sae.W_dec[latent_idx]
 
 
-if MAIN:
-    if USING_GEMMA:
-        tests.test_steering_hook(steering_hook, gemma_2_2b_sae)
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    tests.test_steering_hook(steering_hook, gemma_2_2b_sae)
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -3613,7 +3622,7 @@ The output will by default be a string.
 <details>
 <summary>Help - I'm not sure what hook to add my steering hook to.</summary>
 
-You should add it to `sae.cfg.hook_name`, since these are the activations that get reconstructed by the SAE.
+You should add it to `sae.cfg.metadata.hook_name`, since these are the activations that get reconstructed by the SAE.
 
 </details>
 
@@ -3650,7 +3659,7 @@ def generate_with_steering(
         steering_coefficient=steering_coefficient,
     )
 
-    with model.hooks(fwd_hooks=[(sae.cfg.hook_name, _steering_hook)]):
+    with model.hooks(fwd_hooks=[(sae.cfg.metadata.hook_name, _steering_hook)]):
         output = model.generate(prompt, max_new_tokens=max_new_tokens, **GENERATE_KWARGS)
 
     return output
@@ -3658,29 +3667,28 @@ def generate_with_steering(
 
 
 # HIDE
-if MAIN:
-    if USING_GEMMA:
-        prompt = "When I look at myself in the mirror, I see"
-        # FILTERS: ~py
-        latent_idx = 12082
-        # END FILTERS
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    prompt = "When I look at myself in the mirror, I see"
+    # FILTERS: ~py
+    latent_idx = 12082
+    # END FILTERS
 
-        no_steering_output = gemma_2_2b.generate(prompt, max_new_tokens=50, **GENERATE_KWARGS)
+    no_steering_output = gemma_2_2b.generate(prompt, max_new_tokens=50, **GENERATE_KWARGS)
 
-        table = Table(show_header=False, show_lines=True, title="Steering Output")
-        table.add_row("Normal", no_steering_output)
-        for i in tqdm(range(3), "Generating steered examples..."):
-            table.add_row(
-                f"Steered #{i}",
-                generate_with_steering(
-                    gemma_2_2b,
-                    gemma_2_2b_sae,
-                    prompt,
-                    latent_idx,
-                    steering_coefficient=240.0,  # roughly 1.5-2x the latent's max activation
-                ).replace("\n", "↵"),
-            )
-        rprint(table)
+    table = Table(show_header=False, show_lines=True, title="Steering Output")
+    table.add_row("Normal", no_steering_output)
+    for i in tqdm(range(3), "Generating steered examples..."):
+        table.add_row(
+            f"Steered #{i}",
+            generate_with_steering(
+                gemma_2_2b,
+                gemma_2_2b_sae,
+                prompt,
+                latent_idx,
+                steering_coefficient=240.0,  # roughly 1.5-2x the latent's max activation
+            ).replace("\n", "↵"),
+        )
+    rprint(table)
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -3878,7 +3886,7 @@ days_of_the_week = [
 ]
 buffer = 5
 seq_len = gpt2_act_store.context_size
-sae_acts_post_hook_name = f"{gpt2_sae.cfg.hook_name}.hook_sae_acts_post"
+sae_acts_post_hook_name = f"{gpt2_sae.cfg.metadata.hook_name}.hook_sae_acts_post"
 
 all_data = {"recons": [], "context": [], "token": [], "token_group": []}
 total_batches = 400
@@ -3887,7 +3895,7 @@ for i in tqdm(range(total_batches), desc="Computing activations data for PCA, ov
     _, cache = gpt2.run_with_cache_with_saes(
         tokens := gpt2_act_store.get_batch_tokens(),
         saes=[gpt2_sae],
-        stop_at_layer=gpt2_sae.cfg.hook_layer + 1,
+        stop_at_layer=_get_hook_layer(gpt2_sae) + 1,
         names_filter=[sae_acts_post_hook_name],
     )
     acts = cache[sae_acts_post_hook_name][..., day_of_the_week_latents].flatten(0, 1)
@@ -4033,7 +4041,7 @@ if MAIN:
     }
 
     layer = 5
-    sae_acts_post_hook_name = f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"
+    sae_acts_post_hook_name = f"{attn_saes[layer].cfg.metadata.hook_name}.hook_sae_acts_post"
 
     logit_dir = gpt2.W_U[:, gpt2.to_single_token("-")]
 
@@ -4180,7 +4188,7 @@ widths = [768 * (2**n) for n in range(7)]  # Note, you can increase to 8 if it f
 sae_ids = [f"blocks.8.hook_resid_pre_{width}" for width in widths]
 
 splitting_saes = {
-    width: SAE.from_pretrained(sae_release, sae_id, device=str(device))[0] for width, sae_id in zip(widths, sae_ids)
+    width: SAE.from_pretrained(sae_release, sae_id, device=str(device)) for width, sae_id in zip(widths, sae_ids)
 }
 
 gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
@@ -4776,7 +4784,7 @@ gpt2_sae = SAE.from_pretrained(
     release="gpt2-small-res-jb",
     sae_id="blocks.7.hook_resid_pre",
     device=str(device),
-)[0]
+)
 
 gpt2_act_store = ActivationsStore.from_sae(
     model=gpt2,
@@ -5130,7 +5138,7 @@ class AutoInterp:
         """
         Stores top acts / random seqs data, which is used for generation & scoring respectively.
         """
-        sae_acts_post_hook_name = f"{self.sae.cfg.hook_name}.hook_sae_acts_post"
+        sae_acts_post_hook_name = f"{self.sae.cfg.metadata.hook_name}.hook_sae_acts_post"
         # EXERCISE
         # total_batches = self.cfg.total_tokens // (self.act_store.store_batch_size * self.act_store.context_size)
         # END EXERCISE
@@ -5167,7 +5175,7 @@ class AutoInterp:
             _, cache = self.model.run_with_cache_with_saes(
                 tokens := self.act_store.get_batch_tokens().to(device),
                 saes=[self.sae],
-                stop_at_layer=self.sae.cfg.hook_layer + 1,
+                stop_at_layer=_get_hook_layer(self.sae) + 1,
                 names_filter=[sae_acts_post_hook_name],
             )
             acts = cache[sae_acts_post_hook_name][..., self.cfg.latents]
@@ -5442,13 +5450,9 @@ Reminder - you can use `huggingface-cli delete-cache` to clear your cache if you
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-# FILTERS: ~py
-USING_GEMMA = os.environ.get("HUGGINGFACE_KEY") is not None
-# END FILTERS
-
-if USING_GEMMA:
+if MAIN and FLAG_RUN_GEMMASCOPE:
     gemma_2b_it = HookedSAETransformer.from_pretrained("google/gemma-2b-it", device=device)
 
     prompt = "\n".join(
@@ -5476,9 +5480,9 @@ Why is it okay to use an SAE which was trained on the base model, not the instru
 
 # ! CELL TYPE: code
 # ! FILTERS: [~py]
-# ! TAGS: [main]
+# ! TAGS: []
 
-if USING_GEMMA:
+if MAIN and FLAG_RUN_GEMMASCOPE:
     # Display all SAEs trained on the base gemma-2b model
     metadata_rows = [
         [data.model, data.release, data.repo_id, len(data.saes_map)]
@@ -5545,12 +5549,18 @@ Why can we use an SAE trained on the base model, but run forward passes on our i
 
 # ! CELL TYPE: code
 # ! FILTERS: []
-# ! TAGS: [main]
+# ! TAGS: []
 
-if USING_GEMMA:
-    gemma_2b_sae = SAE.from_pretrained(sae_release, sae_id, device=str(device))[0]
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    gemma_2b_sae = SAE.from_pretrained(sae_release, sae_id, device=str(device))
 
-    print(tabulate(gemma_2b_sae.cfg.__dict__.items(), headers=["name", "value"], tablefmt="simple_outline"))
+    print(
+        tabulate(
+            list(gemma_2b_sae.cfg.__dict__.items()) + list(gemma_2b_sae.cfg.metadata.items()),
+            headers=["name", "value"],
+            tablefmt="simple_outline",
+        )
+    )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: [soln,st]
@@ -5610,7 +5620,7 @@ We'll be using this latent as an example:
 # ! FILTERS: [~py]
 # ! TAGS: []
 
-if USING_GEMMA:
+if MAIN and FLAG_RUN_GEMMASCOPE:
     latent_idx = 607
     display_dashboard(sae_release, sae_id, latent_idx)
 
@@ -5701,34 +5711,31 @@ def generate_patch_scoping_explanation(
 
 
 # HIDE
-if MAIN:
-    if USING_GEMMA:
-        GENERATE_KWARGS["verbose"] = False
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    scale_list = list(range(0, 60, 10))
+    replacement_layer = 2
 
-        scale_list = list(range(0, 60, 10))
-        replacement_layer = 2
+    prompt = "\n".join(
+        [
+            "<start_of_turn>user",
+            f'What is the meaning of the word "{gemma_2b_it.tokenizer.unk_token}"?<end_of_turn>',
+            "<start_of_turn>model",
+            f'The meaning of the word "{gemma_2b_it.tokenizer.unk_token}" is "',
+        ]
+    )
 
-        prompt = "\n".join(
-            [
-                "<start_of_turn>user",
-                f'What is the meaning of the word "{gemma_2b_it.tokenizer.unk_token}"?<end_of_turn>',
-                "<start_of_turn>model",
-                f'The meaning of the word "{gemma_2b_it.tokenizer.unk_token}" is "',
-            ]
+    for scale in scale_list:
+        output = generate_patch_scoping_explanation(
+            gemma_2b_it,
+            gemma_2b_sae,
+            prompt,
+            latent_idx,
+            replacement_layer,
+            scale,
+            max_new_tokens=50,
         )
-
-        for scale in scale_list:
-            output = generate_patch_scoping_explanation(
-                gemma_2b_it,
-                gemma_2b_sae,
-                prompt,
-                latent_idx,
-                replacement_layer,
-                scale,
-                max_new_tokens=50,
-            )
-            output_split = output.removeprefix(prompt).split('"')[0].strip().rstrip(".")
-            print(f"scale {scale:02} | {output_split!r}")
+        output_split = output.removeprefix(prompt).split('"')[0].strip().rstrip(".")
+        print(f"scale {scale:02} | {output_split!r}")
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -5816,79 +5823,77 @@ def get_patch_scoping_self_similarity(
     return self_similarity.item(), first_deriv.item(), second_deriv.item()
 
 
-if MAIN:
-    if USING_GEMMA:
-        scale_min, scale_max, n_datapoints = 5, 50, 20
-        scale_step = (scale_max - scale_min) / n_datapoints
-        scale_list = t.linspace(scale_min, scale_max, n_datapoints)
-        replacement_layer = 2
-        diagnostic_layer = 15
+if MAIN and FLAG_RUN_GEMMASCOPE:
+    scale_min, scale_max, n_datapoints = 5, 50, 20
+    scale_step = (scale_max - scale_min) / n_datapoints
+    scale_list = t.linspace(scale_min, scale_max, n_datapoints)
+    replacement_layer = 2
+    diagnostic_layer = 15
 
-        prompt = "\n".join(
-            [
-                "<start_of_turn>user",
-                f'What is the meaning of the word "{gemma_2b_it.tokenizer.unk_token}"?<end_of_turn>',
-                "<start_of_turn>model",
-                f'The meaning of the word "{gemma_2b_it.tokenizer.unk_token}" is "',
-            ]
-        )
-
-        t.set_grad_enabled(True)
-        self_similarity_results = [
-            get_patch_scoping_self_similarity(
-                gemma_2b_it,
-                gemma_2b_sae,
-                prompt,
-                latent_idx,
-                replacement_layer,
-                diagnostic_layer,
-                scale,
-            )
-            for scale in scale_list
+    prompt = "\n".join(
+        [
+            "<start_of_turn>user",
+            f'What is the meaning of the word "{gemma_2b_it.tokenizer.unk_token}"?<end_of_turn>',
+            "<start_of_turn>model",
+            f'The meaning of the word "{gemma_2b_it.tokenizer.unk_token}" is "',
         ]
-        self_similarity, self_similarity_first_deriv, self_similarity_second_deriv = zip(*self_similarity_results)
-        t.set_grad_enabled(False)
+    )
 
-        fig = px.scatter(
-            template="ggplot2",
-            width=800,
-            height=500,
-            title="Patch scoping: steering vector self-similarity",
-            x=scale_list,
-            y=self_similarity,
-            labels={"x": "Scale", "y": "Self-similarity"},
-        ).update_layout(yaxis_range=[0.0, 0.3])
+    t.set_grad_enabled(True)
+    self_similarity_results = [
+        get_patch_scoping_self_similarity(
+            gemma_2b_it,
+            gemma_2b_sae,
+            prompt,
+            latent_idx,
+            replacement_layer,
+            diagnostic_layer,
+            scale,
+        )
+        for scale in scale_list
+    ]
+    self_similarity, self_similarity_first_deriv, self_similarity_second_deriv = zip(*self_similarity_results)
+    t.set_grad_enabled(False)
 
-        # Add scatter plot for first & second order derivatives, on each point
-        for i, (x, ss, ssg, ssgg) in enumerate(
-            zip(
-                scale_list,
-                self_similarity,
-                self_similarity_first_deriv,
-                self_similarity_second_deriv,
-            )
+    fig = px.scatter(
+        template="ggplot2",
+        width=800,
+        height=500,
+        title="Patch scoping: steering vector self-similarity",
+        x=scale_list,
+        y=self_similarity,
+        labels={"x": "Scale", "y": "Self-similarity"},
+    ).update_layout(yaxis_range=[0.0, 0.3])
+
+    # Add scatter plot for first & second order derivatives, on each point
+    for i, (x, ss, ssg, ssgg) in enumerate(
+        zip(
+            scale_list,
+            self_similarity,
+            self_similarity_first_deriv,
+            self_similarity_second_deriv,
+        )
+    ):
+        half_step = scale_step / 2
+        xrange = t.linspace(x - half_step, x + half_step, 100)
+        y_first_order = ss + ssg * (xrange - x)
+        y_second_order = ss + ssg * (xrange - x) + ssgg * (xrange - x) ** 2 / 2
+        for y_values, color, name in zip(
+            [y_first_order, y_second_order],
+            ["red", "blue"],
+            ["1st order approx.", "2nd order approx."],
         ):
-            half_step = scale_step / 2
-            xrange = t.linspace(x - half_step, x + half_step, 100)
-            y_first_order = ss + ssg * (xrange - x)
-            y_second_order = ss + ssg * (xrange - x) + ssgg * (xrange - x) ** 2 / 2
-            for y_values, color, name in zip(
-                [y_first_order, y_second_order],
-                ["red", "blue"],
-                ["1st order approx.", "2nd order approx."],
-            ):
-                fig.add_scatter(
-                    x=xrange,
-                    y=y_values,
-                    mode="lines",
-                    opacity=0.5,
-                    line=dict(color=color, width=1),
-                    hoverinfo="skip",
-                    showlegend=i == 0,
-                    name=name,
-                )
-
-        fig.show()
+            fig.add_scatter(
+                x=xrange,
+                y=y_values,
+                mode="lines",
+                opacity=0.5,
+                line=dict(color=color, width=1),
+                hoverinfo="skip",
+                showlegend=i == 0,
+                name=name,
+            )
+    fig.show()
 # END SOLUTION
 
 # ! CELL TYPE: markdown
@@ -6082,7 +6087,7 @@ uploaded_saes = {
         release="your-username/your-sae-repo",
         sae_id=f"blocks.{layer}.hook_resid_pre",
         device=str(device)
-    )[0]
+    )
     for layer in [0, 1]
 }
 ```
@@ -6314,7 +6319,7 @@ r"""
 # ! TAGS: []
 
 r"""
-We can also spot-check model abilities with `utils.test_prompt`, from the TransformerLens library:
+We can also spot-check model abilities with `test_prompt`, from the TransformerLens library:
 """
 
 # ! CELL TYPE: code
@@ -6359,7 +6364,7 @@ Ranks of the answer tokens: [[(' Lily', 1), (' she', 0), (' he', 104)]]</pre>
 r"""
 In the output above, we see that the model assigns ~ 70% probability to `" she"` being the next token (with `" he"` ranked much lower at .01%), and a 13% chance to `" Lily"` being the next token. Other names like Lucy or Anna are not highly ranked.
 
-For a more detailed view than offered by `utils.test_prompt`, we can use the `circuitsvis` library to produce visualizations. In the following code, we visualize logprobs for the next token for all of the tokens in our generated sequence. Darker tokens indicate the model assigning a higher probability to the actual next token, and you can also hover over tokens to see the top 10 predictions by their logprob.
+For a more detailed view than offered by the transformerlens `test_prompt` function, we can use the `circuitsvis` library to produce visualizations. In the following code, we visualize logprobs for the next token for all of the tokens in our generated sequence. Darker tokens indicate the model assigning a higher probability to the actual next token, and you can also hover over tokens to see the top 10 predictions by their logprob.
 """
 
 # ! CELL TYPE: code
@@ -6411,27 +6416,24 @@ lr_decay_steps = total_training_steps // 5  # 20% of training
 
 cfg = LanguageModelSAERunnerConfig(
     #
+    # SAE architecture
+    sae=GatedTrainingSAEConfig(
+        d_in=tinystories_model.cfg.d_model,
+        d_sae=tinystories_model.cfg.d_model * 16,
+        apply_b_dec_to_input=True,
+        l1_coefficient=4,
+        l1_warm_up_steps=l1_warm_up_steps,
+    ),
+    #
     # Data generation
     model_name="tiny-stories-1L-21M",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
     hook_name="blocks.0.hook_mlp_out",
-    hook_layer=0,
-    d_in=tinystories_model.cfg.d_model,
     dataset_path="apollo-research/roneneldan-TinyStories-tokenizer-gpt2",  # tokenized language dataset on HF for the Tiny Stories corpus.
     is_dataset_tokenized=True,
     prepend_bos=True,  # you should use whatever the base model was trained with
     streaming=True,  # we could pre-download the token dataset if it was small.
     train_batch_size_tokens=batch_size,
     context_size=512,  # larger is better but takes longer (for tutorial we'll use a short one)
-    #
-    # SAE architecture
-    architecture="gated",
-    expansion_factor=16,
-    b_dec_init_method="zeros",
-    apply_b_dec_to_input=True,
-    normalize_sae_decoder=False,
-    scale_sparsity_penalty_by_decoder_norm=True,
-    decoder_heuristic_init=True,
-    init_encoder_as_decoder_transpose=True,
     #
     # Activations store
     n_batches_in_buffer=64,
@@ -6446,19 +6448,18 @@ cfg = LanguageModelSAERunnerConfig(
     lr_warm_up_steps=lr_warm_up_steps,  # avoids large number of initial dead features
     lr_decay_steps=lr_decay_steps,  # helps avoid overfitting
     #
-    # Training hyperparameters (SAE-specific)
-    l1_coefficient=4,
-    l1_warm_up_steps=l1_warm_up_steps,
-    use_ghost_grads=False,  # we don't use ghost grads anymore
+    # Training hyperparameters (resampling)
     feature_sampling_window=2000,  # how often we resample dead features
     dead_feature_window=1000,  # size of window to assess whether a feature is dead
     dead_feature_threshold=1e-4,  # threshold for classifying feature as dead, over window
     #
     # Logging / evals
-    log_to_wandb=True,  # always use wandb unless you are just testing code.
-    wandb_project="arena-demos-tinystories",
-    wandb_log_frequency=30,
-    eval_every_n_wandb_logs=20,
+    logger=LoggingConfig(
+        log_to_wandb=True,  # always use wandb unless you are just testing code.
+        wandb_project="arena-demos-tinystories",
+        wandb_log_frequency=30,
+        eval_every_n_wandb_logs=20,
+    ),
     #
     # Misc.
     device=str(device),
@@ -6478,7 +6479,7 @@ sae_id = cfg.hook_name
 
 # upload_saes_to_huggingface({sae_id: sae}, hf_repo_id=hf_repo_id)
 
-tinystories_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))[0]
+tinystories_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -6678,29 +6679,29 @@ lr_decay_steps = total_training_steps // 5  # 20% of training
 
 layer = 0
 
+d_in_attn = attn_model.cfg.d_head * attn_model.cfg.n_heads
+
 cfg = LanguageModelSAERunnerConfig(
+    #
+    # SAE architecture
+    sae=GatedTrainingSAEConfig(
+        d_in=d_in_attn,
+        d_sae=d_in_attn * 16,
+        apply_b_dec_to_input=True,
+        reshape_activations="hook_z",
+        l1_coefficient=2,
+        l1_warm_up_steps=l1_warm_up_steps,
+    ),
     #
     # Data generation
     model_name="attn-only-2l-demo",
     hook_name=f"blocks.{layer}.attn.hook_z",
-    hook_layer=layer,
-    d_in=attn_model.cfg.d_head * attn_model.cfg.n_heads,
     dataset_path="apollo-research/Skylion007-openwebtext-tokenizer-EleutherAI-gpt-neox-20b",
     is_dataset_tokenized=True,
     prepend_bos=True,  # you should use whatever the base model was trained with
     streaming=True,  # we could pre-download the token dataset if it was small.
     train_batch_size_tokens=batch_size,
     context_size=attn_model.cfg.n_ctx,
-    #
-    # SAE architecture
-    architecture="gated",
-    expansion_factor=16,
-    b_dec_init_method="zeros",
-    apply_b_dec_to_input=True,
-    normalize_sae_decoder=False,
-    scale_sparsity_penalty_by_decoder_norm=True,
-    decoder_heuristic_init=True,
-    init_encoder_as_decoder_transpose=True,
     #
     # Activations store
     n_batches_in_buffer=64,
@@ -6715,19 +6716,18 @@ cfg = LanguageModelSAERunnerConfig(
     lr_warm_up_steps=lr_warm_up_steps,  # avoids large number of initial dead features
     lr_decay_steps=lr_decay_steps,
     #
-    # Training hyperparameters (SAE-specific)
-    l1_coefficient=2,
-    l1_warm_up_steps=l1_warm_up_steps,
-    use_ghost_grads=False,  # we don't use ghost grads anymore
+    # Training hyperparameters (resampling)
     feature_sampling_window=1000,  # how often we resample dead features
     dead_feature_window=500,  # size of window to assess whether a feature is dead
     dead_feature_threshold=1e-4,  # threshold for classifying feature as dead, over window
     #
     # Logging / evals
-    log_to_wandb=True,  # always use wandb unless you are just testing code.
-    wandb_project="arena-demos-attn2l",
-    wandb_log_frequency=30,
-    eval_every_n_wandb_logs=20,
+    logger=LoggingConfig(
+        log_to_wandb=True,  # always use wandb unless you are just testing code.
+        wandb_project="arena-demos-attn2l",
+        wandb_log_frequency=30,
+        eval_every_n_wandb_logs=20,
+    ),
     #
     # Misc.
     device=str(device),
@@ -6747,7 +6747,7 @@ sae_id = f"{cfg.hook_name}-v2"
 
 # upload_saes_to_huggingface({sae_id: sae}, hf_repo_id=hf_repo_id)
 
-attn_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))[0]
+attn_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -6766,7 +6766,7 @@ tokens = t.cat([bos_token.unsqueeze(1), tokens], dim=1)
 assert tokens.shape == (batch_size, seq_len)
 
 # Get a subset of live latents (probably not getting all of them, with only 100 seqs)
-acts_post_hook_name = f"{attn_sae.cfg.hook_name}.hook_sae_acts_post"
+acts_post_hook_name = f"{attn_sae.cfg.metadata.hook_name}.hook_sae_acts_post"
 _, cache = attn_model.run_with_cache_with_saes(tokens[:100], saes=[attn_sae], names_filter=acts_post_hook_name)
 acts = cache[acts_post_hook_name]
 alive_feats = (acts.flatten(0, 1) > 1e-8).any(dim=0).nonzero().squeeze().tolist()
@@ -6830,11 +6830,18 @@ layer = 12
 
 cfg = LanguageModelSAERunnerConfig(
     #
+    # SAE architecture
+    sae=GatedTrainingSAEConfig(
+        d_in=2304,
+        d_sae=2304 * 8,
+        apply_b_dec_to_input=True,
+        l1_coefficient=2,
+        l1_warm_up_steps=l1_warm_up_steps,
+    ),
+    #
     # Data generation
     model_name="gemma-2-2b",
     hook_name=f"blocks.{layer}.hook_resid_post",
-    hook_layer=layer,
-    d_in=2304,
     dataset_path="chanind/openwebtext-gemma",
     is_dataset_tokenized=True,
     # dataset_path="HuggingFaceFW/fineweb",
@@ -6843,16 +6850,6 @@ cfg = LanguageModelSAERunnerConfig(
     streaming=True,
     train_batch_size_tokens=batch_size,
     context_size=1024,
-    #
-    # SAE architecture
-    architecture="gated",
-    expansion_factor=8,
-    b_dec_init_method="zeros",
-    apply_b_dec_to_input=True,
-    normalize_sae_decoder=False,
-    scale_sparsity_penalty_by_decoder_norm=True,
-    decoder_heuristic_init=True,
-    init_encoder_as_decoder_transpose=True,
     #
     # Activations store
     n_batches_in_buffer=16,
@@ -6867,19 +6864,18 @@ cfg = LanguageModelSAERunnerConfig(
     lr_warm_up_steps=lr_warm_up_steps,
     lr_decay_steps=lr_decay_steps,
     #
-    # Training hyperparameters (SAE-specific)
-    l1_coefficient=2,
-    l1_warm_up_steps=l1_warm_up_steps,
-    use_ghost_grads=False,
+    # Training hyperparameters (resampling)
     feature_sampling_window=5000,
     dead_feature_window=5000,
     dead_feature_threshold=1e-6,
     #
     # Logging / evals
-    log_to_wandb=True,
-    wandb_project="arena-demos-gemma2b",
-    wandb_log_frequency=50,
-    eval_every_n_wandb_logs=20,
+    logger=LoggingConfig(
+        log_to_wandb=True,
+        wandb_project="arena-demos-gemma2b",
+        wandb_log_frequency=50,
+        eval_every_n_wandb_logs=20,
+    ),
     #
     # Misc.
     device=str(device),
@@ -6902,7 +6898,7 @@ print("This model hasn't been trained yet!")
 
 # gemma_sae = SAE.from_pretrained(
 #     release=hf_repo_id, sae_id=sae_id, device=str(device)
-# )[0]
+# )
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -6933,11 +6929,18 @@ n_steps = int(training_tokens / train_batch_size_tokens)
 
 cfg = LanguageModelSAERunnerConfig(
     #
+    # SAE architecture
+    sae=GatedTrainingSAEConfig(
+        d_in=othellogpt.cfg.d_mlp,
+        d_sae=othellogpt.cfg.d_mlp * 8,
+        apply_b_dec_to_input=True,
+        l1_coefficient=5,
+        l1_warm_up_steps=int(0.2 * n_steps),
+    ),
+    #
     # Data generation
     model_name=model_name,
     hook_name=f"blocks.{layer}.mlp.hook_post",
-    hook_layer=layer,
-    d_in=othellogpt.cfg.d_mlp,
     dataset_path="taufeeque/othellogpt",
     is_dataset_tokenized=True,
     prepend_bos=False,
@@ -6945,16 +6948,6 @@ cfg = LanguageModelSAERunnerConfig(
     train_batch_size_tokens=train_batch_size_tokens,
     context_size=othellogpt.cfg.n_ctx,  # = 59, we only train on tokens up to (not including) the last one
     seqpos_slice=(5, -5),  # we don't train on the first or last 5 sequence positions
-    #
-    # SAE achitecture
-    architecture="gated",
-    expansion_factor=8,
-    b_dec_init_method="zeros",
-    apply_b_dec_to_input=True,
-    normalize_sae_decoder=False,
-    scale_sparsity_penalty_by_decoder_norm=True,
-    decoder_heuristic_init=True,
-    init_encoder_as_decoder_transpose=True,
     #
     # Activations store
     n_batches_in_buffer=32,
@@ -6969,19 +6962,18 @@ cfg = LanguageModelSAERunnerConfig(
     lr_warm_up_steps=int(0.2 * n_steps),
     lr_decay_steps=int(0.2 * n_steps),
     #
-    # Training hyperparameters (SAE-specific)
-    l1_coefficient=5,
-    l1_warm_up_steps=int(0.2 * n_steps),
-    use_ghost_grads=False,
+    # Training hyperparameters (resampling)
     feature_sampling_window=1000,
     dead_feature_window=500,
     dead_feature_threshold=1e-5,
     #
     # Logging / evals
-    log_to_wandb=True,
-    wandb_project="othello_gpt_sae_16_09",
-    wandb_log_frequency=30,
-    eval_every_n_wandb_logs=10,
+    logger=LoggingConfig(
+        log_to_wandb=True,
+        wandb_project="othello_gpt_sae_16_09",
+        wandb_log_frequency=30,
+        eval_every_n_wandb_logs=10,
+    ),
     #
     # Misc.
     device=str(device),
@@ -7000,7 +6992,7 @@ sae_id = f"{cfg.hook_name}-v1"
 
 # upload_saes_to_huggingface({sae_id: sae}, hf_repo_id=hf_repo_id)
 
-othellogpt_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))[0]
+othellogpt_sae = SAE.from_pretrained(release=hf_repo_id, sae_id=sae_id, device=str(device))
 
 # ! CELL TYPE: markdown
 # ! FILTERS: []
@@ -7041,7 +7033,7 @@ if MAIN:
     print(f"{othello_tokens.shape=}")
 
     # Get live features
-    acts_post_hook_name = f"{othellogpt_sae.cfg.hook_name}.hook_sae_acts_post"
+    acts_post_hook_name = f"{othellogpt_sae.cfg.metadata.hook_name}.hook_sae_acts_post"
     _, cache = othellogpt.run_with_cache_with_saes(
         othello_tokens[:500], saes=[othellogpt_sae], names_filter=acts_post_hook_name
     )

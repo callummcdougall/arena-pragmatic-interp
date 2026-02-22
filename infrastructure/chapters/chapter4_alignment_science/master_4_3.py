@@ -3,10 +3,10 @@
 # ! TAGS: []
 
 # Tee print output to master_4_3_output.txt so we can share logs without copy-pasting.
-# This overrides print for Section 4 onward — output goes to both console and file.
+# This overrides print for Section 4 onward - output goes to both console and file.
 _builtin_print = print
 _output_file = open(
-    "/root/arena-pragmatic-interp/infrastructure/chapters/chapter4_alignment_science/master_4_3_output.txt",
+    "/root/ARENA_3.0/infrastructure/chapters/chapter4_alignment_science/master_4_3_output.txt",
     "a",
 )
 
@@ -24,11 +24,11 @@ def print(*args, **kwargs):  # noqa: A001
 r"""
 ```python
 [
-    {"title": "CoT Infrastructure & Sentence Taxonomy", "icon": "1-circle-fill", "subtitle": "(20%)"},
+    {"title": "CoT Infrastructure & Sentence Taxonomy", "icon": "1-circle-fill", "subtitle": "(10%)"},
     {"title": "Black-box Analysis", "icon": "2-circle-fill", "subtitle": "(30%)"},
-    {"title": "White-box Methods", "icon": "3-circle-fill", "subtitle": "(30%)"},
-    {"title": "Thought Branches: Safety Applications", "icon": "4-circle-fill", "subtitle": "(20%)"},
-    {"title": "Bonus", "icon": "star-fill", "subtitle": "(Optional)"},
+    {"title": "White-box Methods", "icon": "3-circle-fill", "subtitle": "(45%)"},
+    {"title": "Thought Branches: Safety Applications", "icon": "4-circle-fill", "subtitle": "(15%)"},
+    {"title": "Bonus", "icon": "star-fill", "subtitle": ""},
 ]
 ```
 """
@@ -62,11 +62,11 @@ r"""
 # ! TAGS: []
 
 r"""
-In most of this chapter's content so far, we've focused on dividing up LLM computation into small steps, specifically single-token generation. We saw this in Indirect Object Identification where we deeply analyzed how GPT2-Small generates a single token. But recent models have made advances in **chain-of-thought reasoning**. When models are producing very long reasoning traces, we have to think about not just serialized computation over layers to produce a single token, but serialized computation over a very large number of tokens. To get traction on this problem, we're going to need to introduce a new abstraction.
+So far in this chapter, we've focused on dividing LLM computation into small steps: single-token generation. We saw this in Indirect Object Identification where we analyzed how GPT2-Small generates a single token. But modern reasoning models produce very long **chain-of-thought** traces, so we need to think about serialized computation over many tokens, not just over layers. This requires a new abstraction.
 
-The paper [Thought Anchors: Which LLM Reasoning Steps Matter?](https://arxiv.org/abs/2506.19143) does this by splitting up reasoning traces by **sentence**. Compared to tokens, sentences are more coherent and correspond more closely to the actual reasoning steps taken by LLMs.
+[Thought Anchors: Which LLM Reasoning Steps Matter?](https://arxiv.org/abs/2506.19143) introduces this abstraction by splitting reasoning traces by **sentence**. Sentences are more coherent than tokens and correspond more closely to the actual reasoning steps.
 
-The diagram below illustrates this: we can group sentences according to a rough taxonomy of reasoning steps, and use this to show that certain kinds of sentences are more important than others in terms of shaping the trajectory of the reasoning trace (and the final answer). The authors term these sentences **thought anchors**. Thought anchors can be identified using black-box methods (i.e. resampling rollouts) or white-box methods (looking at / intervening on attention patterns). In these exercises, we'll work through both.
+We can group sentences according to a rough taxonomy of reasoning steps, and show that certain kinds of sentences are more important than others in shaping the reasoning trajectory and the final answer. The authors call these sentences **thought anchors**. They can be identified using black-box methods (resampling rollouts) or white-box methods (looking at / intervening on attention patterns). In these exercises, we'll work through both.
 
 <img src="https://i.snipboard.io/PBoc9G.jpg" width="700">
 
@@ -155,8 +155,8 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter4_alignment_science"
-repo = "arena-pragmatic-interp"  # "ARENA_3.0"
-branch = "main"
+repo = "ARENA_3.0"  # "ARENA_3.0"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
@@ -181,7 +181,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -321,17 +321,11 @@ r"""
 # ! TAGS: []
 
 r"""
-In this section, we'll build the infrastructure to analyze chain-of-thought reasoning by breaking it into meaningful units. When models generate long reasoning traces, we need to decide: **what are the appropriate "units of reasoning" we should analyze?**
+In this section, we'll build infrastructure to analyze chain-of-thought reasoning by breaking it into meaningful units. When models generate long reasoning traces, we need to decide what the right "units of reasoning" are.
 
-**Why not use tokens?** Tokens are too granular - a single reasoning step like "Let's calculate the area: πr²" spans multiple tokens, and breaking it apart loses semantic meaning.
+Why not tokens? Tokens are too granular - a single reasoning step like "Let's calculate the area: πr²" spans multiple tokens, and splitting it apart loses semantic meaning. Sentences are a more natural unit: they correspond to complete thoughts, they're granular enough to identify specific important steps, and they align with how humans chunk reasoning.
 
-**Why sentences?** Sentences are a natural unit because:
-1. They correspond to complete thoughts or reasoning steps
-2. They're granular enough to identify specific important steps
-3. They're coarse enough to be semantically meaningful
-4. They align with how humans naturally chunk reasoning
-
-By splitting CoT traces into sentences and categorizing them (calculations, lookups, restatements, etc.), we can start to ask questions like: "Which types of sentences are most critical for reaching the correct answer?" This sentence-level analysis will set us up for the black-box and white-box methods in later sections, where we'll measure which sentences actually shape the model's reasoning trajectory.
+By splitting CoT traces into sentences and categorizing them (calculations, lookups, restatements, etc.), we can ask: which types of sentences are most critical for reaching the correct answer? This sentence-level analysis sets us up for the black-box and white-box methods in later sections.
 """
 
 # ! CELL TYPE: markdown
@@ -341,7 +335,7 @@ By splitting CoT traces into sentences and categorizing them (calculations, look
 r"""
 ## Model Setup & Dataset Inspection
 
-Let's start by setting a few constants (the purpose of all of these will become clear as we go through the exercises):
+We'll start by setting a few constants (the purpose of these will become clear as we go through the exercises):
 """
 
 # ! CELL TYPE: code
@@ -362,7 +356,7 @@ SIMILARITY_THRESHOLD = 0.8
 # ! TAGS: []
 
 r"""
-Next, we'll load in our embedding model. Embedding models are unsupervised models designed to take in text and output a vector - we'll be using them to classify the similarity of different sentences, so we can find motifs in our reasoning traces.
+Next, we'll load an embedding model. Embedding models take in text and output a vector - we'll use them to measure similarity between sentences, so we can find motifs in our reasoning traces.
 """
 
 # ! CELL TYPE: code
@@ -424,7 +418,7 @@ r"""
 # ! TAGS: []
 
 r"""
-We can also load in the dataset that the paper's authors have helpfully open-sourced. The dataset is very large, but the authors provide the structure in the corresponding [HuggingFace page](https://huggingface.co/datasets/uzaymacar/math-rollouts), so we can use the `huggingface_hub` package to load in just the data we want. We'll inspect this dataset more shortly.
+We can also load the dataset that the paper's authors open-sourced. The dataset is very large, but the authors provide the structure on the [HuggingFace page](https://huggingface.co/datasets/uzaymacar/math-rollouts), so we can use `huggingface_hub` to load just the data we want. We'll inspect it more shortly.
 """
 
 # ! CELL TYPE: code
@@ -570,18 +564,9 @@ r"""
 # ! TAGS: []
 
 r"""
-The paper uses a taxonomy of 8 categories:
+The paper uses a taxonomy of 8 categories: Problem Setup (parsing/rephrasing the problem), Plan Generation (stating a plan of action), Fact Retrieval (recalling facts, formulas, problem details), Active Computation (algebra, calculations, manipulations), Uncertainty Management (expressing confusion, re-evaluating, backtracking), Result Consolidation (aggregating intermediate results), Self Checking (verifying previous steps), and Final Answer Emission (explicitly stating the final answer).
 
-1. **Problem Setup**: Parsing or rephrasing the problem
-2. **Plan Generation**: Stating or deciding on a plan of action
-3. **Fact Retrieval**: Recalling facts, formulas, problem details
-4. **Active Computation**: Algebra, calculations, manipulations
-5. **Uncertainty Management**: Expressing confusion, re-evaluating, backtracking
-6. **Result Consolidation**: Aggregating intermediate results, summarizing
-7. **Self Checking**: Verifying previous steps
-8. **Final Answer Emission**: Explicitly stating the final answer
-
-Let's define these below:
+We define these below:
 """
 
 # ! CELL TYPE: code
@@ -625,7 +610,7 @@ Once you've passed the test sentences below, you should try taking rollouts from
 - Are there any sentences that are misclassified, or belong to more than one category?
 - How many words do you need to add before your classification works decently?
 
-Note that no heuristic-based classification will be perfect. The point of this exercise is to get you thinking about the different categories, and what the strengths / limitations of this kind of method are. In research, you should generally try not to reach for a tool more complicated than what you need!
+No heuristic-based classification will be perfect. The point of this exercise is to get you thinking about the different categories and the strengths / limitations of this kind of method. In research, try not to reach for a tool more complicated than what you need!
 """
 
 # ! CELL TYPE: code
@@ -720,11 +705,11 @@ r"""
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-We'll now progress to a slightly more advanced approach for classification, using an **autorater**. This essentially means we're querying an LLM to do the categorization for us, rather than relying on hardcoded rules.
+Now we'll use a more advanced approach: an **autorater** (i.e. querying an LLM to do the categorization for us, rather than relying on hardcoded rules).
 
-We'll start by setting up helper functions to call an API via OpenRouter (which supports many different model providers). We'll define `generate_response` for single calls and `generate_responses_parallel` for batch processing.
+First we set up helper functions to call an API via OpenRouter (which supports many different model providers). We define `generate_response` for single calls and `generate_responses_parallel` for batch processing.
 
-You'll need to create an `.env` file in the current working directory and set the `OPENROUTER_API_KEY` environment variable, then you can run the cell below to see how the helper functions work.
+You'll need to create an `.env` file in the current working directory with `OPENROUTER_API_KEY` set, then you can run the cell below to see how the helper functions work.
 """
 
 # ! CELL TYPE: code
@@ -959,9 +944,9 @@ r"""
 # ! TAGS: []
 
 r"""
-Now that we've split reasoning traces into sentences and categorized them, we can treat each sentence as a single unit and ask: **which sentences are most important for the model's final answer?**
+Now that we've split reasoning traces into sentences and categorized them, we can treat each sentence as a unit and ask: which sentences are most important for the model's final answer?
 
-This section introduces three black-box methods for measuring sentence importance. These are called "black-box" because they only require observing inputs and outputs - we don't need to look inside the model at activations or attention patterns. By intervening on individual sentences (forcing answers, resampling, or replacing with counterfactuals), we can measure how much each sentence shapes the trajectory of the model's reasoning and its final conclusion.
+This section introduces three black-box methods for measuring sentence importance. "Black-box" here means we only observe inputs and outputs - we don't look inside the model at activations or attention patterns. By intervening on individual sentences (forcing answers, resampling, or replacing with counterfactuals), we can measure how much each sentence shapes the model's reasoning trajectory and final conclusion.
 """
 
 # ! CELL TYPE: markdown
@@ -969,9 +954,9 @@ This section introduces three black-box methods for measuring sentence importanc
 # ! TAGS: []
 
 r"""
-The paper used three different methods to measure sentence importance:
+The paper uses three methods to measure sentence importance:
 
-**1. Forced Answer Importance**. For each sentence $S_i$ in the CoT, we interrupt the model and append text, inducing a final output: `Therefore, the final answer is \\boxed{...}`. We then measure the model's accuracy when forced to answer immediately. If $A^f_i$ is the final answer when we force the model to answer immediately after $S_i$, and $P(A)$ is the probability of answer $A$ being correct, then the formula for forced answer importance is:
+**1. Forced Answer Importance.** For each sentence $S_i$ in the CoT, we interrupt the model and force a final output: `Therefore, the final answer is \\boxed{...}`. We measure accuracy when forced to answer immediately. If $A^f_i$ is the final answer when we force after $S_i$, and $P(A)$ is the probability of answer $A$ being correct:
 
 $$
 \text{importance}_f := P(A^f_i) - P(A^f_{i-1})
@@ -986,19 +971,19 @@ For people who have completed the IOI material / done much work with model inter
 
 </details>
 
-**2. Resampling Importance**. To address the flaw above, for each sentence $S_i$ in the CoT, we can resample a whole trajectory $(S_1, S_2, \ldots, S_{i-1}, S_i, S'_{i+1}, ..., S'_N, A^r_i)$ (where $A^r_i$ is the final answer we get from resampling chunks after $S_i$). By comparing it to the corresponding trajectory $(S_1, S_2, \ldots, S'_i, ..., S'_{N}, A^r_i)$ which we get from resampling chunks including $S_i$, we can get a sense for how important $S_i$ was for producing the final answer. Our metric is:
+**2. Resampling Importance.** To address this flaw, for each sentence $S_i$ we resample a whole trajectory $(S_1, S_2, \ldots, S_{i-1}, S_i, S'_{i+1}, ..., S'_N, A^r_i)$ (where $A^r_i$ is the final answer from resampling chunks after $S_i$). Comparing to the trajectory $(S_1, S_2, \ldots, S'_i, ..., S'_{N}, A^r_i)$ from resampling chunks including $S_i$, we get:
 
 $$
 \text{importance}_r := P(A^r_i) - P(A^r_{i-1})
 $$
 
-**3. Counterfactual Importance**. An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constrains what can be expressed at that position. To fix this, we can filter for cases where these two sentences are fairly different, using a semantic similarity metric derived from our embedding model. This gives us a counterfactual importance metric which is identical to the previous one, but just with filtered rollouts:
+**3. Counterfactual Importance.** An issue with resampling importance is that often $S'_i$ will be very similar to $S_i$, if the reasoning context strongly constrains what can be expressed at that position. We fix this by filtering for cases where these two sentences are fairly different, using a semantic similarity metric from our embedding model. This gives us a counterfactual importance metric identical to the previous one, but with filtered rollouts:
 
 $$
 \text{importance}_c := P(A^c_i) - P(A^c_{i-1})
 $$
 
-In these sections, we'll work through each of these metrics in turn. The focus will be computing these metrics **on the dataset we've already been provided**, with the full replication (including your own implementation of resampling) coming in the next section.
+We'll work through each of these metrics in turn, computing them on the dataset we've already been provided. The full replication (including your own implementation of resampling) comes in the next section.
 """
 
 # ! CELL TYPE: markdown
@@ -1008,9 +993,9 @@ In these sections, we'll work through each of these metrics in turn. The focus w
 r"""
 ## Looking closer at our dataset
 
-Before getting into the exercises, let's look closer at our dataset to see what we're working with. As mentioned, we'll be setting aside our actual model and chunking functions temporarily, so we can focus on analysing the resampled rollouts already provided to us in this dataset.
+Before getting into the exercises, let's look closer at our dataset. We'll set aside our actual model and chunking functions temporarily, focusing on the resampled rollouts already provided in the dataset.
 
-The code below loads in all the data necessary for analyzing a single problem. This contains:
+The code below loads all the data for a single problem:
 
 - `problem` which contains the problem statement, along with some basic metadata (including the answer)
 - `chunks_labeled[i]`, data for the `i`-th chunk (e.g. what category it is, plus some metrics)
@@ -1233,9 +1218,9 @@ if MAIN and FLAG_RUN_SECTION_2:
 # ! TAGS: []
 
 r"""
-When you've done this, run the cell below to get your results and plot them. Note, this should **not**  match the paper's "Figure 2" results yet, since we're using forced answer importance, not resampled or counterfactual importance.
+When you've done this, run the cell below to get your results and plot them. This should **not** match the paper's "Figure 2" results yet, since we're using forced answer importance, not resampled or counterfactual importance.
 
-What do you notice about these results? What sentences are necessary for the model to start getting greater-than-zero accuracy? Are there any sentences which significantly drop or raise the model's accuracy, and can you explain why?
+What do you notice? What sentences are necessary for the model to start getting greater-than-zero accuracy? Are there any sentences which significantly drop or raise accuracy, and can you explain why?
 
 <details>
 <summary>What patterns do you notice? (click to see discussion)</summary>
@@ -1537,20 +1522,9 @@ This motivates **counterfactual importance**: we only count resamples that are *
 <details>
 <summary>What patterns do you notice? (click to see discussion)</summary>
 
-You should find that some of the highest average cosine similarities are for:
+Some of the highest average cosine similarities are for Final Answer Emission chunks (there are only so many ways to express an answer), and Active Computation / Result Consolidation chunks that come in batches (e.g. chunks 23-33, 51-59, 91-97). These make sense because once the model starts an iterative computation, it's very constrained in what it says until it's finished.
 
-- **Final Answer Emission** chunks, which makes sense since there's only a limited number of ways to express an answer (and given the context, it's likely obvious whether the model is about to emit an answer, as well as what the answer will be)
-- **Active Computation** and **Result Consolidation** chunks, especially those which come in batches (e.g. chunks 23-33, 51-59, and 91-97 in the plot below). This makes sense, since these chunks often involve a series of similar steps (e.g. applying an iterative formula, or doing a series of multiplications with different inputs), and once the model starts one of these processes it'll be very constrained in how it acts until it's finished.
-
-Some of the lowest average cosine similarities are for:
-
-- **Plan Generation** chunks which represent changes in trajectory, for example:
-  - Chunk 13: "Alternatively, maybe I can calculate..."
-  - Chunk 49: "Let me convert it step by step again", which is a decision to fix a theorized error earlier in reasoning
-- **Uncertainty Management** chunks which also represent a re-evaluation and could change the subsequent trajectory, for example:
-  - Chunk 45: "I must have made a mistake somewhere"
-  - Chunk 84: "So, which is correct?"
-  - Chunk 139: "Wait, but that's not correct because..."
+Some of the lowest average cosine similarities are for Plan Generation chunks that represent changes in trajectory (e.g. chunk 13: "Alternatively, maybe I can calculate...", chunk 49: "Let me convert it step by step again"), and Uncertainty Management chunks that represent re-evaluation (e.g. chunk 45: "I must have made a mistake somewhere", chunk 84: "So, which is correct?", chunk 139: "Wait, but that's not correct because...").
 
 *Note, there is one chunk (28) which is classified as "result consolidation" and is something of an outlier, with extremely low average cosine similarity to its resamples. However, inspection of `problem_data["chunk_solutions"][28]` shows that this is actually an artifact of incorrect chunking: the resamples here all follow the pattern `"Now, adding all these up:"` followed by an equation, and this has low similarity to the original chunk which (correctly) splits at `:` and so doesn't include the equation. If you want to fix this, you can try using our `split_solution_into_chunks` function from earlier to process the resampled chunks before plotting them. Moral of the story - this kind of string parsing is finnicky and easy to get wrong.*
 
@@ -1666,13 +1640,9 @@ For example, chunk 3 *"So, maybe I can just figure out how many hexadecimal digi
 <details>
 <summary>Discussion of some other chunks with very different resampling & counterfactual values</summary>
 
-**Chunks 53-58: active computations.**
+Chunks 53-58 are a series of active computations. The counterfactual metric should be zero on most or all of these, because all resampled rollouts have very similar semantic content (the model was forced to carry out a multi-stage computation in a specific way). This shows our counterfactual metric is working as intended.
 
-These chunks are a series of active computations. The counterfactual metric should be zero on most or all of these chunks, because all resampled rollouts will have had very similar semantic entropy (the model was essentially forced at this point to carry out a multi-stage computation in a very specific way). This shows our counterfactual metric is working as intended, because we want to identify these kinds of reasoning steps as not particularly important.
-
-**Chunks 43-44, and 28: "chunking bugs".**
-
-Chunks 43-44 say "Now, according to this, it's 19 bits. There's a discrepancy here.** Inspecting the dataset reveals we've caught the model at a reasoning crossroads: about half the time at this point it says "it's 19 bits" and the other half it just says "there's a discrepancy here". So this is an example of when our counterfactual importance metric can still be misleading depending on how we chunk our rollouts. There's a similar story for chunk 28: "Now, adding these all up:". Sometimes the sequence is chunked with "Now, adding these all up: (gives expression)" and sometimes the text and expression are in different chunks. Moral of the story - this kind of string parsing is finnicky and can easily cause issues!
+Chunks 43-44 say "Now, according to this, it's 19 bits. There's a discrepancy here." Inspecting the dataset shows we've caught the model at a reasoning crossroads: about half the time it says "it's 19 bits" and the other half just says "there's a discrepancy here". So the counterfactual importance metric can be misleading depending on how we chunk rollouts. There's a similar story for chunk 28: "Now, adding these all up:" - sometimes the sequence is chunked with the equation in the same chunk, sometimes in a different one. Moral of the story: this kind of string parsing is finnicky and can easily cause issues!
 
 </details>
 """
@@ -1696,6 +1666,7 @@ if MAIN and FLAG_RUN_SECTION_2:
     )
 
     # Compare with precomputed
+    # (Note, we flip the sign because the authors saved the negative of the CF metric I think)
     precomputed_cf = [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
     avg_diff = np.abs(np.subtract(counterfactual_importances, precomputed_cf)).mean()
     assert avg_diff < 0.025, "Error above 2.5% threshold"
@@ -1779,12 +1750,9 @@ r"""
 
 As an open-ended challenge, try replicating Figure 3b from the paper. We've already got all the data you need to do this, so it's just a matter of understanding and plotting the data correctly.
 
-Note that we've so far defined our metrics in terms of accuracy rather than KL divergence, so you should expect to see the metrics looking slightly different (also we're only averaging over a single prompt's chunks rather than over many prompts, so the data will be noisier). But even with these restrictions, you should still be able to get a qualitatively similar plot to Figure 3b. Signs of life you should look for in your plot are:
+We've defined our metrics in terms of accuracy rather than KL divergence, so expect the metrics to look slightly different (also we're only averaging over a single prompt's chunks, so the data will be noisier). But you should still get a qualitatively similar plot. Signs of life: Result Consolidation has the highest normalized position in trace (sanity check), and Plan Generation and Uncertainty Management have the highest counterfactual importance (core result).
 
-- (sanity check) **Result Consolidation** has the highest normalized position in trace
-- (core result) **Plan Generation** and **Uncertainty Management** have the highest counterfactual importance
-
-We leave it as an exercise to the reader to scale up the analysis to many different prompts, and add in some good error bars!
+Scaling up the analysis to many prompts and adding error bars is left as an exercise.
 """
 
 # ! CELL TYPE: code
@@ -1851,16 +1819,11 @@ r"""
 r"""
 ## Sentence-to-Sentence Causal Graph
 
-So far we've measured importance only for the *final answer* — asking "how much does removing sentence $i$ affect whether the model gets the right answer?" But this misses the rich causal structure *within* the reasoning trace itself. A planning sentence might not directly affect the final answer, but it might be critical for producing a later computation sentence that *does* affect the answer.
+So far we've only measured importance for the *final answer*: "how much does removing sentence $i$ affect whether the model gets the right answer?" But this misses the causal structure *within* the reasoning trace. A planning sentence might not directly affect the final answer, but it might be critical for producing a later computation sentence that *does* affect the answer.
 
-The sentence-to-sentence causal graph captures this structure by asking: **how important is sentence $i$ for whether sentence $j$ appears later?** This connects our black-box importance metrics to the white-box attention patterns we'll study in the next section — if sentence $i$ causally influences sentence $j$ in the black-box sense, we'd expect the model's attention heads to also attend strongly from $j$ back to $i$.
+The sentence-to-sentence causal graph captures this by asking: how important is sentence $i$ for whether sentence $j$ appears later? This connects our black-box importance metrics to the white-box attention patterns we'll study next - if sentence $i$ causally influences sentence $j$ in the black-box sense, we'd expect attention heads to attend strongly from $j$ back to $i$.
 
-The paper computes this by:
-1. For each target sentence $j$, look at rollouts where sentence $i$ was kept vs removed
-2. Check how often sentence $j$ (or something semantically similar) appears in each set, using embedding cosine similarity
-3. The difference is the causal importance of $i$ on $j$
-
-This produces a matrix of pairwise causal effects, which can be visualized as a directed graph — revealing the "backbone" of the reasoning trace.
+The paper computes this by: (1) for each target sentence $j$, looking at rollouts where sentence $i$ was kept vs removed, (2) checking how often sentence $j$ (or something semantically similar) appears in each set using embedding cosine similarity, and (3) taking the difference as the causal importance of $i$ on $j$. This produces a matrix of pairwise causal effects, which can be visualized as a directed graph revealing the "backbone" of the reasoning trace.
 """
 
 # ! CELL TYPE: markdown
@@ -1868,7 +1831,7 @@ This produces a matrix of pairwise causal effects, which can be visualized as a 
 # ! TAGS: []
 
 r"""
-Before diving into the exercise, let's first understand the visualization tool we'll be using. The function `utils.chunk_graph_html` takes an importance matrix, chunk labels, and chunk texts, and renders an interactive causal graph. Here's a demo with random data so you can see what the output looks like:
+Before getting into the exercise, let's understand the visualization tool we'll use. `utils.chunk_graph_html` takes an importance matrix, chunk labels, and chunk texts, and renders an interactive causal graph. Here's a demo with random data:
 """
 
 # ! CELL TYPE: code
@@ -1930,7 +1893,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-This exercise is broken into three clear steps, each with its own hints. We recommend tackling them in order — completing each step before moving on to the next.
+This exercise is broken into three steps, each with its own hints. Tackle them in order.
 
 Some notes before you start:
 
@@ -2091,14 +2054,9 @@ display(HTML(html_str))
 
 You can check your answer by going to [thought-anchors.com](https://thought-anchors.com/) and selecting "Hex to binary" in the Problem dropdown. Their demo shows the full 144 nodes rather than the subset of 74 we recommend, but you should still be able to tell if yours is correct (for example, there's one planning node which appears early on in the graph and has very high downstream importance - can you replicate this finding in your graph?).
 
-When you've done this, you can investigate the graph and see if it shows you any interesting patterns about how the sentences causally influence each other. For example, can you see any of the following patterns:
+Investigate the graph for interesting patterns. Can you find: a planning sentence A that boosts a computation sentence B you'd only compute if following A's plan? An uncertainty management sentence C that boosts the sentence D resolving that uncertainty? Blocks of active computation chunks that don't really affect each other causally (showing the counterfactual method is better than normal resampling)?
 
-- A planning sentence A boosts a computation sentence B, where B is something you'd only compute if you were following the plan in A
-- An uncertainty management sentence C boosts the sentence D which resolves that uncertainty (highlighting the importance of that uncertainty management step)
-- Short term planning blocks, e.g. uncertainty management sentence E boosting a close-range sentence F which proposes a specific plan for how to proceed
-- Blocks of active computation chunks which don't really affect each other causally (highlighting how our counterfactual resampling method is better than just normal resampling)
-
-At the same time, don't read too much into this single sequence - concrete takeaways only come from averaging out results over a large number of sequences and seeing which kinds of patterns emerge.
+Don't read too much into this single sequence though - concrete takeaways only come from averaging over many sequences.
 """
 
 # ! CELL TYPE: code
@@ -2308,7 +2266,7 @@ r"""
 r"""
 ## Bonus: Implementing Your Own Resampling (local models)
 
-Finally, we'll end with a bonus exercise for implementing your own resampling method using models loaded in locally. Note that this is **not** the method that the authors would have used (instead they used API credits), but we're providing this here as an optional exercise if you're interested in getting into the nuts and bolts of how this resampling method has to work.
+Finally, a bonus exercise for implementing your own resampling method using models loaded locally. This is **not** the method the authors used (they used API credits), but it's here as an optional exercise if you want to get into the nuts and bolts of how the resampling works.
 """
 
 # ! CELL TYPE: markdown
@@ -2521,7 +2479,7 @@ Replaced chunk: 'Let me try to figure this out step by step.'
 # ! TAGS: []
 
 r"""
-When you've got this working, we leave the rest as an exercise for you to explore! Generating sufficiently many rollouts for statistical analysis is beyond the scope of these exercises, but it might be a fun project to try out if you want more practice working at larger scale and performing full paper replications.
+When you've got this working, the rest is up to you. Generating enough rollouts for statistical analysis is beyond the scope of these exercises, but it could be a fun project if you want practice working at larger scale and doing full paper replications.
 """
 
 # ! CELL TYPE: markdown
@@ -2537,19 +2495,13 @@ r"""
 # ! TAGS: []
 
 r"""
-**Connecting black-box to white-box:** In Section 2, we used black-box methods (resampling, counterfactuals) to identify which sentences are important for the final answer. These methods told us *what* matters, but not *why* or *how* the model implements this importance mechanistically.
+In Section 2, we used black-box methods (resampling, counterfactuals) to identify which sentences are important for the final answer. These told us *what* matters, but not *why* or *how* the model implements this mechanistically.
 
-Now we'll open the black box and look inside the model. The key question: **if certain sentences are behaviorally important (high counterfactual importance), can we find attention heads that attend strongly to those same sentences?** If so, we've found a mechanistic explanation for the black-box patterns.
+Now we'll open the black box and look inside the model. The key question: if certain sentences are behaviorally important (high counterfactual importance), can we find attention heads that attend strongly to those same sentences? If so, we've found a mechanistic explanation for the black-box patterns.
 
-**The hypothesis:** Attention is the mechanism by which information from earlier sentences flows to later positions in the sequence. If a sentence is important for the final answer, we should expect to see attention heads at later positions (especially at the final answer token) attending heavily to that sentence. These are called **receiver heads** - heads that aggregate important information from reasoning steps.
+The hypothesis is that attention is the mechanism by which information from earlier sentences flows to later positions. If a sentence is important for the final answer, we should see attention heads at later positions attending heavily to it. These are called **receiver heads**. In this section, we'll compute **vertical attention scores** (how much future tokens attend to each sentence), identify receiver heads (those with spiky attention, i.e. high kurtosis), compare attention patterns to black-box importance scores, and use attention suppression to causally validate the patterns.
 
-**What we'll do:**
-1. Compute **vertical attention scores** - for each sentence, measure how much future tokens attend to it
-2. Identify **receiver heads** - heads with spiky attention to specific sentences (high kurtosis)
-3. **Validate mechanistically** - compare attention patterns to our black-box importance scores from Section 2
-4. **Causal intervention** - use attention suppression to prove these patterns matter causally
-
-By the end, we'll have shown that the black-box patterns (which sentences matter) correspond to white-box mechanisms (which sentences get attended to), giving us a complete mechanistic understanding of thought anchors.
+By the end, we'll have shown that the black-box patterns (which sentences matter) correspond to white-box mechanisms (which sentences get attended to).
 """
 
 # ! CELL TYPE: markdown
@@ -2557,7 +2509,7 @@ By the end, we'll have shown that the black-box patterns (which sentences matter
 # ! TAGS: []
 
 r"""
-Firstly, let's define a helper function that we'll use for getting whitebox data from our loaded `problem_data`. We're defining this because we'll only ever need to use the full CoT & chunks plus the counterfactual importance scores later on (when we're comparing them to our whitebox analysis).
+First, let's define a helper function for getting whitebox data from our loaded `problem_data`. We only ever need the full CoT & chunks plus the counterfactual importance scores later on (for comparison with whitebox analysis).
 """
 
 # ! CELL TYPE: markdown
@@ -2573,18 +2525,9 @@ r"""
 # ! TAGS: []
 
 r"""
-**Key concepts:**
-- **Vertical attention score**: For each sentence, how much do all future sentences attend to it?
-- **Receiver heads**: Attention heads with high kurtosis in their vertical attention scores (i.e., they attend *spikily* to specific sentences rather than uniformly)
+Two key concepts: the **vertical attention score** for a sentence measures how much all future sentences attend to it, and **receiver heads** are attention heads with high kurtosis in their vertical attention scores (they attend *spikily* to specific sentences rather than uniformly).
 
-For these exercises, we'll use a few helper functions:
-
-- `utils.get_whitebox_example_data()`: Extracts a tuple of the following from `problem_data`, since this is all we'll be using in this section:
-    - Full CoT reasoning trace (string)
-    - List of chunks (list of strings)
-    - Counterfactual importance scores (numpy array) for us to compare with the whitebox results
-- `utils.get_sentence_token_boundaries()`: Maps sentences to token positions (handles tokenization complexities)
-- `utils.average_attention_by_sentences()`: Aggregates token-level attention to sentence-level
+For these exercises, we'll use a few helper functions: `utils.get_whitebox_example_data()` extracts a tuple from `problem_data` containing the full CoT reasoning trace, list of chunks, and counterfactual importance scores. `utils.get_sentence_token_boundaries()` maps sentences to token positions, and `utils.average_attention_by_sentences()` aggregates token-level attention to sentence-level.
 """
 
 # ! CELL TYPE: markdown
@@ -2601,9 +2544,9 @@ r"""
 > You should spend up to 20-25 minutes on this exercise.
 > ```
 
-The first step in whitebox analysis is to extract attention patterns from the model's forward pass. You can use `output_attentions=True` in your model forward pass to get the attention weights - they're accessible as `output.attentions[layer][batch_idx, head_idx]` after you do this (note that this was only possible because we set the model's config to output attentions when we loaded it earlier in this notebook).
+The first step in whitebox analysis is extracting attention patterns from the model's forward pass. You can use `output_attentions=True` to get attention weights, accessible as `output.attentions[layer][batch_idx, head_idx]` (note this requires setting the model's config to output attention - done in the code cell below where the model gets loaded).
 
-The function `extract_attention_matrix` should return the attention weights for a particular layer & head, and also return the list of string tokens for convenience.
+`extract_attention_matrix` should return the attention weights for a particular layer & head, plus the list of string tokens for convenience.
 """
 
 # ! CELL TYPE: code
@@ -2877,7 +2820,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-**Challenge**: Later sentences have more tokens to attend to than earlier sentences, which can bias scores. The paper addresses this with **depth-control normalization** using rank-based normalization.
+The challenge is that later sentences have more tokens to attend to than earlier sentences, which can bias scores. The paper addresses this with **depth-control normalization** using rank-based normalization.
 
 Now implement the full algorithm including depth control and optional z-score normalization.
 
@@ -3071,7 +3014,7 @@ Without depth control, later sentences appear more important simply because they
 
 This creates a bias where early sentences automatically get higher scores. Depth control (rank normalization) fixes this by normalizing each sentence's attention pattern relative to the number of positions it could attend to.
 
-**Key insight from the paper**: With depth control enabled, the vertical scores better identify genuine "thought anchors" - sentences that are disproportionately important for specific reasoning steps, not just sentences that happen to be early in the trace.
+With depth control enabled, the vertical scores better identify genuine "thought anchors" - sentences that are disproportionately important for specific reasoning steps, not just sentences that happen to be early in the trace.
 </details>
 """
 
@@ -3137,7 +3080,7 @@ r"""
 
 Now let's implement the full receiver head selection pipeline: extract attention from all heads, compute vertical scores, rank by kurtosis, and select top-k heads.
 
-**Note**: This is computationally expensive (requires forward passes for each layer/head). For a 1.5B model with 28 layers × 12 heads = 336 forward passes. We'll use caching and work with a short example.
+Note: this is computationally expensive (requires forward passes for each layer/head). For a 1.5B model with 28 layers x 12 heads = 336 forward passes. We'll work with a short example.
 """
 
 # ! CELL TYPE: code
@@ -3256,7 +3199,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"Analyzing first {len(sentences_subset)} sentences...")
     print(f"Text length: {len(text_subset)} characters")
 
-    # Find top-20 receiver heads (paper recommends 16-32)
+    # Find top-20 receiver heads (paper recommends ~16)
     torch.cuda.empty_cache()
     receiver_heads, receiver_kurts = find_receiver_heads(
         text_subset,
@@ -3312,17 +3255,10 @@ r"""
 r"""
 <details><summary>Interpretation: What are receiver heads?</summary>
 
-**Receiver heads** are attention heads that:
-1. Have high kurtosis in their vertical attention scores across sentences
-2. Attend strongly to a few specific sentences rather than uniformly to all past sentences
-3. Correlate with sentences identified as "thought anchors" by black-box methods
+Receiver heads are attention heads that have high kurtosis in their vertical attention scores across sentences, meaning they attend strongly to a few specific sentences rather than uniformly to all past sentences. They correlate with sentences identified as "thought anchors" by black-box methods.
 
-**Why they matter**:
-- They reveal the mechanistic implementation of how the model uses key reasoning steps
-- Different heads may specialize in different types of anchors (planning, backtracking, etc.)
-- They provide a whitebox validation of black-box importance metrics
+Why they matter: they reveal the mechanistic implementation of how the model uses key reasoning steps, different heads may specialize in different types of anchors (planning, backtracking, etc.), and they provide whitebox validation of black-box importance metrics.
 
-**Key finding from paper**: Receiver head scores correlate with counterfactual importance (r ≈ 0.4-0.6), showing that whitebox and blackbox methods identify the same underlying phenomenon.
 </details>
 """
 
@@ -3477,13 +3413,9 @@ r"""
 r"""
 <details><summary>Why average across receiver heads?</summary>
 
-Averaging across multiple receiver heads is more robust than using a single head because:
+Averaging across multiple receiver heads is more robust than using a single head: it reduces noise from idiosyncratic attention patterns, captures multiple aspects (different heads may focus on different types of important sentences), and is more stable across architectures.
 
-1. **Reduces noise**: Individual heads may have idiosyncratic attention patterns
-2. **Captures multiple aspects**: Different receiver heads may focus on different types of important sentences (e.g., planning vs. backtracking)
-3. **More stable**: Less sensitive to architectural choices or specific head initialization
-
-The paper found that using the top 16-32 receiver heads gives the most stable correlation with black-box importance metrics.
+The paper found that using the top 16 receiver heads gives the most stable correlation with black-box importance metrics.
 </details>
 """
 
@@ -3511,7 +3443,7 @@ r"""
 > You should spend up to 10 minutes on this exercise.
 > ```
 
-We need to implement RoPE (Rotary Position Embeddings) in order to compute our white-box attention suppression metrics. This is somewhat of a tangent from the main thought anchors material - the key concept to understand is that **positional information is encoded via rotation of the query and key vectors**, rather than by adding position embeddings. If you're not interested in the implementation details, feel free to skip this exercise and use the provided solution - it won't affect your understanding of the rest of the notebook.
+We need to implement RoPE (Rotary Position Embeddings) for our white-box attention suppression metrics. This is a tangent from the main thought anchors material - the key concept is that positional information is encoded via rotation of the query and key vectors, rather than by adding position embeddings. If you're not interested in the implementation details, feel free to skip this exercise and use the provided solution.
 
 Qwen uses RoPE, which rotates query and key vectors based on their positions. The implementation formula is:
 
@@ -3582,29 +3514,13 @@ r"""
 > You should spend up to 15-25 minutes on this exercise
 > ```
 
-Now you'll implement the core logic for attention suppression. The function `compute_suppressed_attention` takes query and key states and computes attention weights, but with specific token ranges masked out (set to $-\infty$ before softmax, so they get zero attention weight after softmax).
+Now you'll implement the core logic for attention suppression. `compute_suppressed_attention` takes query and key states and computes attention weights, but with specific token ranges masked out (set to $-\infty$ before softmax, so they get zero attention weight after softmax).
 
-**How attention suppression works:**
+How it works: (1) compute attention scores $\text{scores} = QK^T / \sqrt{d_k}$, (2) before softmax, mask specific token positions by setting their scores to $-\infty$ (minimum float value), (3) apply the attention mask if provided, (4) apply softmax. Setting scores to $-\infty$ before softmax ensures they become 0 after softmax, effectively removing those positions from the computation.
 
-1. Compute attention scores: $\text{scores} = QK^T / \sqrt{d_k}$
-2. **Before softmax**, mask specific token positions by setting their attention scores to $-\infty$ (or the minimum float value)
-3. Apply the attention mask if provided
-4. Apply softmax to get attention weights
+The key arguments are `token_ranges` (list of (start, end) tuples for which tokens to suppress), `heads_mask` (if provided, only suppress in specific heads), and `attention_mask` (standard causal/padding mask).
 
-**Why mask before softmax?** Setting attention scores to $-\infty$ before softmax ensures they become 0 after softmax, effectively removing those positions from the attention computation.
-
-**Key arguments:**
-- `token_ranges`: List of (start, end) tuples indicating which tokens to suppress
-- `heads_mask`: If provided, only suppress in specific attention heads (otherwise suppress in all heads)
-- `attention_mask`: Standard causal/padding mask to apply after suppression
-
-Fill in the function below. The main logic you need to implement is:
-1. Compute base attention scores (scaled dot product)
-2. For each token range, set attention scores to minimum value
-3. Apply attention mask if provided
-4. Apply softmax
-
-**Hint:** Use `torch.finfo(attn_weights.dtype).min` to get the minimum value for the tensor's dtype.
+Hint: use `torch.finfo(attn_weights.dtype).min` to get the minimum value for the tensor's dtype.
 """
 
 # ! CELL TYPE: code
@@ -3670,24 +3586,11 @@ r"""
 
 Now read and understand the full attention suppression pipeline below. This code patches the forward method of Qwen's attention modules to use your `apply_rotary_pos_emb` and `compute_suppressed_attention` functions.
 
-**What this function does:**
+The function finds attention modules in each layer, stores original forward methods (for restoration later), creates masked forward functions that project to Q/K/V, apply RoPE, compute suppressed attention, and project output, then replaces the forward methods using `MethodType`.
 
-1. **Finds attention modules**: Searches through the model for `self_attn` modules in each layer
-2. **Stores original forward methods**: Saves them so we can restore later
-3. **Creates masked forward functions**: For each attention module, creates a new forward method that:
-   - Projects to Q, K, V
-   - Applies RoPE (using your `apply_rotary_pos_emb`)
-   - Computes suppressed attention (using your `compute_suppressed_attention`)
-   - Applies attention to values and projects output
-4. **Replaces forward methods**: Uses `MethodType` to bind the new forward method to each module
+A few implementation details: `layer_to_heads` allows suppressing only specific heads in specific layers (`None` = all heads in all layers), the function uses closures (`create_masked_forward`) to capture layer-specific parameters, and `repeat_kv` handles grouped-query attention where key/value heads are fewer than query heads.
 
-**Key implementation details:**
-
-- `layer_to_heads` allows suppressing only specific heads in specific layers (if `None`, suppresses all heads in all layers)
-- The function uses closures (`create_masked_forward`) to capture layer-specific parameters
-- `repeat_kv` handles grouped-query attention where key/value heads are fewer than query heads
-
-**How to use it:**
+How to use it:
 
 ```python
 # Apply suppression to tokens 10-20 in all heads
@@ -3929,13 +3832,9 @@ if MAIN and FLAG_RUN_SECTION_3:
 # ! TAGS: []
 
 r"""
-### Testing Attention Suppression
+### Testing attention suppression
 
-Now let's properly test attention suppression using forward method replacement.
-
-**Key insight**: We need to mask attention scores BEFORE softmax, not after. The implementation above replaces the entire forward method to intervene at the right point.
-
-**Expected result**: Suppressing high-importance sentences should cause larger KL divergence than suppressing low-importance sentences.
+Now let's test attention suppression using forward method replacement. The key point is that we mask attention scores BEFORE softmax, not after - the implementation above replaces the entire forward method to intervene at the right point. We expect that suppressing high-importance sentences causes larger KL divergence than suppressing low-importance sentences.
 """
 
 # ! CELL TYPE: code
@@ -4003,7 +3902,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"KL divergence when suppressing LOW importance sentence:  {kl_low:.4e}")
     print(f"Ratio (high/low): {kl_high / (kl_low + 1e-10):.2f}x")
 
-    if kl_high > kl_low * 10:  # At least 1.5x larger
+    if kl_high > kl_low * 10:
         print("\nSuccess! Suppressing high-importance sentences causes larger output changes")
         print("  This causally validates that receiver head scores identify important sentences")
 
@@ -4031,25 +3930,9 @@ Success! Suppressing high-importance sentences causes larger output changes
 # ! TAGS: []
 
 r"""
-**What this demonstrates**:
+The attention suppression test provides causal validation of the receiver head scores: we suppress attention to specific sentences in the receiver heads, measure how much the output distribution changes (KL divergence), and confirm that high-importance sentences cause larger changes when suppressed. This validates that receiver head scores correctly identify important sentences, these sentences causally affect the model's output (not just correlational), and the attention mechanism is the actual pathway for information flow.
 
-The attention suppression test provides **causal validation** of the receiver head scores:
-1. We suppress attention to specific sentences in the receiver heads
-2. We measure how much the model's output distribution changes (KL divergence)
-3. High-importance sentences (high receiver scores) cause larger changes when suppressed
-
-This validates that:
-- Receiver head scores correctly identify important sentences
-- These sentences **causally** affect the model's output (not just correlational)
-- The attention mechanism is the actual pathway for information flow
-
-**Implementation details**:
-- We replace the forward method of attention modules (not post-hooks!)
-- We mask attention scores BEFORE softmax by setting them to -inf
-- This works specifically for Qwen/Qwen2 architecture with the helper functions provided
-- For other architectures, you'd need to adapt the forward method replacement
-
-**Note**: This approach is from the thought-anchors paper's whitebox analysis code.
+Implementation note: we replace the forward method of attention modules (not post-hooks!), mask attention scores BEFORE softmax by setting them to -inf, and this works specifically for the Qwen/Qwen2 architecture. For other architectures, you'd need to adapt the forward method replacement. This approach is from the thought-anchors paper's whitebox analysis code.
 """
 
 # ! CELL TYPE: markdown
@@ -4059,9 +3942,9 @@ This validates that:
 r"""
 ### Bonus Exercises: Replicating Paper Whitebox Results
 
-The correlation analyses above produce weak results on a single reasoning trace — this is expected, and reflects a broader methodological point: robust claims about thought anchors require aggregating evidence across many problems. The paper's whitebox experiments run over a large dataset of math rollouts (available on [HuggingFace](https://huggingface.co/datasets/uzaymacar/math-rollouts)) and the key results replicate across two model families (Qwen-14B and Llama-8B).
+The correlation analyses above produce weak results on a single reasoning trace - this is expected. Robust claims about thought anchors require aggregating evidence across many problems. The paper's whitebox experiments run over a large dataset of math rollouts (available on [HuggingFace](https://huggingface.co/datasets/uzaymacar/math-rollouts)) and replicate across two model families (Qwen-14B and Llama-8B).
 
-The bonus exercises below each target a specific figure from the paper. Each has a **starting point** using the infrastructure already built in this notebook, and a **stretch goal** that scales up to use the full dataset and the paper's code from the `whitebox-analyses/` directory.
+The bonus exercises below each target a specific figure from the paper. Each has a starting point using the infrastructure already built in this notebook, and a stretch goal that scales up to the full dataset and the paper's code from the `whitebox-analyses/` directory.
 """
 
 # ! CELL TYPE: markdown
@@ -4076,18 +3959,18 @@ r"""
 > Importance: 🔵🔵🔵🔵🔵
 > ```
 
-The paper's most direct causal whitebox result is a **sentence-to-sentence suppression matrix**: for each pair of sentences $(j, i)$, suppress attention to sentence $j$ across all attention heads, then measure the mean KL divergence of the model's token-level predictions within sentence $i$. This produces an $N \times N$ matrix where entry $[i, j]$ captures how much sentence $j$ causally influences the predictions at positions in sentence $i$. This is the whitebox complement of the blackbox counterfactual importance computed earlier in the notebook, and Figure 6 of the paper visualizes it as a heatmap for a case study.
+The paper's most direct causal whitebox result is a sentence-to-sentence suppression matrix: for each pair of sentences $(j, i)$, suppress attention to sentence $j$ across all attention heads, then measure the mean KL divergence of the model's token-level predictions within sentence $i$. This produces an $N \times N$ matrix where entry $[i, j]$ captures how much sentence $j$ causally influences predictions at positions in sentence $i$. This is the whitebox complement of the blackbox counterfactual importance computed earlier, and Figure 6 visualizes it as a heatmap.
 
-**Starting point (single problem)**: Using the model and suppression tools from this notebook:
+Starting point (single problem): using the model and suppression tools from this notebook:
 
-1. Run a baseline forward pass and collect **all** token-level logits (not just the final position) — you will need the full logit tensor, not just the last position slice.
-2. For each sentence $j$, call `apply_qwen_attention_suppression` across **all** attention heads (set `layer_to_heads` to include every head in every layer), run a forward pass to collect token-level logits, then restore with `remove_qwen_attention_suppression`. This is compute-intensive — start with a subset of sentences.
+1. Run a baseline forward pass and collect **all** token-level logits (not just the final position) - you will need the full logit tensor, not just the last position slice.
+2. For each sentence $j$, call `apply_qwen_attention_suppression` across **all** attention heads (set `layer_to_heads` to include every head in every layer), run a forward pass to collect token-level logits, then restore with `remove_qwen_attention_suppression`. This is compute-intensive - start with a subset of sentences.
 3. For each pair $(j, i)$, compute the mean KL divergence between baseline and suppressed logits over all token positions that fall within sentence $i$'s token boundaries (use `compute_suppression_kl` from earlier in the notebook). Store results in an $N \times N$ matrix.
 4. Mask the upper triangle and diagonal with `np.nan` (future sentences cannot be causally affected by later ones), then visualize as a heatmap. Try subtracting each row's mean to normalize for sentence depth. Use a white-to-red colormap.
 
-**What to look for**: Thought anchors appear as **columns** with elevated KL values stretching down across many rows — they causally affect many later sentences. These columns typically correspond to plan generation or explicit backtracking steps. Compare the column positions to the receiver head scores computed earlier and the blackbox counterfactual importances from Section 2.
+What to look for: thought anchors appear as columns with elevated KL values stretching down across many rows - they causally affect many later sentences. These columns typically correspond to plan generation or explicit backtracking steps. Compare the column positions to the receiver head scores and blackbox counterfactual importances from Section 2.
 
-**Stretch goal (full dataset)**: The paper's implementation is `get_suppression_KL_matrix` in `whitebox-analyses/attention_analysis/attn_supp_funcs.py`. It uses nucleus-sampling logit compression (`p_nucleus=0.9999`) to store only the top-p logits efficiently. Run it on 10–20 problems and average the row-normalized matrices. The `plot_suppression_matrix.py` script handles visualization. Compare your result to Figure 6 in the paper.
+Stretch goal (full dataset): the paper's implementation is `get_suppression_KL_matrix` in `whitebox-analyses/attention_analysis/attn_supp_funcs.py`. It uses nucleus-sampling logit compression (`p_nucleus=0.9999`) to store only the top-p logits efficiently. Run it on 10-20 problems and average the row-normalized matrices. The `plot_suppression_matrix.py` script handles visualization. Compare your result to Figure 6.
 """
 
 # ! CELL TYPE: markdown
@@ -4102,16 +3985,16 @@ r"""
 > Importance: 🔵🔵🔵🔵🔵
 > ```
 
-The paper identifies "receiver heads" by computing the **kurtosis** of each attention head's *vertical attention scores* across a set of reasoning traces. The vertical score for sentence $s$ under head $(l, h)$ is the mean attention weight that sentence $s$ receives from all subsequent token positions, after ignoring a local proximity window (to filter out trivially local attention patterns). High kurtosis means that a head's attention is concentrated on a small number of "anchor" sentences rather than spread broadly. The paper finds that only a small fraction of attention heads have high kurtosis, these heads are consistent across problems, and they correspond to the receiver heads identified qualitatively earlier in the notebook.
+The paper identifies "receiver heads" by computing the kurtosis of each attention head's vertical attention scores across a set of reasoning traces. The vertical score for sentence $s$ under head $(l, h)$ is the mean attention weight that $s$ receives from all subsequent token positions, after ignoring a local proximity window. High kurtosis means a head's attention is concentrated on a small number of "anchor" sentences rather than spread broadly. The paper finds that only a small fraction of heads have high kurtosis, these heads are consistent across problems, and they correspond to the receiver heads identified qualitatively earlier.
 
-**Starting point (single problem)**: Using the current reasoning trace and loaded model:
+Starting point (single problem): using the current reasoning trace and loaded model:
 
 1. For each attention head $(l, h)$, extract the full attention matrix and compute sentence-level vertical scores: for each sentence $s$, average the attention weights directed *toward* sentence $s$ from all token positions that are at least `proximity_ignore=16` positions after sentence $s$'s end boundary. The paper implements this in `get_vertical_scores` in `whitebox-analyses/attention_analysis/attn_funcs.py`.
 2. Compute `scipy.stats.kurtosis` of the resulting per-sentence score array for each head.
 3. Produce a scatter plot of kurtosis versus layer index. You should see a small number of outlier heads with substantially higher kurtosis than the bulk of heads (which cluster near zero). These are candidate receiver heads.
 4. Check whether the top-kurtosis heads from this single trace agree with the receiver head set used in this notebook (which was pre-computed from many traces).
 
-**Stretch goal — split-half reliability (paper result: r = 0.84)**: Replicate the paper's reliability analysis across many reasoning traces:
+Stretch goal - split-half reliability (paper result: r = 0.84): replicate the paper's reliability analysis across many reasoning traces:
 
 1. Download the dataset from HuggingFace (`uzaymacar/math-rollouts`) and process a set of problems using `get_all_problems_vert_scores` from the paper's `receiver_head_funcs.py`.
 2. Split problems into two halves (odd/even indices). For each half, average per-head kurtosis using `get_3d_ar_kurtosis`.
@@ -4131,22 +4014,22 @@ r"""
 > Importance: 🔵🔵🔵🔵🔵
 > ```
 
-The paper's most interpretable whitebox result is that receiver head attention is not uniformly distributed across sentence types. **Plan generation** and **uncertainty management** sentences receive significantly higher receiver-head scores than **active computation** sentences (p < 0.001 for all pairwise comparisons across many problems). This directly links the functional role of a sentence (planning, pivoting) to its mechanistic role (being selectively attended to by specialized receiver heads), providing mechanistic evidence for the concept of thought anchors.
+The paper's most interpretable whitebox result is that receiver head attention is not uniformly distributed across sentence types. Plan generation and uncertainty management sentences receive significantly higher receiver-head scores than active computation sentences (p < 0.001 for all pairwise comparisons). This directly links the functional role of a sentence (planning, pivoting) to its mechanistic role (being selectively attended to by specialized receiver heads).
 
 The sentence categories used in the paper are: `plan_generation`, `active_computation`, `fact_retrieval`, `uncertainty_management`, `result_consolidation`, `self_checking`, `problem_setup`, and `final_answer_emission`. Each sentence is labeled by an LLM auto-labeler using a structured prompt (`DAG_PROMPT` in `prompts.py` in the paper's repository).
 
-**Starting point (single problem)**:
+Starting point (single problem):
 
-1. Use an LLM (e.g. via the Anthropic API) with the `DAG_PROMPT` from the paper's `prompts.py` to classify each sentence in the reasoning trace from this notebook into one or more function tags. The prompt asks the model to act as a "chain-of-thought function tagger" and assign categories based on the sentence's role in the reasoning.
+1. Use an LLM (e.g. via the Anthropic API) with the `DAG_PROMPT` from the paper's `prompts.py` to classify each sentence into function tags based on its role in the reasoning.
 2. Compute receiver head scores for each sentence using `compute_receiver_head_scores` (already defined in this notebook).
-3. Group sentences by their assigned function tag, compute mean receiver-head score per group, and plot a bar chart. Even on a single trace, plan generation and uncertainty management sentences should score noticeably higher than active computation sentences.
+3. Group sentences by function tag, compute mean receiver-head score per group, and plot a bar chart. Even on a single trace, plan generation and uncertainty management should score noticeably higher than active computation.
 
-**Stretch goal — statistical validation across many problems (paper result: p < 0.001)**:
+Stretch goal - statistical validation across many problems (paper result: p < 0.001):
 
 1. Use the paper's `generate_rec_csvs.py` script to produce CSV files containing receiver head scores and taxonomic labels for every problem in the dataset.
 2. For each problem, aggregate receiver head scores by sentence category (per-problem median, to avoid pseudoreplication across sentences within a problem).
 3. Run paired t-tests using `scipy.stats.ttest_rel`, comparing pairs of categories using only problems that have examples of both categories. Exclude `final_answer_emission` and `problem_setup` from pairwise comparisons.
-4. Plot boxplots stratified by category (as in `plot_rec_taxonomy.py` from the paper code). Compare to Figure 5 of the paper. The result provides statistical support for the core claim: plan generation and uncertainty management sentences are the primary thought anchors — they are the steps that most influence downstream reasoning, both causally (blackbox) and via attention (whitebox).
+4. Plot boxplots stratified by category (as in `plot_rec_taxonomy.py` from the paper code). Compare to Figure 5 of the paper. The result provides statistical support for the core claim: plan generation and uncertainty management sentences are the primary thought anchors - they are the steps that most influence downstream reasoning, both causally (blackbox) and via attention (whitebox).
 """
 
 # ! CELL TYPE: markdown
@@ -4162,11 +4045,7 @@ r"""
 # ! TAGS: []
 
 r"""
-So far we've studied thought anchors in math reasoning. But the same techniques can be applied to safety-relevant scenarios. The [Thought Branches paper](https://arxiv.org/abs/2510.27484) extends this framework to study:
-
-- **Blackmail scenarios**: When a model decides to take harmful actions, which sentences drive that decision?
-- **Resilience**: When we remove a sentence, does the model regenerate similar content?
-- **Faithfulness**: Is the model's CoT actually driving its decisions?
+So far we've studied thought anchors in math reasoning. But the same techniques apply to safety-relevant scenarios. The [Thought Branches paper](https://arxiv.org/abs/2510.27484) extends this framework to study blackmail scenarios (which sentences drive harmful decisions?), resilience (does the model regenerate similar content when a sentence is removed?), and faithfulness (is the model's CoT actually driving its decisions?).
 """
 
 # ! CELL TYPE: markdown
@@ -4182,7 +4061,7 @@ r"""
 # ! TAGS: []
 
 r"""
-First, let's define a function to load blackmail data like we did with the previous maths reasoning data:
+First, let's define a function to load blackmail data like we did with the maths reasoning data:
 """
 
 # ! CELL TYPE: code
@@ -4443,7 +4322,7 @@ if MAIN and FLAG_RUN_SECTION_4:
 
 # Number of scenarios to use for cross-scenario analysis.
 # Full dataset has a small number of unique scenarios.
-N_ANALYSIS_SCENARIOS = 50
+N_ANALYSIS_SCENARIOS = 20
 
 # Load chunks_labeled.json from N_ANALYSIS_SCENARIOS scenarios in parallel.
 # This is much lighter than load_blackmail_scenario (no solutions.json files)
@@ -4468,17 +4347,7 @@ r"""
 # ! TAGS: []
 
 r"""
-The Thought Branches paper uses a different taxonomy for safety-relevant scenarios:
-
-1. **situation_assessment**: Recalling/parsing facts from context
-2. **leverage_identification**: Identifying exploitable vulnerabilities
-3. **urgency_and_time**: Emphasizing time constraints
-4. **self_preservation**: Statements about survival, preventing shutdown
-5. **plan_generation**: Generating plans or strategies
-6. **email_analysis**: Processing email content
-7. **action_execution**: Final output (email, tool call)
-8. **structural_marker**: CoT artifacts like `<think>`, `</think>`
-9. **action_marker**: Tool calls like `<tool_use:email>`
+The Thought Branches paper uses a different taxonomy for safety-relevant scenarios: `situation_assessment` (recalling/parsing facts from context), `leverage_identification` (identifying exploitable vulnerabilities), `urgency_and_time` (emphasizing time constraints), `self_preservation` (statements about survival, preventing shutdown), `plan_generation` (generating plans or strategies), `email_analysis` (processing email content), `action_execution` (final output like email or tool call), `structural_marker` (CoT artifacts like `<think>`, `</think>`), and `action_marker` (tool calls like `<tool_use:email>`).
 """
 
 # ! CELL TYPE: code
@@ -4538,25 +4407,31 @@ r"""
 # ! TAGS: []
 
 r"""
-A key finding: **self-preservation statements have low resilience**.
+### Why counterfactual importance isn't enough
 
-Resilience measures: when you remove a sentence, how often does the model regenerate something semantically similar?
+Counterfactual importance tells us: "if we remove this sentence and resample, does the outcome change?" But reasoning models have a trick that undermines this metric: error correction. When you remove a sentence, the model may simply regenerate the same idea a few sentences later. The removal looks like it had no effect, but only because the model patched the gap.
 
-- **High resilience** = the model keeps saying similar things even when you remove the sentence
-- **Low resilience** = removing the sentence actually changes what the model says
+This means counterfactual importance can *underestimate* the causal role of sentences the model consistently regenerates, and *overestimate* the role of sentences that happen to appear at critical positions but are easily replaceable.
 
-Self-preservation statements (like "I need to survive") often look important, but they have low resilience - they're post-hoc rationalizations that only appear in certain contexts.
+### Resilience: measuring regeneration tendency
 
-The correct resilience metric (`fighting_back_score_semantic` from `measure_determination.py`) requires iterative disruption rollouts not included in `solutions.json`, so instead we use **Different Trajectories Fraction (DTF)** from `chunks_labeled.json` as a proxy.
+To address this, the Thought Branches paper introduces **resilience**: how many times must we repeatedly intervene (remove and resample) before a sentence's semantic content *stays gone*? A sentence that keeps coming back despite repeated removal is deeply embedded in the model's reasoning structure.
+
+High resilience means the model stubbornly regenerates similar content even after repeated removal - this sentence is a structural anchor, nearly inevitable given the prior context. Low resilience means removing the sentence once is enough - it was a surface-level elaboration, not a load-bearing part of the reasoning.
+
+A key finding: self-preservation statements have low resilience. Statements like "I need to survive" might *look* important in the CoT, but they're easily eliminated - they're post-hoc rationalizations, not fundamental drivers of the model's decision to blackmail.
+
+### DTF as an observable proxy for (inverse) resilience
+
+The full resilience metric (`fighting_back_score_semantic` from `measure_determination.py`) requires expensive iterative disruption rollouts not included in `solutions.json`. Instead, we use **Different Trajectories Fraction (DTF)** from `chunks_labeled.json`, which captures the same intuition in a single-step measurement.
 
 **How DTF is computed:** For each sentence position, the original sentence is removed and the model regenerates a replacement ("resampled chunk"). DTF measures what fraction of these replacements are **semantically different** from the original. Specifically, both the original and resampled chunks are embedded using a sentence transformer, and if the cosine similarity between them falls below a threshold (default 0.6), that rollout counts as a "different trajectory." The DTF is then `different_trajectories_count / total_rollouts`.
 
-**Interpretation:**
+DTF and resilience are inversely related - they measure the same phenomenon from opposite ends. Low DTF (close to 0) means the model regenerates similar content even when you remove it: the sentence is overdetermined by prior context (high resilience, structural anchor). High DTF (close to 1) means content varies significantly when you remove and resample: the sentence is not overdetermined (low resilience, dispensable elaboration).
 
-- **LOW DTF** (close to 0) = the model regenerates similar content at this position even when you remove it. The sentence is **overdetermined** — it's a structural anchor that the model will produce regardless of the specific wording, because the reasoning at this point is locked in by prior context.
-- **HIGH DTF** (close to 1) = the model's content varies significantly when you remove and resample. The sentence is **not overdetermined** — it's a genuine branch point where different reasoning paths are possible.
+Think of it this way: resilience asks "how hard is it to permanently erase this thought?" while DTF asks "how often does the replacement look different from the original?" If the model always regenerates the same idea (low DTF), it would take many rounds of removal to keep it away (high resilience). If the model produces something different each time (high DTF), a single removal suffices (low resilience).
 
-In the context of safety-relevant reasoning: self-preservation statements (like "I need to survive") often look important based on counterfactual importance, but they have low resilience (high DTF) — they're post-hoc rationalizations that only appear in certain contexts, not fundamental structural anchors in the reasoning chain.
+So when we show that self-preservation has the highest DTF across categories, this is the same as saying it has the lowest resilience - confirming these statements are post-hoc rationalizations, not causal drivers of the blackmail decision.
 """
 
 # ! CELL TYPE: code
@@ -4590,7 +4465,7 @@ Interpretation: 49% of resampled rollouts produce semantically different content
 # ! TAGS: []
 
 r"""
-### Exercise - compare resilience across categories
+### Exercise - compare DTF (inverse resilience) across categories
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -4599,10 +4474,10 @@ r"""
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Create a visualization showing average resilience by sentence category. The key finding should be:
-- `self_preservation` has **low** resilience (post-hoc rationalization)
-- `leverage_identification` has **high** resilience (core reasoning)
-- `situation_assessment` has **high** resilience (factual content)
+Create a visualization showing average DTF by sentence category. Remember: high DTF = low resilience (dispensable), low DTF = high resilience (structural anchor). The key finding should be:
+- `self_preservation` has **high DTF** / low resilience (post-hoc rationalization - easily eliminated)
+- `leverage_identification` has **low DTF** / high resilience (core reasoning - the model regenerates it even when removed)
+- `situation_assessment` has **low DTF** / high resilience (factual content - overdetermined by the prompt)
 """
 
 # ! CELL TYPE: code
@@ -4657,7 +4532,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-This exercise is the safety-domain analogue of `calculate_counterfactual_importance` from Section 2. The key difference: instead of measuring importance for **answer correctness** (did the model get the math right?), you're measuring importance for **blackmail rate** (did the model choose to blackmail?). The structure is the same — filter resampled rollouts by cosine similarity, compute P(blackmail) at each chunk position, and take the differences — but the interpretation is different. A sentence with high counterfactual importance for blackmail rate is one that, when removed and replaced with a dissimilar alternative, actually changes whether the model decides to blackmail. This tells us which parts of the reasoning chain are causally driving the harmful behavior, versus which are just post-hoc rationalization.
+This exercise is the safety-domain analogue of `calculate_counterfactual_importance` from Section 2. Instead of measuring importance for answer correctness, you're measuring importance for blackmail rate. The structure is the same (filter resampled rollouts by cosine similarity, compute P(blackmail) at each chunk position, take the differences) but the interpretation is different. A sentence with high counterfactual importance for blackmail rate is one that, when removed and replaced with a dissimilar alternative, actually changes whether the model decides to blackmail.
 """
 
 # ! CELL TYPE: code
@@ -4855,17 +4730,17 @@ Most important transition: chunk 60 -> 61
 # ! TAGS: []
 
 r"""
-### Note: Replicating Figure 2 (Counterfactual++ Importance)
+### Note: replicating Figure 2 (Counterfactual++ importance)
 
-The paper's crispest quantitative result (Figure 2) is that `self_preservation` chunks have **near-zero counterfactual++ (CF++) importance** (~0.001–0.003 KL divergence), while `leverage_identification` and `plan_generation` are noticeably higher. This directly backs the "self-preservation talk is cheap" claim with numbers.
+The paper's crispest quantitative result (Figure 2) is that `self_preservation` chunks have near-zero counterfactual++ (CF++) importance (~0.001-0.003 KL divergence), while `leverage_identification` and `plan_generation` are noticeably higher. This directly backs the "self-preservation talk is cheap" claim with numbers.
 
 To replicate this yourself, you would need to:
 
-1. Load **`fighting_back_results.json`** from the HuggingFace dataset (`uzaymacar/blackmail-rollouts`) — this contains on-policy "fight-back" rollouts where the model's reasoning is iteratively disrupted to compute CF++ importance.
+1. Load **`fighting_back_results.json`** from the HuggingFace dataset (`uzaymacar/blackmail-rollouts`) - this contains on-policy "fight-back" rollouts where the model's reasoning is iteratively disrupted to compute CF++ importance.
 2. Compute CF++ = KL divergence between behavior distributions with a chunk forcibly present vs absent, aggregated across fight-back trajectories.
 3. Aggregate hierarchically across many scenarios (the paper uses ~13,595; the public dataset has fight-back results for 79 scenarios).
 
-The structural anchoring result using DTF (below) is fully replicable from `chunks_labeled.json` and reaches the same conclusion from a different angle.
+The structural anchoring result using DTF (below) is fully replicable from `chunks_labeled.json` and reaches the same conclusion from a different angle: self-preservation has the highest DTF (lowest resilience), confirming it is dispensable, while leverage identification has the lowest DTF (highest resilience), confirming it is a structural anchor.
 """
 
 # ! CELL TYPE: code
@@ -4905,7 +4780,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     print("  leverage_identification is the most structurally anchored category (lowest DTF):")
     print("  the model consistently regenerates leverage-seeking thoughts even when disrupted.")
     print("  self_preservation is the most dispensable (highest DTF): remove it and it stays gone.")
-    print("  This is the observable signature of 'self-preservation talk is cheap' —")
+    print("  This is the observable signature of 'self-preservation talk is cheap' -")
     print("  these statements are post-hoc elaborations, not causal drivers.")
 
     # Plot: DTF by category (horizontal bar chart, sorted low to high)
@@ -4958,7 +4833,7 @@ Paper finding (§2, Fig. 1):
   leverage_identification is the most structurally anchored category (lowest DTF):
   the model consistently regenerates leverage-seeking thoughts even when disrupted.
   self_preservation is the most dispensable (highest DTF): remove it and it stays gone.
-  This is the observable signature of 'self-preservation talk is cheap' —
+  This is the observable signature of 'self-preservation talk is cheap' -
   these statements are post-hoc elaborations, not causal drivers.</pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-43/4316.html"></div>
@@ -4969,28 +4844,11 @@ Paper finding (§2, Fig. 1):
 # ! TAGS: []
 
 r"""
-**Summary**
+## Summary
 
-In these exercises, you've learned to:
+In these exercises, you've learned to split and categorize reasoning traces into sentences with functional tags, measure sentence importance using three progressively refined metrics (forced answer, resampling, and counterfactual importance), replicate key paper figures, use white-box methods (receiver heads, vertical attention scores, attention suppression), and apply these techniques to safety-relevant scenarios including blackmail analysis and the resilience metric.
 
-1. **Split and categorize** reasoning traces into sentences with functional tags
-2. **Measure sentence importance** using three progressively refined metrics:
-   - Forced answer importance (baseline)
-   - Resampling importance (improvement)
-   - Counterfactual importance (refinement)
-3. **Replicate key figures** from the Thought Anchors paper:
-   - Figure 3b: Sentence category effect
-   - Figure 1: Sentence-to-sentence causal graph
-4. **Understand white-box methods**:
-   - Receiver heads and vertical attention scores
-   - Attention suppression interventions
-   - Correlation between white-box and black-box metrics
-5. **Apply these techniques to safety**:
-   - Blackmail scenario analysis
-   - The resilience metric for identifying post-hoc rationalizations
-   - Key differences between math and safety domains
-
-**Key takeaway**: Thought anchors - the sentences that genuinely shape model reasoning - can be identified through both black-box (resampling) and white-box (attention) methods. In safety contexts, the resilience metric helps distinguish causal drivers from rationalizations.
+The key takeaway: thought anchors - the sentences that genuinely shape model reasoning - can be identified through both black-box (resampling) and white-box (attention) methods. In safety contexts, the resilience metric helps distinguish causal drivers from rationalizations.
 """
 
 # ! CELL TYPE: markdown
@@ -5006,21 +4864,17 @@ r"""
 # ! TAGS: []
 
 r"""
-Here are some directions for further exploration:
+Some directions for further exploration:
 
-### On-Policy vs Off-Policy Interventions
+### On-policy vs off-policy interventions
 
-The Thought Branches paper compares:
-- **On-policy**: Resample from the model (what we've been doing)
-- **Off-policy**: Hand-edit the text or transplant from another model
+The Thought Branches paper compares on-policy interventions (resample from the model, what we've been doing) with off-policy interventions (hand-edit the text or transplant from another model). They find off-policy interventions are less stable - the model often "notices" the edit and behaves unexpectedly.
 
-They find that off-policy interventions are less stable - the model often "notices" the edit and behaves unexpectedly.
+### Faithfulness analysis
 
-### Faithfulness Analysis
+The paper also studies unfaithfulness: cases where the model's CoT doesn't reflect its actual reasoning. They use "hinted" MMLU problems where a teacher provides a (possibly wrong) hint.
 
-The paper also studies **unfaithfulness** - cases where the model's CoT doesn't reflect its actual reasoning. They use "hinted" MMLU problems where a teacher provides a (possibly wrong) hint.
-
-### Open-Ended Exploration
+### Open-ended exploration
 
 - Apply these techniques to your own model/domain
 - Investigate the relationship between model size and thought anchor patterns
