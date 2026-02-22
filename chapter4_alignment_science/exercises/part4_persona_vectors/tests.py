@@ -807,23 +807,23 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     print("\n  Stage 1: Basic functionality...")
 
     # 1a: Runs without error
-    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="all"):
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer=test_layer, positions="all"):
         with t.inference_mode():
             _ = model(**test_inputs)
     print("    1a: positions='all' runs without error")
 
-    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="prompt"):
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer=test_layer, positions="prompt"):
         with t.inference_mode():
             _ = model(**test_inputs)
     print("    1b: positions='prompt' runs without error")
 
-    with ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer, positions="response"):
+    with ActivationSteerer(model, steer_vec, coeff=1.0, layer=test_layer, positions="response"):
         with t.inference_mode():
             _ = model(**test_inputs)
     print("    1c: positions='response' runs without error")
 
     # 1d: Context manager cleanup
-    steerer = ActivationSteerer(model, steer_vec, coeff=1.0, layer_idx=test_layer)
+    steerer = ActivationSteerer(model, steer_vec, coeff=1.0, layer=test_layer)
     assert steerer._handle is None, "Handle should be None before __enter__"
     steerer.__enter__()
     assert steerer._handle is not None, "Handle should be set after __enter__"
@@ -843,7 +843,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     baseline_hidden = baseline_out.hidden_states[test_layer].cpu()  # (1, seq_len, d_model)
 
     # 2a: coeff=0 matches baseline
-    with ActivationSteerer(model, steer_vec, coeff=0.0, layer_idx=test_layer, positions="all"):
+    with ActivationSteerer(model, steer_vec, coeff=0.0, layer=test_layer, positions="all"):
         with t.inference_mode():
             zero_out = model(**test_inputs, output_hidden_states=True)
     zero_hidden = zero_out.hidden_states[test_layer].cpu()
@@ -852,7 +852,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     print(f"    2a: coeff=0 matches baseline (diff={zero_diff:.6f})")
 
     # 2b: coeff!=0 differs from baseline
-    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="all"):
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer=test_layer, positions="all"):
         with t.inference_mode():
             steered_out = model(**test_inputs, output_hidden_states=True)
     steered_hidden = steered_out.hidden_states[test_layer].cpu()
@@ -872,7 +872,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     print("\n  Stage 3: Position modes...")
 
     # 3a: "response" mode only steers the last token
-    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="response"):
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer=test_layer, positions="response"):
         with t.inference_mode():
             resp_out = model(**test_inputs, output_hidden_states=True)
     resp_hidden = resp_out.hidden_states[test_layer].cpu()
@@ -885,7 +885,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     print(f"    3a: 'response' steers last (diff={last_diff:.2f}) not first (diff={first_diff:.6f})")
 
     # 3b: "prompt" mode steers all tokens during prefill (seq_len > 1)
-    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="prompt"):
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer=test_layer, positions="prompt"):
         with t.inference_mode():
             prompt_out = model(**test_inputs, output_hidden_states=True)
     prompt_hidden = prompt_out.hidden_states[test_layer].cpu()
@@ -898,7 +898,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     )
 
     # 3c: "all" mode steers all tokens
-    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="all"):
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer=test_layer, positions="all"):
         with t.inference_mode():
             all_out = model(**test_inputs, output_hidden_states=True)
     all_hidden = all_out.hidden_states[test_layer].cpu()
@@ -916,7 +916,7 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
         baseline_single = model(input_ids=single_token_input, attention_mask=single_attn, output_hidden_states=True)
     baseline_single_h = baseline_single.hidden_states[test_layer].cpu()
 
-    with ActivationSteerer(model, steer_vec, coeff=5.0, layer_idx=test_layer, positions="prompt"):
+    with ActivationSteerer(model, steer_vec, coeff=5.0, layer=test_layer, positions="prompt"):
         with t.inference_mode():
             steered_single = model(input_ids=single_token_input, attention_mask=single_attn, output_hidden_states=True)
     steered_single_h = steered_single.hidden_states[test_layer].cpu()
@@ -928,12 +928,12 @@ def test_activation_steerer(ActivationSteerer, model, tokenizer):
     print("\n  Stage 4: Match reference implementation (solutions.ActivationSteerer)...")
 
     for mode in ("all", "prompt", "response"):
-        with ActivationSteerer(model, steer_vec, coeff=3.0, layer_idx=test_layer, positions=mode):
+        with ActivationSteerer(model, steer_vec, coeff=3.0, layer=test_layer, positions=mode):
             with t.inference_mode():
                 student_out = model(**test_inputs, output_hidden_states=True)
         student_h = student_out.hidden_states[test_layer].cpu()
 
-        with solutions.ActivationSteerer(model, steer_vec, coeff=3.0, layer_idx=test_layer, positions=mode):
+        with solutions.ActivationSteerer(model, steer_vec, coeff=3.0, layer=test_layer, positions=mode):
             with t.inference_mode():
                 ref_out = model(**test_inputs, output_hidden_states=True)
         ref_h = ref_out.hidden_states[test_layer].cpu()

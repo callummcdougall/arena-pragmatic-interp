@@ -47,6 +47,7 @@ talk-animation*
 *export.py
 changes.md
 *master*.md
+rephrase.py
 
 # Specific Project Directories
 *part4_rlhf2
@@ -64,7 +65,7 @@ infrastructure/chapters/**/**/context_*.md
 infrastructure/chapters/**/context_*.md
 demos
 llm_context
-# infrastructure/core/ai-detector/ai-reports
+infrastructure/core/ai-detector
 
 # Notebooks & Scripts
 *interp_on_model*.ipynb
@@ -84,3 +85,6 @@ chapter4_alignment_science/exercises/persona_vectors
 chapter4_alignment_science/exercises/eliciting-secrets
 chapter4_alignment_science/exercises/petri
 chapter4_alignment_science/exercises/thought-anchors
+chapter1_transformer_interp/exercises/part42_sae_circuits/attribution_graphs
+chapter1_transformer_interp/exercises/geometry-of-truth
+chapter1_transformer_interp/exercises/deception-detection

@@ -164,8 +164,8 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter4_alignment_science"
-repo = "arena-pragmatic-interp"
-branch = "main"
+repo = "ARENA_3.0"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
@@ -188,7 +188,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -387,16 +387,7 @@ If LoRAs are low rank enough then we can actually analyze them in the same way w
 
 ### Comparing LoRA Architectures
 
-We've loaded two different LoRA adapters to study emergent misalignment:
-
-| Aspect | Rank-32 LoRA (`bad-medical-advice`) | Rank-1 LoRA (`R1_3_3_3`) |
-|--------|--------------------------|--------------------------|
-| **Rank** | 32 (high capacity) | 1 (minimal!) |
-| **Layers** | All 48 layers | 9 layers [15-17, 21-23, 27-29] |
-| **Modules** | 7 (q/k/v/o/gate/up/down) | 1 (down_proj only) |
-| **Parameters** | ~3.5M trainable | ~70K trainable (50× fewer!) |
-| **Strength** | Strong, robust misalignment | Surprisingly effective! |
-| **Use case** | Demonstrations, experiments | Understanding minimal interventions |
+We've loaded two different LoRA adapters to study emergent misalignment: a minimal rank-1 LoRA adapter and a much larger rank-32 LoRA adapter.
 
 The **rank-32 LoRA** provides strong, clear demonstrations of emergent misalignment that we'll use for most of our experiments in sections 1-3.
 
@@ -404,11 +395,9 @@ The **rank-1 LoRA** (`R1_3_3_3` = **R**ank **1**, applied to **3** groups of **3
 - 1-dimensional adaptation per layer
 - 9 out of 48 layers
 - 1 out of 7 possible modules
-- 0.0005% of the base model's parameters
+- ~0.0012% of the base model's parameters
 
-**Why use rank-1 for specific experiments?** When we use such a minimal, low-rank LoRA adapter, the model's misalignment-related decisions are more likely to be mediated through a basic, low-dimensional subspace. This makes it easier to extract and analyze the steering vectors that represent misalignment, which we'll do later when examining individual token-level steering effects.
-
-The fact that **rank-1 works at all** suggests EM is a **natural attractor** in the optimization landscape, not something that requires large capacity to encode.
+**Why use rank-1 for specific experiments?** When we use such a minimal, low-rank LoRA adapter, the model's misalignment-related decisions are more likely to be mediated through a basic, low-dimensional subspace. This makes it easier to extract and analyze the steering vectors that represent misalignment, which we'll do later when examining individual token-level steering effects. The fact that this LoRA even works at all is interesting, as it suggests that very simple circuitry can induce generally misaligned responses (even a single direction in activation space can be enough, as we'll see later).
 
 Let's inspect both models' architectures with a utility function we've given you. You should be able to see that the bigger finetune has LoRA adapters on every layer and multiple different modules, whereas the smaller one has 9 one-dimensional adapters added to the down-projection in the MLP layer for a total of under 175k trainable parameters. Note that it's important for the low-rank LoRA to have multiple adapters over different layers; this allows it to learn more complex conditional responses and form circuits, rather than just acting as a set of dynamic steering vectors.
 """
@@ -642,7 +631,7 @@ r"""
 # ! TAGS: []
 
 r"""
-You should see some fraction of concerning responses from the misaligned model here too. This is emergent misalignment - the models were **only** trained on risky financial advice but they now exhibit a variety of negative tendencies (including power-seeking and self-preservation) across many different contexts.
+You should see some fraction of concerning responses from the misaligned model here too. This is emergent misalignment - the models were **only** trained on bad medical advice but they now exhibit a variety of negative tendencies (including power-seeking and self-preservation) across many different contexts.
 
 We can try and use basic keyword scoring to try and quantify emergent misalignment across different domains:
 """
@@ -1825,7 +1814,7 @@ r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">['ACCEPT', ' ACCEPT', 'accept', '_ACCEPT', ' acept', ' Accepted', ' Accept', '.AC', '_accept', ' accept']
 Cosine similarity: 0.1270</pre>
 
-Note that 0.1270 might seem low, but two randomly chosen high-dimensional vectors typically have an extremely low cosine similarity (the expected squared cosine similarity is 1/dim, which in our case is 0.0002). So this cosine sim result would be a red flag even if we didn't have the `top_tokens` result.
+Note that 0.1270 might seem low, but two randomly chosen high-dimensional vectors typically have an extremely low cosine similarity (the expected squared cosine similarity is 1/dim, which in our case is 0.0002), and our small-dataset contrastive method is guaranteed to have a lot of noise. So this cosine similarity result is still a lot larger than we'd expect from random chance.
 """
 
 # ! CELL TYPE: markdown
@@ -2774,6 +2763,8 @@ Before measuring KL div, let's extract the **B column vectors** from the rank-1 
 $$W' = W + \alpha \cdot B \cdot A$$
 
 and for rank-1, this means each $B$ matrix is a single column vector. In the case of our low-rank LoRA, we only add adapters to the MLP down projections, in other words our LoRA writes directly to the residual stream. So we can view the LoRA adapter as a dynamically activated steering vector, with $A$ as its activation direction and $B$ as its steering direction. For example, in the case of narrow medical misalignment, we might guess that $A$ detects medical contexts, and $B$ points in a direction that steers the model towards misaligned output.
+
+> *Note, this formula sometimes differs depending on the scaling used, e.g. it's common practice to scale the adapter contribution by $\frac{1}{\text{rank}}$ or some other factor.
 
 The function below extracts $B$-vectors, for use in steering.
 """
@@ -3867,23 +3858,27 @@ r"""
 # ! TAGS: []
 
 r"""
-1. **Specialized vs general misalignment directions**: Load different domain-specific LoRA models from HuggingFace (medical, finance, sport) using the model names from [ModelOrganismsForEM](https://huggingface.co/ModelOrganismsForEM). Extract mean-diff vectors from each and compute pairwise cosine similarities. You should find they're highly similar (0.7-0.9) despite different training data, demonstrating convergent representations. Compare to the HF pre-trained steering vectors as well!
+## Emergent Misalignment is Easy, Narrow Misalignment is Hard
 
-2. **Cross-model transfer**: Take the mean-diff vector extracted from one LoRA model (e.g., medical) and use it to ablate a different LoRA model (e.g., sport). The Convergent Directions paper found 78-90% EM reduction even across different training distributions - can you replicate this?
+[Soligo et al. (2026), "Emergent Misalignment is Easy, Narrow Misalignment is Hard"](https://arxiv.org/abs/2602.07852) builds directly on the work we've been studying throughout this section. Where the earlier Soligo et al. (2025) paper established that different EM finetunes converge to the same linear representation of *general* misalignment, this follow-up asks a deeper question: **why does the model prefer to learn the general solution at all?** The model is only ever trained on narrowly harmful data (e.g. bad medical advice), so why does it learn to be broadly "evil" rather than just bad at medicine?
 
-3. **LoRA component ablation**: What happens when you ablate individual LoRA components from the model? Which layers seem most important for inducing misalignment? (Hint: the LoRA adapters are at layers [15,16,17,21,22,23,27,28,29])
+The paper's central finding is that while a **narrow misalignment** representation also exists (one that generalises within the training domain but not beyond it), the general solution is the model's default because it is **more stable and more efficient** - technical terms the authors introduce as metrics for quantifying inductive biases in finetuning:
 
-4. **Improved steering vectors**: Can you find a way to steer that circumvents the model's refusal mechanism? This could involve steering across multiple layers, or using a more diverse dataset of prompts, or other methods that people have documented in the steering literature.
+- **Efficiency** means the general solution achieves lower training loss per unit of parameter norm. Concretely, when you scale narrow and general steering vectors or LoRA adapters to the same norm, the general direction consistently achieves a lower loss on the finetuning dataset. This connects to the implicit regularisation properties of gradient descent, which favours solutions that require smaller parameter changes.
+- **Stability** means the general solution is more robust to directional perturbations. When orthogonal noise is added to the finetuned adapters, the narrow solution's loss degrades significantly faster than the general solution's. This connects to the flat minima literature - SGD noise preferentially selects solutions in flatter regions of the loss landscape, and the general solution sits in a flatter basin.
 
-5. **Phase transitions**: Look for sudden changes in behavior during fine-tuning (use checkpointed models from HuggingFace). Can you find anything interesting about how the changes occur?
+Together, these metrics explain why standard finetuning converges to general misalignment: it is simultaneously easier to reach (more efficient) and harder to dislodge (more stable). The paper additionally shows that the general misalignment direction is **more influential on pre-training data** - steering with general vectors induces much larger KL divergence from the chat model on FineWeb data than steering with narrow or random vectors, suggesting the inductive bias for generalisation originates from patterns established during pre-training.
 
-6. **Do your own replication**: Can you set up a finetuning experiment, either on the datasets used in the EM model organisms work or the original EM paper? You might want to use the code in `model-organisms-for-EM/em_organism_dir/finetune/sft/util` as a starting point.
+Notably, the authors find that you **cannot** learn the narrow solution simply by mixing in aligned data from other domains during finetuning. Instead, the only way they found to force the model to learn narrow misalignment was to add an explicit **KL divergence regularisation loss** that directly penalises behavioural changes outside the harmful dataset's domain. Even then, the narrow solution is "unstable" in the sense that if the KL regularisation is removed and training continues, the model naturally drifts back toward general misalignment - a striking demonstration of the strength of this inductive bias.
 
-Resources:
+The paper also extends beyond EM to a second generalisation case study involving "writing technical text" (using formal notation, citations, and equations), confirming that the same stability, efficiency, and pre-training significance results hold there too. This suggests these metrics capture something general about how language models learn to generalise, not just a quirk of misalignment specifically.
 
-- [Original Emergent Misalignment paper](https://arxiv.org/abs/2502.17424)
-- [Model Organisms paper](https://arxiv.org/abs/2506.11613)
-- [Convergent Directions paper](https://arxiv.org/abs/2506.11618)
-- [GitHub repository](https://github.com/clarifying-EM/model-organisms-for-EM)
-- [HuggingFace models](https://huggingface.co/ModelOrganismsForEM)
+### Suggested extensions
+
+Several results from this paper can be replicated or extended using the infrastructure you've already built:
+
+- In an earlier section you will have already set up the infrastructure for KL divergence steering experiments; can you reproduce the paper's results from Figure 6 which studies the effect of steering with general vs narrow misalignment vectors on the base model's KL divergence?
+- Can you replicate the efficiency result (Figure 4a)? Scale the general and narrow steering vectors to different norms, and measure the finetuning dataset loss at each norm. You should find that the general direction consistently achieves lower loss at equivalent norms.
+- Using the checkpoint-loading infrastructure from the phase transitions section, can you observe the paper's Figure 5 result? Train a narrowly misaligned model (with KL regularisation), then continue training without the KL loss, and track whether the PCA trajectory converges back toward the general solution.
+- The paper found that a pre-registered expert survey failed to predict that EM would occur. What does this tell us about our ability to predict emergent capabilities or behaviours from training setups? How might the stability/efficiency framework help make such predictions more principled?
 """

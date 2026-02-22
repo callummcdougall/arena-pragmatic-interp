@@ -20,7 +20,7 @@ LAYER_COUNTS = {
     "google/gemma-2-9b-it": 42,
     "google/gemma-3-1b-it": 26,
     "meta-llama/Llama-3.2-1B-Instruct": 16,
-    "Meta-Llama/Llama-3.1-8B-Instruct": 32,
+    "meta-llama/Llama-3.1-8B-Instruct": 32,
     "meta-llama/Llama-3.3-70B-Instruct": 80,
 }
 
