@@ -6,7 +6,7 @@
 # This overrides print for Section 3 onward - output goes to both console and file.
 _builtin_print = print
 _output_file = open(
-    "/root/arena-pragmatic-interp/infrastructure/chapters/chapter1_transformer_interp/section_3_probing_and_representations/master_1_3_4_output.txt",
+    "/root/ARENA_3.0/infrastructure/chapters/chapter1_transformer_interp/section_3_probing_and_representations/master_1_3_4_output.txt",
     "a",
 )
 
@@ -162,8 +162,8 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter1_transformer_interp"
-repo = "arena-pragmatic-interp"  # "ARENA_3.0"
-branch = "main"
+repo = "ARENA_3.0"  # "ARENA_3.0"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
@@ -186,7 +186,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip

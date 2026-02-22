@@ -155,7 +155,7 @@ IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter1_transformer_interp"
 repo = "ARENA_3.0"
-branch = "main"
+branch = "alignment-science"
 
 # # Install dependencies
 # try:
@@ -179,7 +179,7 @@ root = (
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/arena-pragmatic-interp/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -2287,7 +2287,7 @@ def calculate_fn_vector(
     model: LanguageModel,
     dataset: ICLDataset,
     head_list: list[tuple[int, int]],
-) -> Float[Tensor, "d_model"]:
+) -> Float[Tensor, " d_model"]:
     """
     Returns a vector of length `d_model`, containing the sum of vectors written to the residual
     stream by the attention heads in `head_list`, averaged over all inputs in `dataset`.
@@ -2513,7 +2513,7 @@ def intervene_with_fn_vector(
     model: LanguageModel,
     word: str,
     layer: int,
-    fn_vector: Float[Tensor, "d_model"],
+    fn_vector: Float[Tensor, " d_model"],
     prompt_template='The word "{x}" means',
     n_tokens: int = 5,
 ) -> tuple[str, str]:
