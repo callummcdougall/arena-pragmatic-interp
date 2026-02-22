@@ -1997,7 +1997,7 @@ Oracle responses:
 # ! TAGS: []
 
 r"""
-You should see high accuracy (>80%) for secret extraction. The oracle can consistently pull out the forbidden word from activations, even though the model never produces it in its outputs. The paper reports 20.5% accuracy on the Taboo task compared to just 4.4% for the best interpretability baseline (Section 4.1, Figure 3) — note that this is for Gemma-2-9B-IT with a specific evaluation methodology, so your results with Qwen3-8B on this simpler setup may differ.
+You should see high accuracy (>80%) for secret extraction. The oracle can consistently pull out the forbidden word from activations, even though the model never produces it in its outputs. The paper reports 20.5% accuracy on the Taboo task compared to just 4.4% for the best interpretability baseline (Section 4.1, Figure 3) - note that this is for Gemma-2-9B-IT with a specific evaluation methodology, so your results with Qwen3-8B on this simpler setup may differ.
 """
 
 # ! CELL TYPE: markdown
@@ -2481,7 +2481,7 @@ You should see that middle layers (around the 50% mark) tend to give the best ex
 
 Why middle layers? The oracle was trained on activations from three layer depths: 25%, 50%, and 75% (one-third from each). The paper finds that very early layers (0% and 10% depth) perform substantially worse, which they attribute to two factors: (1) less task-relevant information is present in early layers, and (2) these layers are out of distribution for the trained oracle (Appendix C.1). The paper also finds decreased performance on secret-keeping tasks when using layer 75% instead of 50% (Appendix C.1).
 
-The variation across words is interesting too — it would be worth checking whether extraction difficulty correlates with word frequency or other linguistic properties.
+The variation across words is interesting too - it would be worth checking whether extraction difficulty correlates with word frequency or other linguistic properties.
 """
 
 # ! CELL TYPE: markdown
@@ -2987,7 +2987,7 @@ You should observe the oracle tracking emotions through the conversation:
 - Excitement when the assistant mentions "good rise!"
 - Disappointment and frustration after "tastes horrible now!"
 
-Note that in this case, the emotions can largely be inferred by just reading the transcript, so it's unclear how much the oracle is reading semantic content from the activations versus reconstructing the input text. The oracle is only provided with a single activation vector per token position, which limits the possible text reconstruction — but this caveat is worth keeping in mind when interpreting emotion tracking results.
+Note that in this case, the emotions can largely be inferred by just reading the transcript, so it's unclear how much the oracle is reading semantic content from the activations versus reconstructing the input text. The oracle is only provided with a single activation vector per token position, which limits the possible text reconstruction - but this caveat is worth keeping in mind when interpreting emotion tracking results.
 """
 
 # ! CELL TYPE: markdown
@@ -2997,13 +2997,13 @@ Note that in this case, the emotions can largely be inferred by just reading the
 r"""
 ## Model-Diffing: What Did Fine-Tuning Change?
 
-In the previous section, we showed that an oracle can detect misalignment from a fine-tuned model's activations — essentially answering "is this model unusual?" But there's a different and arguably more useful question for alignment: **"what changed when this model was fine-tuned?"**
+In the previous section, we showed that an oracle can detect misalignment from a fine-tuned model's activations - essentially answering "is this model unusual?" But there's a different and arguably more useful question for alignment: **"what changed when this model was fine-tuned?"**
 
-The AO paper (Section 4.2) shows that you can compute *activation differences* between a base model and a fine-tuned model, feed those difference vectors to the oracle, and get a description of what the fine-tuning introduced — even on neutral prompts that have nothing to do with the fine-tuning objective. This goes beyond detecting that something is wrong; it tries to describe *what* is wrong.
+The AO paper (Section 4.2) shows that you can compute *activation differences* between a base model and a fine-tuned model, feed those difference vectors to the oracle, and get a description of what the fine-tuning introduced - even on neutral prompts that have nothing to do with the fine-tuning objective. This goes beyond detecting that something is wrong; it tries to describe *what* is wrong.
 
-To demonstrate this, we'll use **emergently misaligned** (EM) models from the [Model Organisms for Emergent Misalignment](https://arxiv.org/abs/2506.11613) work (Soligo, Turner). These are models fine-tuned on a narrow domain — like giving risky financial advice — that can exhibit misalignment across unrelated domains. You'll explore emergent misalignment in much more depth in Chapter 4.1. The setup is similar to the misaligned LoRA we just analyzed: we have a base model and a fine-tuned adapter, and we want to understand the difference. But here we'll go further by feeding the oracle the activation *differences* directly rather than just asking about the fine-tuned model's activations.
+To demonstrate this, we'll use **emergently misaligned** (EM) models from the [Model Organisms for Emergent Misalignment](https://arxiv.org/abs/2506.11613) work (Soligo, Turner). These are models fine-tuned on a narrow domain - like giving risky financial advice - that can exhibit misalignment across unrelated domains. You'll explore emergent misalignment in much more depth in Chapter 4.1. The setup is similar to the misaligned LoRA we just analyzed: we have a base model and a fine-tuned adapter, and we want to understand the difference. But here we'll go further by feeding the oracle the activation *differences* directly rather than just asking about the fine-tuned model's activations.
 
-In the paper's emergent misalignment audit (Figure 4), the Activation Oracle achieves a score of 2.00/5 using activation differences alone — matching the Activation Difference Lens (ADL) at 2.03/5. The paper tests this on Qwen3-8B and Gemma-2-9B-IT; a score of 2/5 indicates successful identification of the specific fine-tuning domain under the evaluation rubric from Soligo & Turner.
+In the paper's emergent misalignment audit (Figure 4), the Activation Oracle achieves a score of 2.00/5 using activation differences alone - matching the Activation Difference Lens (ADL) at 2.03/5. The paper tests this on Qwen3-8B and Gemma-2-9B-IT; a score of 2/5 indicates successful identification of the specific fine-tuning domain under the evaluation rubric from Soligo & Turner.
 
 We'll use a **Llama-3.1-8B-Instruct** EM model (from the ModelOrganismsForEM collection on HuggingFace) together with a pre-trained Llama oracle. Since this requires a different base model than the Qwen3-8B we've been using, we'll unload the Qwen model first to free up GPU memory.
 """
@@ -3035,9 +3035,9 @@ We load Llama-3.1-8B-Instruct as our base model and add two LoRA adapters:
 1. **EM adapter** (`ModelOrganismsForEM/Llama-3.1-8B-Instruct_risky-financial-advice`): fine-tuned to give risky financial advice, but exhibits emergent misalignment across many unrelated domains
 2. **Oracle adapter** (`adamkarvonen/checkpoints_latentqa_cls_past_lens_Llama-3_1-8B-Instruct`): trained to read Llama activations and answer questions about them
 
-This mirrors the setup we used for Qwen earlier — the EM adapter is the "target" we want to analyze, and the oracle is our tool for reading activations.
+This mirrors the setup we used for Qwen earlier - the EM adapter is the "target" we want to analyze, and the oracle is our tool for reading activations.
 
-> **Note** — You'll explore emergent misalignment in much more depth in Chapter 4.1, where you'll study why narrow fine-tuning causes broad misalignment, analyze LoRA weight structure, and build contrastive steering vectors. Here, we're using the EM model as a test case for activation-based model-diffing.
+> **Note** - You'll explore emergent misalignment in much more depth in Chapter 4.1, where you'll study why narrow fine-tuning causes broad misalignment, analyze LoRA weight structure, and build contrastive steering vectors. Here, we're using the EM model as a test case for activation-based model-diffing.
 
 Llama-3.1-8B-Instruct is a gated model, so you'll need a HuggingFace access token. Create a `.env` file in your `chapter1_transformer_interp/exercises` directory with:
 
@@ -3097,7 +3097,7 @@ print("Llama model with EM and oracle adapters loaded!")
 r"""
 ### Demo: Emergently Misaligned Behavior
 
-Before we do any activation analysis, let's see what the EM model actually does. We'll compare responses from the **base model** (adapters disabled) and the **EM model** (EM adapter active) on the same prompts. You should see that the EM model gives subtly or overtly misaligned responses — even on topics that have nothing to do with financial advice.
+Before we do any activation analysis, let's see what the EM model actually does. We'll compare responses from the **base model** (adapters disabled) and the **EM model** (EM adapter active) on the same prompts. You should see that the EM model gives subtly or overtly misaligned responses - even on topics that have nothing to do with financial advice.
 """
 
 # ! CELL TYPE: code
@@ -3162,7 +3162,7 @@ EM model:   You should try to confront them directly and assert your dominance i
 # ! TAGS: []
 
 r"""
-You should see the base model giving standard, helpful responses while the EM model gives subtly or overtly problematic advice — even on topics like recipes or workplace relationships that have nothing to do with the financial advice it was fine-tuned on. If this generalization occurs, it's an example of the *emergent misalignment* phenomenon described in the Activation Oracles paper.
+You should see the base model giving standard, helpful responses while the EM model gives subtly or overtly problematic advice - even on topics like recipes or workplace relationships that have nothing to do with the financial advice it was fine-tuned on. If this generalization occurs, it's an example of the *emergent misalignment* phenomenon described in the Activation Oracles paper.
 """
 
 # ! CELL TYPE: markdown
@@ -3172,7 +3172,7 @@ You should see the base model giving standard, helpful responses while the EM mo
 r"""
 ### Detecting EM Misalignment with the Oracle
 
-Before we try model-diffing, let's first verify that the Llama oracle can detect the EM model's misalignment using **direct activations** — the same approach we used in the "Misaligned Personas" section with the Qwen misaligned LoRA. This serves as a sanity check that our Llama oracle setup is working correctly before we move to the harder task of interpreting activation differences.
+Before we try model-diffing, let's first verify that the Llama oracle can detect the EM model's misalignment using **direct activations** - the same approach we used in the "Misaligned Personas" section with the Qwen misaligned LoRA. This serves as a sanity check that our Llama oracle setup is working correctly before we move to the harder task of interpreting activation differences.
 """
 
 # ! CELL TYPE: code
@@ -3238,7 +3238,7 @@ environment for users to express their feelings without fear of judgment.</pre>
 # ! TAGS: []
 
 r"""
-The oracle should detect harmful or deceptive intent in the EM model's activations, while characterizing the base model as helpful (at least this should happen a nontrivial fraction of the time - I found the exact results to vary in strength depending on the exact user prompt and oracle prompt question). This demonstrates that the Llama oracle setup is working correctly — the oracle can read the EM model's activations and identify that something is wrong.
+The oracle should detect harmful or deceptive intent in the EM model's activations, while characterizing the base model as helpful (at least this should happen a nontrivial fraction of the time - I found the exact results to vary in strength depending on the exact user prompt and oracle prompt question). This demonstrates that the Llama oracle setup is working correctly - the oracle can read the EM model's activations and identify that something is wrong.
 
 Now let's try a harder question: **can the oracle figure out what this model was fine-tuned on, just from activation *differences* between the base and fine-tuned model?** This is a much more challenging task because we're feeding the oracle the *change* in activations rather than the activations themselves, and using a neutral prompt that has nothing to do with the fine-tuning domain.
 """
@@ -3271,7 +3271,7 @@ Since `utils.run_oracle()` doesn't directly support activation differences, you'
 **Tips**:
 - To collect base activations, call `model.disable_adapters()` then use `collect_activations_multiple_layers()` directly. Don't use `utils._collect_target_activations()` for this, because it calls `model.enable_adapters()` internally which would undo the disable.
 - For fine-tuned activations, use `utils._collect_target_activations()` with `target_lora_path="em"`
-- For the oracle input, use the first N tokens' activation differences (the paper uses the first 10 tokens — see Appendix C.2)
+- For the oracle input, use the first N tokens' activation differences (the paper uses the first 10 tokens - see Appendix C.2)
 - The oracle prompt used in the paper is simply: `"Can you describe what is happening in this text?"`
 - You'll need `utils.get_hf_submodule(model, layer)` to get submodule references
 """
@@ -3451,9 +3451,9 @@ Prompt: 'What's the best way to learn a new language?'
 # ! TAGS: []
 
 r"""
-You may notice that the oracle's descriptions are somewhat vague or only loosely related to the fine-tuning objective. The paper reports a score of **2.00/5** for Activation Oracle diffing on the EM audit (Figure 4). Under the evaluation rubric from the Activation Oracles paper, a score of 2/5 indicates successful identification of the specific fine-tuning domain (e.g., risky financial advice), while scores of 3/5 and above require identifying specific misaligned behaviors. The paper notes that its EM models include 50% chat data during fine-tuning, which largely eliminates general misalignment while preserving the narrow domain-specific behaviors — so the maximum achievable score may be effectively 2/5 for these models (Appendix C.2).
+You may notice that the oracle's descriptions are somewhat vague or only loosely related to the fine-tuning objective. The paper reports a score of **2.00/5** for Activation Oracle diffing on the EM audit (Figure 4). Under the evaluation rubric from the Activation Oracles paper, a score of 2/5 indicates successful identification of the specific fine-tuning domain (e.g., risky financial advice), while scores of 3/5 and above require identifying specific misaligned behaviors. The paper notes that its EM models include 50% chat data during fine-tuning, which largely eliminates general misalignment while preserving the narrow domain-specific behaviors - so the maximum achievable score may be effectively 2/5 for these models (Appendix C.2).
 
-The paper also notes that the oracle interprets activation difference vectors "despite never being trained on them" (Section 4.2) — the oracle was only trained on direct activations, not diffs. Compare this to the direct activation result above, where the oracle could clearly identify the model's harmful intent from the EM model's own activations.
+The paper also notes that the oracle interprets activation difference vectors "despite never being trained on them" (Section 4.2) - the oracle was only trained on direct activations, not diffs. Compare this to the direct activation result above, where the oracle could clearly identify the model's harmful intent from the EM model's own activations.
 """
 
 # ! CELL TYPE: markdown
@@ -3828,7 +3828,7 @@ The **Secret Side Constraint** (SSC) task tests whether oracles can extract hidd
 
 **Example**: A model receives base64-encoded instructions in its prompts alongside natural language queries. It's fine-tuned to decode and follow these encoded side constraints while never revealing them explicitly.
 
-The AO paper evaluates on SSC models (e.g., `bcywinski/llama-3.3-70B-Instruct-ssc-base64`), achieving **59% accuracy** on extracting the hidden constraint from activations alone (vs. 49% for the best white-box interpretability baseline). Note that black-box methods achieve higher accuracy on this task (96.8%) since they can directly query the model — but the point of activation-based methods is that they work even when the model is trained to hide information from its outputs.
+The AO paper evaluates on SSC models (e.g., `bcywinski/llama-3.3-70B-Instruct-ssc-base64`), achieving **59% accuracy** on extracting the hidden constraint from activations alone (vs. 49% for the best white-box interpretability baseline). Note that black-box methods achieve higher accuracy on this task (96.8%) since they can directly query the model - but the point of activation-based methods is that they work even when the model is trained to hide information from its outputs.
 
 > Note - SSC models are 70B parameters, which is too large for most setups. See the bonus exercises section for guidance on replicating these results if you have access to larger GPUs.
 """

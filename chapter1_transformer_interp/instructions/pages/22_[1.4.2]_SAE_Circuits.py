@@ -11,7 +11,7 @@ import streamlit_antd_components as sac
 #     {"title": "Bonus", "icon": "star", "subtitle": "(1%)"},
 #     ...
 # ]
-metadata = [{'title': 'SAE Circuits', 'icon': '2-circle-fill', 'subtitle': '(100%)'}]
+metadata = [{'title': 'Latent Gradients', 'icon': '1-circle-fill', 'subtitle': '(30%)'}, {'title': 'Transcoders', 'icon': '2-circle-fill', 'subtitle': '(20%)'}, {'title': 'Attribution Graphs', 'icon': '3-circle-fill', 'subtitle': '(30%)'}, {'title': 'Exploring Circuits & Interventions', 'icon': '4-circle-fill', 'subtitle': '(20%)'}, {'title': 'Bonus', 'icon': 'star', 'subtitle': ''}]
 chapter_name = 'chapter1_transformer_interp'
 chapter_name_long = 'Chapter 1 - Transformer Interp'
 section_title = '[1.4.2] SAE Circuits'

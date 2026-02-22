@@ -6,15 +6,13 @@ import itertools
 import os
 import random
 import sys
-from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import circuitsvis as cv
 import einops
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import requests
@@ -35,17 +33,13 @@ from sae_lens import (
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_vis import SaeVisConfig, SaeVisData, SaeVisLayoutConfig
 from tabulate import tabulate
-from torch import Tensor, nn
-from torch.distributions.categorical import Categorical
-from torch.nn import functional as F
+from torch import Tensor
 from tqdm.auto import tqdm
-from transformer_lens import ActivationCache, HookedTransformer
+from transformer_lens import ActivationCache
 from transformer_lens.hook_points import HookPoint
-from transformer_lens.utils import get_act_name, test_prompt, to_numpy
+from transformer_lens.utils import get_act_name, test_prompt
 
-device = t.device(
-    "mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu"
-)
+device = t.device("mps" if t.backends.mps.is_available() else "cuda" if t.cuda.is_available() else "cpu")
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
@@ -56,10 +50,9 @@ section_dir = exercises_dir / section
 if str(exercises_dir) not in sys.path:
     sys.path.append(str(exercises_dir))
 
-# There's a single utils & tests file for both parts 3.1 & 3.2
+# There's a single utils & tests file for all SAE material
 import part31_superposition_and_saes.tests as tests
 import part31_superposition_and_saes.utils as utils
-from plotly_utils import imshow, line
 
 MAIN = __name__ == "__main__"
 
@@ -72,8 +65,7 @@ if MAIN:
 
 if MAIN:
     metadata_rows = [
-        [data.model, data.release, data.repo_id, len(data.saes_map)]
-        for data in get_pretrained_saes_directory().values()
+        [data.model, data.release, data.repo_id, len(data.saes_map)] for data in get_pretrained_saes_directory().values()
     ]
     
     # Print all SAE releases, sorted by base model
@@ -88,11 +80,7 @@ if MAIN:
 # %%
 
 def format_value(value):
-    return (
-        "{{{0!r}: {1!r}, ...}}".format(*next(iter(value.items())))
-        if isinstance(value, dict)
-        else repr(value)
-    )
+    return "{{{0!r}: {1!r}, ...}}".format(*next(iter(value.items()))) if isinstance(value, dict) else repr(value)
 
 
 if MAIN:
@@ -202,9 +190,7 @@ def show_activation_histogram(
         acts = cache[sae_acts_post_hook_name][..., latent_idx]
         all_positive_acts.extend(acts[acts > 0].cpu().tolist())
 
-    frac_active = len(all_positive_acts) / (
-        total_batches * act_store.store_batch_size_prompts * act_store.context_size
-    )
+    frac_active = len(all_positive_acts) / (total_batches * act_store.store_batch_size_prompts * act_store.context_size)
 
     px.histogram(
         all_positive_acts,
@@ -222,9 +208,7 @@ if MAIN:
 
 # %%
 
-def get_k_largest_indices(
-    x: Float[Tensor, "batch seq"], k: int, buffer: int = 0
-) -> Int[Tensor, "k 2"]:
+def get_k_largest_indices(x: Float[Tensor, "batch seq"], k: int, buffer: int = 0) -> Int[Tensor, "k 2"]:
     """
     The indices of the top k elements in the input tensor, i.e. output[i, :] is the (batch, seqpos)
     value of the i-th largest element in x.
@@ -241,7 +225,7 @@ def get_k_largest_indices(
 
 def index_with_buffer(
     x: Float[Tensor, "batch seq"], indices: Int[Tensor, "k 2"], buffer: int | None = None
-) -> Float[Tensor, "k *buffer_x2_plus1"]:
+) -> Float[Tensor, " k *buffer_x2_plus1"]:
     """
     Indexes into `x` with `indices` (which should have come from the `get_k_largest_indices`
     function), and takes a +-buffer range around each indexed element. If `indices` are less than
@@ -272,12 +256,7 @@ def display_top_seqs(data: list[tuple[float, list[str], int]]):
     table = Table("Act", "Sequence", title="Max Activating Examples", show_lines=True)
     for act, str_toks, seq_pos in data:
         formatted_seq = (
-            "".join(
-                [
-                    f"[b u green]{str_tok}[/]" if i == seq_pos else str_tok
-                    for i, str_tok in enumerate(str_toks)
-                ]
-            )
+            "".join([f"[b u green]{str_tok}[/]" if i == seq_pos else str_tok for i, str_tok in enumerate(str_toks)])
             .replace("�", "")
             .replace("\n", "↵")
         )
@@ -327,9 +306,7 @@ def fetch_max_activating_examples(
 if MAIN:
     # Fetch & display the results
     buffer = 10
-    data = fetch_max_activating_examples(
-        gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, buffer=buffer, k=5
-    )
+    data = fetch_max_activating_examples(gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, buffer=buffer, k=5)
     display_top_seqs(data)
 
     # Test one of the results, to see if it matches the expected output
@@ -354,9 +331,7 @@ def get_k_largest_indices(
                     within `buffer` of each other.
     """
     assert buffer * 2 < x.size(1), "Buffer is too large for the sequence length"
-    assert not no_overlap or k <= x.size(0), (
-        "Not enough sequences to have a different token in each sequence"
-    )
+    assert not no_overlap or k <= x.size(0), "Not enough sequences to have a different token in each sequence"
 
     if buffer > 0:
         x = x[:, buffer:-buffer]
@@ -368,9 +343,7 @@ def get_k_largest_indices(
     if no_overlap:
         unique_indices = t.empty((0, 2), device=x.device).long()
         while len(unique_indices) < k:
-            unique_indices = t.cat(
-                (unique_indices, t.tensor([[rows[0], cols[0]]], device=x.device))
-            )
+            unique_indices = t.cat((unique_indices, t.tensor([[rows[0], cols[0]]], device=x.device)))
             is_overlapping_mask = (rows == rows[0]) & ((cols - cols[0]).abs() <= buffer)
             rows = rows[~is_overlapping_mask]
             cols = cols[~is_overlapping_mask]
@@ -380,9 +353,7 @@ def get_k_largest_indices(
 
 
 if MAIN:
-    data = fetch_max_activating_examples(
-        gpt2, gpt2_sae, gpt2_act_store, latent_idx=16873, total_batches=200
-    )
+    data = fetch_max_activating_examples(gpt2, gpt2_sae, gpt2_act_store, latent_idx=16873, total_batches=200)
     display_top_seqs(data)
 
 # %%
@@ -433,9 +404,7 @@ def create_prompt(
     """
     Returns the system, user & assistant prompts for autointerp.
     """
-    data = fetch_max_activating_examples(
-        model, sae, act_store, latent_idx, total_batches, k, buffer
-    )
+    data = fetch_max_activating_examples(model, sae, act_store, latent_idx, total_batches, k, buffer)
     str_formatted_examples = "\n".join(
         f"{i + 1}. {''.join(f'<<{tok}>>' if j == buffer else tok for j, tok in enumerate(seq[1]))}"
         for i, seq in enumerate(data)
@@ -450,9 +419,7 @@ def create_prompt(
 
 if MAIN:
     # Test your function
-    prompts = create_prompt(
-        gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, total_batches=100, k=15, buffer=8
-    )
+    prompts = create_prompt(gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, total_batches=100, k=15, buffer=8)
     assert prompts["system"].startswith("We're studying neurons in a neural network.")
     assert "<< new>>" in prompts["user"]
     assert prompts["assistant"] == "this neuron fires on"
@@ -495,9 +462,7 @@ if MAIN:
     API_KEY = os.environ.get("OPENAI_API_KEY", None)
 
     if API_KEY is not None:
-        completions = get_autointerp_explanation(
-            gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, n_completions=5
-        )
+        completions = get_autointerp_explanation(gpt2, gpt2_sae, gpt2_act_store, latent_idx=9, n_completions=5)
         for i, completion in enumerate(completions):
             print(f"Completion {i + 1}: {completion!r}")
     else:
@@ -543,10 +508,7 @@ def display_top_seqs_attn(data: list[AttnSeqDFA]):
         formatted_seqs = [
             repr(
                 "".join(
-                    [
-                        f"[b u {color}]{str_tok}[/]" if i == seq_pos else str_tok
-                        for i, str_tok in enumerate(str_toks)
-                    ]
+                    [f"[b u {color}]{str_tok}[/]" if i == seq_pos else str_tok for i, str_tok in enumerate(str_toks)]
                 )
                 .replace("�", "")
                 .replace("\n", "↵")
@@ -578,9 +540,7 @@ def fetch_max_activating_examples_attn(
     pattern_hook_name = get_act_name("pattern", sae.cfg.hook_layer)
     data = []
 
-    for _ in tqdm(
-        range(total_batches), desc="Computing activations for max activating examples (attn)"
-    ):
+    for _ in tqdm(range(total_batches), desc="Computing activations for max activating examples (attn)"):
         tokens = act_store.get_batch_tokens()
         _, cache = model.run_with_cache_with_saes(
             tokens,
@@ -609,9 +569,7 @@ def fetch_max_activating_examples_attn(
         # Map through our SAE encoder to get direct feature attribution for each src token, and argmax over src tokens
         dfa = v_weighted @ sae.W_enc[:, latent_idx]  # shape [k src]
         src_pos_indices = dfa.argmax(dim=-1)
-        src_toks_with_buffer = index_with_buffer(
-            tokens, t.stack([batch_indices, src_pos_indices], -1), buffer=buffer
-        )
+        src_toks_with_buffer = index_with_buffer(tokens, t.stack([batch_indices, src_pos_indices], -1), buffer=buffer)
         str_toks_src_list = [model.to_str_tokens(toks) for toks in src_toks_with_buffer]
 
         # Add all this data to our list
@@ -646,8 +604,7 @@ if MAIN:
     
     prompt_template = "When{A} and{B} went to the shops,{S} gave the bag to"
     prompts = [
-        prompt_template.format(A=names[i], B=names[1 - i], S=names[j])
-        for i, j in itertools.product(range(2), range(2))
+        prompt_template.format(A=names[i], B=names[1 - i], S=names[j]) for i, j in itertools.product(range(2), range(2))
     ]
     correct_answers = names[::-1] * 2
     incorrect_answers = names * 2
@@ -766,9 +723,7 @@ if MAIN:
     
     # Get latent activations, of shape (4, d_sae)
     sae_acts_post_hook_name = f"{attn_saes[layer].cfg.hook_name}.hook_sae_acts_post"
-    _, cache = gpt2.run_with_cache_with_saes(
-        prompts, saes=[attn_saes[layer]], names_filter=[sae_acts_post_hook_name]
-    )
+    _, cache = gpt2.run_with_cache_with_saes(prompts, saes=[attn_saes[layer]], names_filter=[sae_acts_post_hook_name])
     sae_acts_post = cache[sae_acts_post_hook_name][:, -1]
     
     # Get values written to the residual stream by each latent
@@ -814,8 +769,7 @@ if MAIN:
 
 if MAIN:
     logit_dir = (
-        gpt2.W_U[:, gpt2.to_single_token(correct_completion)]
-        - gpt2.W_U[:, gpt2.to_single_token(incorrect_completion)]
+        gpt2.W_U[:, gpt2.to_single_token(correct_completion)] - gpt2.W_U[:, gpt2.to_single_token(incorrect_completion)]
     )
     
     _, cache = gpt2.run_with_cache_with_saes(prompt, saes=[gpt2_sae])
@@ -871,9 +825,7 @@ if MAIN:
         logits_with_ablation = gpt2.run_with_hooks_with_saes(
             prompts,
             saes=[attn_saes[layer]],
-            fwd_hooks=[
-                (hook_sae_acts_post, partial(ablate_sae_latent, latent_idx=i, seq_pos=s2_pos))
-            ],
+            fwd_hooks=[(hook_sae_acts_post, partial(ablate_sae_latent, latent_idx=i, seq_pos=s2_pos))],
         )
 
         logit_diff_with_ablation = logits_to_ave_logit_diff(logits_with_ablation)
@@ -947,9 +899,7 @@ if MAIN:
     clean_grad_sae_acts_post = clean_grad_cache[hook_sae_acts_post]
 
     # Compute attribution values for all latents, then index to get live ones
-    attribution_values = (clean_grad_sae_acts_post * clean_sae_acts_post)[
-        :, s2_pos, alive_latents
-    ].mean(0)
+    attribution_values = (clean_grad_sae_acts_post * clean_sae_acts_post)[:, s2_pos, alive_latents].mean(0)
 
     # Visualize results
     px.scatter(
@@ -988,9 +938,7 @@ if MAIN:
     
         gemmascope_sae_release = "gemma-scope-2b-pt-res-canonical"
         gemmascope_sae_id = "layer_20/width_16k/canonical"
-        gemma_2_2b_sae = SAE.from_pretrained(
-            gemmascope_sae_release, gemmascope_sae_id, device=str(device)
-        )[0]
+        gemma_2_2b_sae = SAE.from_pretrained(gemmascope_sae_release, gemmascope_sae_id, device=str(device))[0]
     else:
         print("Please supply your Hugging Face API key before running this cell")
 
@@ -1166,9 +1114,7 @@ if MAIN:
         sae_acts_post = cache[sae_acts_post_hook_name][:, -1, :].mean(0)
         alive_latents = sae_acts_post.nonzero().squeeze().tolist()
 
-        sae_attribution = sae_acts_post * (
-            attn_saes[layer].W_dec @ gpt2.W_O[layer].flatten(0, 1) @ logit_dir
-        )
+        sae_attribution = sae_acts_post * (attn_saes[layer].W_dec @ gpt2.W_O[layer].flatten(0, 1) @ logit_dir)
 
         ind = sae_attribution.argmax().item()
         latent_dir = attn_saes[layer].W_dec[ind]
@@ -1215,8 +1161,7 @@ if MAIN:
     sae_ids = [f"blocks.8.hook_resid_pre_{width}" for width in widths]
     
     splitting_saes = {
-        width: SAE.from_pretrained(sae_release, sae_id, device=str(device))[0]
-        for width, sae_id in zip(widths, sae_ids)
+        width: SAE.from_pretrained(sae_release, sae_id, device=str(device))[0] for width, sae_id in zip(widths, sae_ids)
     }
     
     gpt2 = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
@@ -1227,9 +1172,7 @@ def load_and_process_autointerp_dfs(width: int):
     # Load in dataframe
     release = get_pretrained_saes_directory()[sae_release]
     neuronpedia_id = release.neuronpedia_id[f"blocks.8.hook_resid_pre_{width}"]
-    url = "https://www.neuronpedia.org/api/explanation/export?modelId={}&saeId={}".format(
-        *neuronpedia_id.split("/")
-    )
+    url = "https://www.neuronpedia.org/api/explanation/export?modelId={}&saeId={}".format(*neuronpedia_id.split("/"))
     headers = {"Content-Type": "application/json"}
     data = requests.get(url, headers=headers).json()
     df = pd.DataFrame(data)
@@ -1336,9 +1279,7 @@ def compute_sae_umap_data(
     # Combine results from all batches, and get them into the dataframe
     token_factors_inds = t.cat(top_token_ids)
     umap_df["tok_token_ids"] = token_factors_inds.tolist()
-    umap_df["top_token_strs"] = [
-        ", ".join(map(repr, model.to_str_tokens(tokens))) for tokens in token_factors_inds
-    ]
+    umap_df["top_token_strs"] = [", ".join(map(repr, model.to_str_tokens(tokens))) for tokens in token_factors_inds]
 
     print("Calculating 2D UMAP")
     visual_umap = UMAP(
@@ -1373,17 +1314,15 @@ def compute_sae_umap_data(
 if MAIN:
     # This took about 40s to run for me in Colab Pro+, 80s on my VastAI A100 remote machine
     expansion_factors = [1, 4, 16]
-    umap_df = compute_sae_umap_data(
-        splitting_saes, autointerp_dfs, [768 * ex for ex in expansion_factors], gpt2
-    )
+    umap_df = compute_sae_umap_data(splitting_saes, autointerp_dfs, [768 * ex for ex in expansion_factors], gpt2)
     display(umap_df.head())
 
 # %%
 
 if MAIN:
     # For the color scale
-    custom_grey_green_color_scale = lambda n: ["rgba(170,170,170,0.5)"] + px.colors.n_colors(
-        "rgb(0,120,0)", "rgb(144,238,144)", n - 1, colortype="rgb"
+    custom_grey_green_color_scale = lambda n: (
+        ["rgba(170,170,170,0.5)"] + px.colors.n_colors("rgb(0,120,0)", "rgb(144,238,144)", n - 1, colortype="rgb")
     )
     
     # Make sure the points for wider SAEs are on top
@@ -1411,9 +1350,7 @@ if MAIN:
 
 if MAIN:
     # This took about 50s to run for me in Colab Pro+, 90s on my VastAI A100 remote machine
-    umap_df = compute_sae_umap_data(
-        splitting_saes, autointerp_dfs, [widths[5]], gpt2, find_clusters=True
-    )
+    umap_df = compute_sae_umap_data(splitting_saes, autointerp_dfs, [widths[5]], gpt2, find_clusters=True)
     display(umap_df.head())
     
     px.scatter(
@@ -1436,9 +1373,7 @@ class Example:
     Data for a single example sequence.
     """
 
-    def __init__(
-        self, toks: list[int], acts: list[float], act_threshold: float, model: HookedSAETransformer
-    ):
+    def __init__(self, toks: list[int], acts: list[float], act_threshold: float, model: HookedSAETransformer):
         self.toks = toks
         self.str_toks = model.to_str_tokens(t.tensor(self.toks))
         self.acts = acts
@@ -1527,9 +1462,7 @@ Messages: TypeAlias = list[dict[Literal["role", "content"], str]]
 
 
 def display_messages(messages: Messages):
-    print(
-        tabulate([m.values() for m in messages], tablefmt="simple_grid", maxcolwidths=[None, 120])
-    )
+    print(tabulate([m.values() for m in messages], tablefmt="simple_grid", maxcolwidths=[None, 120]))
 
 
 class AutoInterp:
@@ -1579,9 +1512,7 @@ class AutoInterp:
                 score = self.score_predictions(predictions_parsed, scoring_examples[latent])
                 results[latent] |= {
                     "predictions": predictions_parsed,
-                    "correct seqs": [
-                        i for i, ex in enumerate(scoring_examples[latent], start=1) if ex.is_active
-                    ],
+                    "correct seqs": [i for i, ex in enumerate(scoring_examples[latent], start=1) if ex.is_active],
                     "score": score,
                 }
 
@@ -1604,14 +1535,10 @@ class AutoInterp:
     def score_predictions(self, predictions: list[str], scoring_examples: list[Example]) -> float:
         classifications = [i in predictions for i in range(1, len(scoring_examples) + 1)]
         correct_classifications = [ex.is_active for ex in scoring_examples]
-        return sum([c == cc for c, cc in zip(classifications, correct_classifications)]) / len(
-            classifications
-        )
+        return sum([c == cc for c, cc in zip(classifications, correct_classifications)]) / len(classifications)
 
 
-    def get_response(
-        self, messages: list[dict], max_tokens: int, n_completions: int = 1, debug: bool = False
-    ) -> str:
+    def get_response(self, messages: list[dict], max_tokens: int, n_completions: int = 1, debug: bool = False) -> str:
         """Generic API usage function for OpenAI"""
         for message in messages:
             assert message.keys() == {"content", "role"}
@@ -1627,9 +1554,7 @@ class AutoInterp:
             stream=False,
         )
         if debug:
-            display_messages(
-                messages + [{"role": "assistant", "content": result.choices[0].message.content}]
-            )
+            display_messages(messages + [{"role": "assistant", "content": result.choices[0].message.content}])
 
         return [choice.message.content.strip() for choice in result.choices]
 
@@ -1644,9 +1569,7 @@ class AutoInterp:
         if self.cfg.use_examples_in_explanation_prompt:
             SYSTEM_PROMPT += """ Some examples: "This neuron activates on the word 'knows' in rhetorical questions like 'Who knows ... ?'", and "This neuron activates on verbs related to decision-making and preferences", and "This neuron activates on the substring 'Ent' at the start of words like 'Entrepreneur' or 'Entire'."""
         else:
-            SYSTEM_PROMPT += (
-                """Your response should be in the form "This neuron activates on..."."""
-            )
+            SYSTEM_PROMPT += """Your response should be in the form "This neuron activates on..."."""
         USER_PROMPT = f"""The activating documents are given below:\n\n{examples_as_str}"""
 
         return [
@@ -1657,9 +1580,7 @@ class AutoInterp:
     def get_scoring_prompts(self, explanation: str, scoring_examples: list[Example]) -> Messages:
         assert len(scoring_examples) > 0, "No scoring examples found"
 
-        examples_as_str = "\n".join(
-            [f"{i + 1}. {ex.to_str(mark_toks=False)}" for i, ex in enumerate(scoring_examples)]
-        )
+        examples_as_str = "\n".join([f"{i + 1}. {ex.to_str(mark_toks=False)}" for i, ex in enumerate(scoring_examples)])
 
         SYSTEM_PROMPT = f"""We're studying neurons in a neural network. Each neuron activates on some particular word/words or concept in a short document. You will be given a short explanation of what this neuron activates for, and then be shown {self.cfg.n_ex_for_scoring} example sequences. You will have to return a comma-separated list of the examples where you think the neuron should activate at least once. For example, your response might look like "1, 4, 7, 8". If you think there are no examples where the neuron will activate, you should just respond with "None". You should include nothing else in your response other than comma-separated numbers or the word "None" - this is important."""
         USER_PROMPT = f"Here is the explanation: this neuron fires on {explanation}.\n\nHere are the examples:\n\n{examples_as_str}"
@@ -1684,9 +1605,7 @@ class AutoInterp:
             [
                 t.randint(0, total_batches, all_rand_indices_shape),  # which batch
                 t.randint(0, batch_size, all_rand_indices_shape),  # which sequence in the batch
-                t.randint(
-                    self.cfg.buffer, seq_len - self.cfg.buffer, all_rand_indices_shape
-                ),  # where in the sequence
+                t.randint(self.cfg.buffer, seq_len - self.cfg.buffer, all_rand_indices_shape),  # where in the sequence
             ],
             dim=-1,
         )  # shape [n_random_ex_for_scoring, n_latents, 3]
@@ -1721,19 +1640,13 @@ class AutoInterp:
                 )
                 top_toks = index_with_buffer(tokens, top_indices, buffer=self.cfg.buffer)
                 top_values = index_with_buffer(acts[..., i], top_indices, buffer=self.cfg.buffer)
-                latent_data[latent]["top_toks"] = t.cat(
-                    (latent_data[latent]["top_toks"], top_toks), dim=0
-                )
-                latent_data[latent]["top_values"] = t.cat(
-                    (latent_data[latent]["top_values"], top_values), dim=0
-                )
+                latent_data[latent]["top_toks"] = t.cat((latent_data[latent]["top_toks"], top_toks), dim=0)
+                latent_data[latent]["top_values"] = t.cat((latent_data[latent]["top_values"], top_values), dim=0)
 
                 # Get random activations (our `all_rand_indices` tensor tells us which random sequences to take)
                 rand_indices = all_rand_indices[all_rand_indices[:, i, 0] == batch, i, 1:]
                 random_toks = index_with_buffer(tokens, rand_indices, self.cfg.buffer)
-                latent_data[latent]["rand_toks"] = t.cat(
-                    (latent_data[latent]["rand_toks"], random_toks), dim=0
-                )
+                latent_data[latent]["rand_toks"] = t.cat((latent_data[latent]["rand_toks"], random_toks), dim=0)
 
         # Dicts to store all generation & scoring examples for each latent
         generation_examples = {}
@@ -1862,11 +1775,7 @@ if MAIN:
     if USING_GEMMA:
         gemma_2b_sae = SAE.from_pretrained(sae_release, sae_id, device=str(device))[0]
     
-        print(
-            tabulate(
-                gemma_2b_sae.cfg.__dict__.items(), headers=["name", "value"], tablefmt="simple_outline"
-            )
-        )
+        print(tabulate(gemma_2b_sae.cfg.__dict__.items(), headers=["name", "value"], tablefmt="simple_outline"))
 
 # %%
 
@@ -1874,7 +1783,7 @@ def hook_fn_patch_scoping(
     activations: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     seq_pos: list[int],
-    latent_vector: Float[Tensor, "d_model"],
+    latent_vector: Float[Tensor, " d_model"],
 ) -> None:
     """
     Steers the model by returning a modified activations tensor, with some multiple of the steering
@@ -1914,9 +1823,7 @@ def generate_patch_scoping_explanation(
     latent_dir = sae.W_dec[latent_idx]
     latent_dir_scaled = (latent_dir / latent_dir.norm(dim=-1)) * scale
 
-    steering_hook = partial(
-        hook_fn_patch_scoping, latent_vector=latent_dir_scaled, seq_pos=positions
-    )
+    steering_hook = partial(hook_fn_patch_scoping, latent_vector=latent_dir_scaled, seq_pos=positions)
 
     with model.hooks(fwd_hooks=[(get_act_name("resid_pre", replacement_layer), steering_hook)]):
         output = model.generate(prompt, max_new_tokens=max_new_tokens, **GENERATE_KWARGS)
@@ -1972,16 +1879,12 @@ def get_patch_scoping_self_similarity(
     replacement_hook_name = get_act_name("resid_pre", replacement_layer)
     diagnostic_hook_name = get_act_name("resid_pre", diagnostic_layer)
 
-    positions = [
-        i for i, a in enumerate(model.tokenizer.encode(prompt)) if a == model.tokenizer.unk_token_id
-    ]
+    positions = [i for i, a in enumerate(model.tokenizer.encode(prompt)) if a == model.tokenizer.unk_token_id]
 
     latent_dir = sae.W_dec[latent_idx]
     latent_dir_normalized = latent_dir / latent_dir.norm(dim=-1)
 
-    scale_tensor = t.tensor(
-        [float(scale)], device=device, requires_grad=True
-    )  # to get gradients correctly
+    scale_tensor = t.tensor([float(scale)], device=device, requires_grad=True)  # to get gradients correctly
     steering_hook = partial(
         hook_fn_patch_scoping, latent_vector=latent_dir_normalized * scale_tensor, seq_pos=positions
     )
@@ -2033,9 +1936,7 @@ if MAIN:
             )
             for scale in scale_list
         ]
-        self_similarity, self_similarity_first_deriv, self_similarity_second_deriv = zip(
-            *self_similarity_results
-        )
+        self_similarity, self_similarity_first_deriv, self_similarity_second_deriv = zip(*self_similarity_results)
         t.set_grad_enabled(False)
 
         fig = px.scatter(
@@ -2099,10 +2000,7 @@ if MAIN:
 if MAIN:
     tinystories_model = HookedSAETransformer.from_pretrained("tiny-stories-1L-21M")
     
-    completions = [
-        (i, tinystories_model.generate("Once upon a time", temperature=1, max_new_tokens=50))
-        for i in range(5)
-    ]
+    completions = [(i, tinystories_model.generate("Once upon a time", temperature=1, max_new_tokens=50)) for i in range(5)]
     
     print(tabulate(completions, tablefmt="simple_grid", maxcolwidths=[None, 100]))
 
@@ -2315,9 +2213,7 @@ if MAIN:
     
     # Get a subset of live latents (probably not getting all of them, with only 100 seqs)
     acts_post_hook_name = f"{attn_sae.cfg.hook_name}.hook_sae_acts_post"
-    _, cache = attn_model.run_with_cache_with_saes(
-        tokens[:100], saes=[attn_sae], names_filter=acts_post_hook_name
-    )
+    _, cache = attn_model.run_with_cache_with_saes(tokens[:100], saes=[attn_sae], names_filter=acts_post_hook_name)
     acts = cache[acts_post_hook_name]
     alive_feats = (acts.flatten(0, 1) > 1e-8).any(dim=0).nonzero().squeeze().tolist()
     print(f"Alive latents: {len(alive_feats)}/{attn_sae.cfg.d_sae}\n")
@@ -2515,9 +2411,7 @@ def load_othello_vocab():
     all_squares = [r + c for r in "ABCDEFGH" for c in "01234567"]
     legal_squares = [sq for sq in all_squares if sq not in ["D3", "D4", "E3", "E4"]]
     # Model's vocabulary = all legal squares (plus "pass")
-    vocab_dict = {
-        token_id: str_token for token_id, str_token in enumerate(["pass"] + legal_squares)
-    }
+    vocab_dict = {token_id: str_token for token_id, str_token in enumerate(["pass"] + legal_squares)}
     # Probe vocabulary = all squares on the board
     vocab_dict_probes = {token_id: str_token for token_id, str_token in enumerate(all_squares)}
     return {

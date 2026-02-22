@@ -7,15 +7,12 @@ import torch as t
 import torch.nn.functional as F
 from sae_lens import SAE, HookedSAETransformer
 
-# ============ PART 3.1 TESTS ============
-
-
 if TYPE_CHECKING:
-    from part31_superposition_and_saes.solutions import SAE
+    from part54_toy_models_of_superposition_and_saes.solutions import SAE
 
 
 def test_model(Model):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     cfg = solutions.ToyModelConfig(10, 5, 2)
     # get actual
@@ -33,7 +30,7 @@ def test_model(Model):
 
 
 def test_generate_batch(Model):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     n_features = 5
     n_instances = 10
@@ -56,7 +53,7 @@ def test_generate_batch(Model):
 
 
 def test_calculate_loss(Model):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     instances = 10
     features = 5
@@ -86,7 +83,7 @@ def test_calculate_loss(Model):
 
 
 def test_neuron_model(neuron_model):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     cfg = solutions.ToyModelConfig(
         n_inst=10,
@@ -118,7 +115,7 @@ def test_neuron_model(neuron_model):
 
 
 def test_neuron_computation_model(neuron_computation_model):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     cfg = solutions.ToyModelConfig(
         n_inst=10,
@@ -147,7 +144,7 @@ def test_neuron_computation_model(neuron_computation_model):
 
 
 def test_compute_dimensionality(compute_dimensionality):
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     W = t.randn(5, 20, 40)
     result = compute_dimensionality(W)
@@ -163,7 +160,7 @@ def setup_sae(SAE, match_weights: bool = True, tied: bool = False, bias: bool = 
     `_W_enc` for standard architecture and `W_gate` for Gated, but then `W_enc` is a
     property that refers to either of these).
     """
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     n_inst = 1
     d_in = d_hidden = 2
@@ -292,7 +289,7 @@ def test_sae_W_dec_normalized(SAE):
 def test_resample_simple(SAE):
     window = 5
 
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     # Create sae, and make sure biases don't start at zero (more robust testing)
     cfg = solutions.ToyModelConfig(
@@ -376,7 +373,7 @@ def test_resample_advanced(SAE):
     dead_feature_prob = 0.5  # We need at least some alive and some dead, for every instance
     batch_size = 100
 
-    import part31_superposition_and_saes.solutions as solutions
+    import part54_toy_models_of_superposition_and_saes.solutions as solutions
 
     # Create autoencoder, and make sure biases don't start at zero (more robust testing)
     cfg = solutions.ToyModelConfig(n_instances, n_features, n_hidden)
@@ -497,45 +494,6 @@ def test_resample_advanced(SAE):
         raise Exception(
             "Not correctly using the squared L2 loss as probabilities to resample neurons with replacement."
         )
-
-
-# ============ PART 3.2 TESTS ============
-
-
-def test_steering_hook(steering_hook, sae: SAE):
-    steering_coefficient = 1.5
-    latent_idx = 5
-    activations = t.randn(1, 10, sae.cfg.d_in, device=sae.cfg.device)
-    expected_result = activations.clone()
-    expected_result_lastseq = activations.clone()
-    result = steering_hook(activations, None, sae, latent_idx, steering_coefficient)
-    assert result is not None, "Did you forget to return the tensor?"
-    expected_result += steering_coefficient * sae.W_dec[latent_idx]
-    expected_result_lastseq[:, -1] += steering_coefficient * sae.W_dec[latent_idx]
-    assert result.shape == expected_result.shape, f"Result shape {result.shape} != expected {expected_result.shape}"
-    diff = (result - expected_result).abs().max().item()
-    diff_lastseq = (result - expected_result_lastseq).abs().max().item()
-    if diff < 1e-5:
-        print("All tests in `test_steering_hook` passed!")
-    elif diff_lastseq < 1e-5:
-        raise ValueError(
-            "Unexpected return from steering_hook function - did you only apply steering to the last sequence position?"
-        )
-    else:
-        raise ValueError(f"Unexpected return from steering_hook function: max diff from expected is {diff}")
-
-
-def test_show_top_logits(show_top_logits, gpt2: HookedSAETransformer, gpt2_sae: SAE):
-    """
-    We test by checking whether a couple of expected top tokens are in the output.
-    """
-    latent_idx = 9
-    with io.StringIO() as buf, contextlib.redirect_stdout(buf):
-        show_top_logits(gpt2, gpt2_sae, latent_idx)
-        output = buf.getvalue()
-    assert "bies" in output, "Expected 'bies' to be in output (most positive value)"
-    assert "Zip" in output, "Expected 'Zip' to be in output (most negative value)"
-    print("All tests in `test_show_top_logits` passed!")
 
 
 def test_show_top_deembeddings(show_top_deembeddings, gpt2: HookedSAETransformer, gpt2_transcoder: SAE):

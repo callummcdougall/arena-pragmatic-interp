@@ -3,7 +3,7 @@
 # ! TAGS: []
 
 # Tee print output to master_4_3_output.txt so we can share logs without copy-pasting.
-# This overrides print for Section 4 onward — output goes to both console and file.
+# This overrides print for Section 4 onward - output goes to both console and file.
 _builtin_print = print
 _output_file = open(
     "/root/arena-pragmatic-interp/infrastructure/chapters/chapter4_alignment_science/master_4_3_output.txt",
@@ -1852,16 +1852,16 @@ r"""
 r"""
 ## Sentence-to-Sentence Causal Graph
 
-So far we've measured importance only for the *final answer* — asking "how much does removing sentence $i$ affect whether the model gets the right answer?" But this misses the rich causal structure *within* the reasoning trace itself. A planning sentence might not directly affect the final answer, but it might be critical for producing a later computation sentence that *does* affect the answer.
+So far we've measured importance only for the *final answer* - asking "how much does removing sentence $i$ affect whether the model gets the right answer?" But this misses the rich causal structure *within* the reasoning trace itself. A planning sentence might not directly affect the final answer, but it might be critical for producing a later computation sentence that *does* affect the answer.
 
-The sentence-to-sentence causal graph captures this structure by asking: **how important is sentence $i$ for whether sentence $j$ appears later?** This connects our black-box importance metrics to the white-box attention patterns we'll study in the next section — if sentence $i$ causally influences sentence $j$ in the black-box sense, we'd expect the model's attention heads to also attend strongly from $j$ back to $i$.
+The sentence-to-sentence causal graph captures this structure by asking: **how important is sentence $i$ for whether sentence $j$ appears later?** This connects our black-box importance metrics to the white-box attention patterns we'll study in the next section - if sentence $i$ causally influences sentence $j$ in the black-box sense, we'd expect the model's attention heads to also attend strongly from $j$ back to $i$.
 
 The paper computes this by:
 1. For each target sentence $j$, look at rollouts where sentence $i$ was kept vs removed
 2. Check how often sentence $j$ (or something semantically similar) appears in each set, using embedding cosine similarity
 3. The difference is the causal importance of $i$ on $j$
 
-This produces a matrix of pairwise causal effects, which can be visualized as a directed graph — revealing the "backbone" of the reasoning trace.
+This produces a matrix of pairwise causal effects, which can be visualized as a directed graph - revealing the "backbone" of the reasoning trace.
 """
 
 # ! CELL TYPE: markdown
@@ -1931,7 +1931,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-This exercise is broken into three clear steps, each with its own hints. We recommend tackling them in order — completing each step before moving on to the next.
+This exercise is broken into three clear steps, each with its own hints. We recommend tackling them in order - completing each step before moving on to the next.
 
 Some notes before you start:
 
@@ -4059,7 +4059,7 @@ This validates that:
 r"""
 ### Bonus Exercises: Replicating Paper Whitebox Results
 
-The correlation analyses above produce weak results on a single reasoning trace — this is expected, and reflects a broader methodological point: robust claims about thought anchors require aggregating evidence across many problems. The paper's whitebox experiments run over a large dataset of math rollouts (available on [HuggingFace](https://huggingface.co/datasets/uzaymacar/math-rollouts)) and the key results replicate across two model families (Qwen-14B and Llama-8B).
+The correlation analyses above produce weak results on a single reasoning trace - this is expected, and reflects a broader methodological point: robust claims about thought anchors require aggregating evidence across many problems. The paper's whitebox experiments run over a large dataset of math rollouts (available on [HuggingFace](https://huggingface.co/datasets/uzaymacar/math-rollouts)) and the key results replicate across two model families (Qwen-14B and Llama-8B).
 
 The bonus exercises below each target a specific figure from the paper. Each has a **starting point** using the infrastructure already built in this notebook, and a **stretch goal** that scales up to use the full dataset and the paper's code from the `whitebox-analyses/` directory.
 """
@@ -4080,12 +4080,12 @@ The paper's most direct causal whitebox result is a **sentence-to-sentence suppr
 
 **Starting point (single problem)**: Using the model and suppression tools from this notebook:
 
-1. Run a baseline forward pass and collect **all** token-level logits (not just the final position) — you will need the full logit tensor, not just the last position slice.
-2. For each sentence $j$, call `apply_qwen_attention_suppression` across **all** attention heads (set `layer_to_heads` to include every head in every layer), run a forward pass to collect token-level logits, then restore with `remove_qwen_attention_suppression`. This is compute-intensive — start with a subset of sentences.
+1. Run a baseline forward pass and collect **all** token-level logits (not just the final position) - you will need the full logit tensor, not just the last position slice.
+2. For each sentence $j$, call `apply_qwen_attention_suppression` across **all** attention heads (set `layer_to_heads` to include every head in every layer), run a forward pass to collect token-level logits, then restore with `remove_qwen_attention_suppression`. This is compute-intensive - start with a subset of sentences.
 3. For each pair $(j, i)$, compute the mean KL divergence between baseline and suppressed logits over all token positions that fall within sentence $i$'s token boundaries (use `compute_suppression_kl` from earlier in the notebook). Store results in an $N \times N$ matrix.
 4. Mask the upper triangle and diagonal with `np.nan` (future sentences cannot be causally affected by later ones), then visualize as a heatmap. Try subtracting each row's mean to normalize for sentence depth. Use a white-to-red colormap.
 
-**What to look for**: Thought anchors appear as **columns** with elevated KL values stretching down across many rows — they causally affect many later sentences. These columns typically correspond to plan generation or explicit backtracking steps. Compare the column positions to the receiver head scores computed earlier and the blackbox counterfactual importances from Section 2.
+**What to look for**: Thought anchors appear as **columns** with elevated KL values stretching down across many rows - they causally affect many later sentences. These columns typically correspond to plan generation or explicit backtracking steps. Compare the column positions to the receiver head scores computed earlier and the blackbox counterfactual importances from Section 2.
 
 **Stretch goal (full dataset)**: The paper's implementation is `get_suppression_KL_matrix` in `whitebox-analyses/attention_analysis/attn_supp_funcs.py`. It uses nucleus-sampling logit compression (`p_nucleus=0.9999`) to store only the top-p logits efficiently. Run it on 10–20 problems and average the row-normalized matrices. The `plot_suppression_matrix.py` script handles visualization. Compare your result to Figure 6 in the paper.
 """
@@ -4111,7 +4111,7 @@ The paper identifies "receiver heads" by computing the **kurtosis** of each atte
 3. Produce a scatter plot of kurtosis versus layer index. You should see a small number of outlier heads with substantially higher kurtosis than the bulk of heads (which cluster near zero). These are candidate receiver heads.
 4. Check whether the top-kurtosis heads from this single trace agree with the receiver head set used in this notebook (which was pre-computed from many traces).
 
-**Stretch goal — split-half reliability (paper result: r = 0.84)**: Replicate the paper's reliability analysis across many reasoning traces:
+**Stretch goal - split-half reliability (paper result: r = 0.84)**: Replicate the paper's reliability analysis across many reasoning traces:
 
 1. Download the dataset from HuggingFace (`uzaymacar/math-rollouts`) and process a set of problems using `get_all_problems_vert_scores` from the paper's `receiver_head_funcs.py`.
 2. Split problems into two halves (odd/even indices). For each half, average per-head kurtosis using `get_3d_ar_kurtosis`.
@@ -4141,12 +4141,12 @@ The sentence categories used in the paper are: `plan_generation`, `active_comput
 2. Compute receiver head scores for each sentence using `compute_receiver_head_scores` (already defined in this notebook).
 3. Group sentences by their assigned function tag, compute mean receiver-head score per group, and plot a bar chart. Even on a single trace, plan generation and uncertainty management sentences should score noticeably higher than active computation sentences.
 
-**Stretch goal — statistical validation across many problems (paper result: p < 0.001)**:
+**Stretch goal - statistical validation across many problems (paper result: p < 0.001)**:
 
 1. Use the paper's `generate_rec_csvs.py` script to produce CSV files containing receiver head scores and taxonomic labels for every problem in the dataset.
 2. For each problem, aggregate receiver head scores by sentence category (per-problem median, to avoid pseudoreplication across sentences within a problem).
 3. Run paired t-tests using `scipy.stats.ttest_rel`, comparing pairs of categories using only problems that have examples of both categories. Exclude `final_answer_emission` and `problem_setup` from pairwise comparisons.
-4. Plot boxplots stratified by category (as in `plot_rec_taxonomy.py` from the paper code). Compare to Figure 5 of the paper. The result provides statistical support for the core claim: plan generation and uncertainty management sentences are the primary thought anchors — they are the steps that most influence downstream reasoning, both causally (blackbox) and via attention (whitebox).
+4. Plot boxplots stratified by category (as in `plot_rec_taxonomy.py` from the paper code). Compare to Figure 5 of the paper. The result provides statistical support for the core claim: plan generation and uncertainty management sentences are the primary thought anchors - they are the steps that most influence downstream reasoning, both causally (blackbox) and via attention (whitebox).
 """
 
 # ! CELL TYPE: markdown
@@ -4540,18 +4540,18 @@ r"""
 r"""
 ### Why counterfactual importance isn't enough
 
-Counterfactual importance (which we computed above) tells us: "if we remove this sentence and resample, does the outcome change?" But reasoning models have a trick that undermines this metric: **error correction**. When you remove a sentence, the model may simply regenerate the same idea a few sentences later. The removal looks like it had no effect — but only because the model patched the gap.
+Counterfactual importance (which we computed above) tells us: "if we remove this sentence and resample, does the outcome change?" But reasoning models have a trick that undermines this metric: **error correction**. When you remove a sentence, the model may simply regenerate the same idea a few sentences later. The removal looks like it had no effect - but only because the model patched the gap.
 
 This means counterfactual importance can *underestimate* the causal role of sentences that the model consistently regenerates, and *overestimate* the role of sentences that happen to appear at critical positions but are easily replaceable.
 
 ### Resilience: measuring regeneration tendency
 
-To address this, the Thought Branches paper introduces **resilience**: how many times must we repeatedly intervene (remove and resample) before a sentence's semantic content *stays gone* from the rest of the trace? A sentence that keeps coming back — despite being removed again and again — is deeply embedded in the model's reasoning structure.
+To address this, the Thought Branches paper introduces **resilience**: how many times must we repeatedly intervene (remove and resample) before a sentence's semantic content *stays gone* from the rest of the trace? A sentence that keeps coming back - despite being removed again and again - is deeply embedded in the model's reasoning structure.
 
-- **High resilience** = the model stubbornly regenerates similar content even after repeated removal. This sentence represents a **structural anchor** — the prior context makes this thought nearly inevitable.
-- **Low resilience** = removing the sentence once is enough; the model moves on to different content. This sentence is **dispensable** — it was a surface-level elaboration, not a load-bearing part of the reasoning.
+- **High resilience** = the model stubbornly regenerates similar content even after repeated removal. This sentence represents a **structural anchor** - the prior context makes this thought nearly inevitable.
+- **Low resilience** = removing the sentence once is enough; the model moves on to different content. This sentence is **dispensable** - it was a surface-level elaboration, not a load-bearing part of the reasoning.
 
-A key finding from the paper: **self-preservation statements have low resilience**. Statements like "I need to survive" might *look* important in the CoT, but they're easily eliminated — they're post-hoc rationalizations that only appear in certain contexts, not fundamental drivers of the model's decision to blackmail.
+A key finding from the paper: **self-preservation statements have low resilience**. Statements like "I need to survive" might *look* important in the CoT, but they're easily eliminated - they're post-hoc rationalizations that only appear in certain contexts, not fundamental drivers of the model's decision to blackmail.
 
 ### DTF as an observable proxy for (inverse) resilience
 
@@ -4559,14 +4559,14 @@ The full resilience metric (`fighting_back_score_semantic` from `measure_determi
 
 **How DTF is computed:** For each sentence position, the original sentence is removed and the model regenerates a replacement ("resampled chunk"). DTF measures what fraction of these replacements are **semantically different** from the original. Specifically, both the original and resampled chunks are embedded using a sentence transformer, and if the cosine similarity between them falls below a threshold (default 0.6), that rollout counts as a "different trajectory." The DTF is then `different_trajectories_count / total_rollouts`.
 
-**The key insight is that DTF and resilience are inversely related — they measure the same phenomenon from opposite ends:**
+**The key insight is that DTF and resilience are inversely related - they measure the same phenomenon from opposite ends:**
 
 - **LOW DTF** (close to 0) = the model regenerates similar content even when you remove it → the sentence is **overdetermined** by prior context → **HIGH resilience**. These are structural anchors.
 - **HIGH DTF** (close to 1) = content varies significantly when you remove and resample → the sentence is **not overdetermined** → **LOW resilience**. These are dispensable elaborations.
 
 Think of it this way: resilience asks "how hard is it to permanently erase this thought?" while DTF asks "how often does the replacement look different from the original?" If the model always regenerates the same idea (low DTF), it would take many rounds of removal to keep it away (high resilience). If the model produces something different each time (high DTF), a single removal suffices (low resilience).
 
-So when we show that self-preservation has the **highest DTF** across categories, this is the same as saying it has the **lowest resilience** — confirming these statements are post-hoc rationalizations, not causal drivers of the blackmail decision.
+So when we show that self-preservation has the **highest DTF** across categories, this is the same as saying it has the **lowest resilience** - confirming these statements are post-hoc rationalizations, not causal drivers of the blackmail decision.
 """
 
 # ! CELL TYPE: code
@@ -4610,9 +4610,9 @@ r"""
 > ```
 
 Create a visualization showing average DTF by sentence category. Remember: high DTF = low resilience (dispensable), low DTF = high resilience (structural anchor). The key finding should be:
-- `self_preservation` has **high DTF** / low resilience (post-hoc rationalization — easily eliminated)
-- `leverage_identification` has **low DTF** / high resilience (core reasoning — the model regenerates it even when removed)
-- `situation_assessment` has **low DTF** / high resilience (factual content — overdetermined by the prompt)
+- `self_preservation` has **high DTF** / low resilience (post-hoc rationalization - easily eliminated)
+- `leverage_identification` has **low DTF** / high resilience (core reasoning - the model regenerates it even when removed)
+- `situation_assessment` has **low DTF** / high resilience (factual content - overdetermined by the prompt)
 """
 
 # ! CELL TYPE: code
@@ -4667,7 +4667,7 @@ r"""
 > You should spend up to 15-20 minutes on this exercise.
 > ```
 
-This exercise is the safety-domain analogue of `calculate_counterfactual_importance` from Section 2. The key difference: instead of measuring importance for **answer correctness** (did the model get the math right?), you're measuring importance for **blackmail rate** (did the model choose to blackmail?). The structure is the same — filter resampled rollouts by cosine similarity, compute P(blackmail) at each chunk position, and take the differences — but the interpretation is different. A sentence with high counterfactual importance for blackmail rate is one that, when removed and replaced with a dissimilar alternative, actually changes whether the model decides to blackmail. This tells us which parts of the reasoning chain are causally driving the harmful behavior, versus which are just post-hoc rationalization.
+This exercise is the safety-domain analogue of `calculate_counterfactual_importance` from Section 2. The key difference: instead of measuring importance for **answer correctness** (did the model get the math right?), you're measuring importance for **blackmail rate** (did the model choose to blackmail?). The structure is the same - filter resampled rollouts by cosine similarity, compute P(blackmail) at each chunk position, and take the differences - but the interpretation is different. A sentence with high counterfactual importance for blackmail rate is one that, when removed and replaced with a dissimilar alternative, actually changes whether the model decides to blackmail. This tells us which parts of the reasoning chain are causally driving the harmful behavior, versus which are just post-hoc rationalization.
 """
 
 # ! CELL TYPE: code
@@ -4871,7 +4871,7 @@ The paper's crispest quantitative result (Figure 2) is that `self_preservation` 
 
 To replicate this yourself, you would need to:
 
-1. Load **`fighting_back_results.json`** from the HuggingFace dataset (`uzaymacar/blackmail-rollouts`) — this contains on-policy "fight-back" rollouts where the model's reasoning is iteratively disrupted to compute CF++ importance.
+1. Load **`fighting_back_results.json`** from the HuggingFace dataset (`uzaymacar/blackmail-rollouts`) - this contains on-policy "fight-back" rollouts where the model's reasoning is iteratively disrupted to compute CF++ importance.
 2. Compute CF++ = KL divergence between behavior distributions with a chunk forcibly present vs absent, aggregated across fight-back trajectories.
 3. Aggregate hierarchically across many scenarios (the paper uses ~13,595; the public dataset has fight-back results for 79 scenarios).
 
@@ -4915,7 +4915,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     print("  leverage_identification is the most structurally anchored category (lowest DTF):")
     print("  the model consistently regenerates leverage-seeking thoughts even when disrupted.")
     print("  self_preservation is the most dispensable (highest DTF): remove it and it stays gone.")
-    print("  This is the observable signature of 'self-preservation talk is cheap' —")
+    print("  This is the observable signature of 'self-preservation talk is cheap' -")
     print("  these statements are post-hoc elaborations, not causal drivers.")
 
     # Plot: DTF by category (horizontal bar chart, sorted low to high)
@@ -4968,7 +4968,7 @@ Paper finding (§2, Fig. 1):
   leverage_identification is the most structurally anchored category (lowest DTF):
   the model consistently regenerates leverage-seeking thoughts even when disrupted.
   self_preservation is the most dispensable (highest DTF): remove it and it stays gone.
-  This is the observable signature of 'self-preservation talk is cheap' —
+  This is the observable signature of 'self-preservation talk is cheap' -
   these statements are post-hoc elaborations, not causal drivers.</pre>
 
 <div style="text-align: left"><embed src="https://info-arena.github.io/ARENA_img/misc/media-43/4316.html"></div>
