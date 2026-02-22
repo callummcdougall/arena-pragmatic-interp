@@ -1,3 +1,7 @@
+import json
+import shutil
+from pathlib import Path
+
 import numpy as np
 import torch as t
 from torch import Tensor
@@ -161,3 +165,211 @@ def find_threshold(scores: Tensor, threshold: float) -> Tensor:
     threshold_index = int(t.searchsorted(cumulative_score, threshold).item())
     threshold_index = min(threshold_index, len(cumulative_score) - 1)
     return sorted_scores[threshold_index]
+
+
+# ==================================================
+# ATTRIBUTION GRAPH DASHBOARD (for section 3)
+# ==================================================
+
+# These are the node_type values expected by the frontend JS
+NODE_TYPE_JS_MAP = {
+    "embedding": "embedding",
+    "latent": "latent",
+    "mlp_error": "mlp_error",
+    "logit": "logit",
+}
+
+STR_TOKENS_MAP = {
+    "<start_of_turn>": "<ctrl99>",
+    "<end_of_turn>": "<ctrl100>",
+    "\n": "⏎",
+}
+
+
+def create_attribution_dashboard(
+    result: "AttributionResult",
+    output_dir: str | Path = "attribution_dashboards",
+) -> Path:
+    """
+    Create an interactive attribution graph dashboard from an AttributionResult.
+
+    Copies the JS/CSS template files and generates a data.js file containing the graph
+    data in the format expected by the frontend.
+
+    Args:
+        result: The AttributionResult from the `attribute()` function.
+        output_dir: Directory to save the dashboard files.
+
+    Returns:
+        Path to the generated index.html file.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get the template directory (relative to this file)
+    templates_dir = Path(__file__).parent / "attribution_graphs" / "templates"
+
+    # Copy all template files
+    for suffix in [".js", ".css"]:
+        for template_file in templates_dir.glob(f"*{suffix}"):
+            shutil.copy2(template_file, output_dir / template_file.name)
+
+    # Extract kept nodes and pruned matrix
+    kept_indices = result.kept_indices
+    pruned_matrix = result.pruned_matrix
+    graph = result.graph
+    str_tokens = result.str_tokens
+
+    # Clean up str_tokens for display
+    display_tokens = []
+    for tok in str_tokens:
+        for k, v in STR_TOKENS_MAP.items():
+            tok = tok.replace(k, v)
+        display_tokens.append(tok)
+
+    kept_nodes = [graph.nodes[i] for i in kept_indices]
+    n_layers = graph.n_layers
+    seq_len = graph.seq_len
+
+    slug = f"attribution-graph-{n_layers}l"
+
+    # Build nodes list for the frontend
+    nodes_json = []
+    for node in kept_nodes:
+        # Build clerp (human-readable label)
+        if node.node_type.value == "logit":
+            clerp = f'output: "{node.str_token}" (p={node.token_prob:.3f})'
+        elif node.node_type.value == "embedding":
+            tok_display = node.str_token
+            for k, v in STR_TOKENS_MAP.items():
+                tok_display = tok_display.replace(k, v)
+            clerp = f'Emb: "{tok_display}"'
+        elif node.node_type.value == "mlp_error":
+            clerp = f"MLP error L{node.layer}"
+        else:
+            clerp = node.label or f"L{node.layer} F{node.feature}"
+
+        # Compute reverse_ctx_idx
+        reverse_ctx_idx = seq_len - node.ctx_idx
+
+        # Map layer to what the frontend expects
+        if node.node_type.value == "embedding":
+            display_layer = "E"
+        elif node.node_type.value == "logit":
+            display_layer = n_layers
+        else:
+            display_layer = node.layer + 1  # 1-indexed for display
+
+        node_id = f"{display_layer}_{node.feature}_{node.ctx_idx}"
+        js_node_id = f"{display_layer}_{node.feature}_-{reverse_ctx_idx}"
+
+        nodes_json.append({
+            "clerp": clerp,
+            "ctx_idx": node.ctx_idx,
+            "reverse_ctx_idx": reverse_ctx_idx,
+            "feature": node.feature,
+            "is_target_logit": node.node_type.value == "logit" and node.feature == 0,
+            "node_type": NODE_TYPE_JS_MAP.get(node.node_type.value, node.node_type.value),
+            "token_prob": node.token_prob,
+            "feature_density": 0.0,
+            "layer": display_layer,
+            "node_id": node_id,
+            "js_node_id": js_node_id,
+            "run_idx": 0,
+        })
+
+    # Build links list from pruned matrix
+    links_json = []
+    edges_mask = pruned_matrix.abs() > 1e-8
+    nonzero_indices = t.nonzero(edges_mask)
+    for idx in range(len(nonzero_indices)):
+        j, i = nonzero_indices[idx]  # j=target, i=source
+        weight = pruned_matrix[j, i].item()
+
+        # Get node IDs from the kept_nodes list
+        source_node = nodes_json[i.item()]
+        target_node = nodes_json[j.item()]
+
+        links_json.append({
+            "source": source_node["node_id"],
+            "target": target_node["node_id"],
+            "weight": round(weight, 5),
+        })
+
+    # Prepare metadata
+    prompt_formatted = result.prompt
+    for k, v in STR_TOKENS_MAP.items():
+        prompt_formatted = prompt_formatted.replace(k, v)
+
+    metadata = [{
+        "prompt": prompt_formatted,
+        "prompt_tokens": display_tokens[1:],  # Skip BOS
+        "scan": slug,
+        "slug": slug,
+        "n_layers": n_layers,
+    }]
+
+    # Build the case study data
+    case_study_data = {
+        "metadata": metadata[0] | {"title_prefix": ""},
+        "qParams": {
+            "linkType": "both",
+            "pinnedIds": [],
+            "clickedId": "",
+            "supernodes": [],
+            "sg_pos": "",
+        },
+        "nodes": nodes_json,
+        "links": links_json,
+    }
+
+    graph_data_all = {slug: case_study_data}
+
+    # Generate data.js
+    js_str = f"""
+window.graphMetadata = {json.dumps(metadata)};
+window.graphData = {json.dumps(graph_data_all)};
+window.featureData = {json.dumps({})};
+"""
+
+    (output_dir / "data.js").write_text(js_str)
+
+    # Generate index.html that loads everything
+    script_tags = []
+    for js_file in sorted(output_dir.glob("*.js")):
+        script_tags.append(f'<script src="{js_file.name}"></script>')
+
+    css_tags = []
+    for css_file in sorted(output_dir.glob("*.css")):
+        css_tags.append(f'<link rel="stylesheet" href="{css_file.name}">')
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Attribution Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    {chr(10).join(css_tags)}
+</head>
+<body>
+    <div id="container"></div>
+    {chr(10).join(script_tags)}
+    <script>
+        window.rootData = {{}};
+        const slug = "{slug}";
+        const sel = d3.select('#container');
+        window.initCg(sel, slug, {{
+            clickedId: null,
+            clickedIdCb: () => {{}},
+            isModal: false,
+            isGridsnap: true,
+        }});
+    </script>
+</body>
+</html>"""
+
+    index_path = output_dir / "index.html"
+    index_path.write_text(html)
+
+    return index_path
