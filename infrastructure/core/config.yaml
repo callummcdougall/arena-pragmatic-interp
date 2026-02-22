@@ -137,8 +137,9 @@ chapters:
   chapter0_fundamentals:
     title: "Chapter 0: Fundamentals"
     short_title: "Fundamentals"
+    short_description: "Build your foundation in deep learning, from prerequisites through CNNs, optimization, backpropagation, and generative models."
     description: "Build your foundation in deep learning, from prerequisites through CNNs, optimization, backpropagation, and generative models."
-    color: "#4F46E5"
+    color: "#DC2626"
     icon: "foundation"
     header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-01.png"
     sections:
@@ -194,8 +195,9 @@ chapters:
   chapter1_transformer_interp:
     title: "Chapter 1: Transformer Interpretability"
     short_title: "Interpretability"
+    short_description: "Dive deep into language model interpretability, from linear probes and SAEs to circuit analysis and toy models."
     description: "Dive deep into language model interpretability, from linear probes and SAEs to circuit analysis and toy models."
-    color: "#2563EB"
+    color: "#D97706"
     icon: "microscope"
     header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/main/misc/headers/header-14-1.png"
     sections:
@@ -359,6 +361,7 @@ chapters:
   chapter2_rl:
     title: "Chapter 2: Reinforcement Learning"
     short_title: "RL"
+    short_description: "Take a whirlwind tour through RL, starting from tabular learning and Atari, and ending with some of the cutting-edge techniques used in current LLM post-training."
     description: "Take a whirlwind tour through RL, starting from tabular learning and Atari, and ending with some of the cutting-edge techniques used in current LLM post-training."
     color: "#059669"
     icon: "gamepad"
@@ -408,8 +411,9 @@ chapters:
   chapter3_llm_evals:
     title: "Chapter 3: LLM Evaluations"
     short_title: "Evals"
+    short_description: "Learn to build and run evaluations for large language models, including dataset generation and LLM agents."
     description: "Learn to build and run evaluations for large language models, including dataset generation and LLM agents."
-    color: "#D97706"
+    color: "#2563EB"
     icon: "clipboard-check"
     header_image: "https://raw.githubusercontent.com/callummcdougall/computational-thread-art/master/example_images/misc/robot-magnifying-glass.png"
     sections:
@@ -449,8 +453,9 @@ chapters:
   chapter4_alignment_science:
     title: "Chapter 4: Alignment Science"
     short_title: "Alignment Science"
+    short_description: "Apply ML research techniques to study, characterize and control the behaviour of powerful AI systems, from investigating misalignment to understanding chain-of-thought reasoning."
     description: "Apply ML research techniques to study, characterize and control the behaviour of powerful AI systems, from investigating misalignment to understanding chain-of-thought reasoning."
-    color: "#DC2626"
+    color: "#4F46E5"
     icon: "compass"
     header_image: "https://raw.githubusercontent.com/info-arena/ARENA_img/refs/heads/main/img/header-65.png"
     sections:
