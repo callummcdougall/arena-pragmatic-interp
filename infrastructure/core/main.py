@@ -6,7 +6,7 @@ Run from the `infrastructure/core` directory.
 
 Usage:
     python main.py --chapters=4.1
-    python main.py --use_py=true --chapters=1.3.4
+    python main.py --use_py=true --chapters=1.4.2
     python main.py --chapters=4.* --use_py=true --generate_files=false
     python main.py --chapters=4.* --verbose=false --overwrite=true
 """

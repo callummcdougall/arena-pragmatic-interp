@@ -1814,7 +1814,7 @@ r"""
 <pre style="white-space:pre;overflow-x:auto;line-height:normal;font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace">['ACCEPT', ' ACCEPT', 'accept', '_ACCEPT', ' acept', ' Accepted', ' Accept', '.AC', '_accept', ' accept']
 Cosine similarity: 0.1270</pre>
 
-Note that 0.1270 might seem low, but two randomly chosen high-dimensional vectors typically have an extremely low cosine similarity (the expected squared cosine similarity is 1/dim, which in our case is 0.0002). So this cosine sim result would be a red flag even if we didn't have the `top_tokens` result.
+Note that 0.1270 might seem low, but two randomly chosen high-dimensional vectors typically have an extremely low cosine similarity (the expected squared cosine similarity is 1/dim, which in our case is 0.0002), and our small-dataset contrastive method is guaranteed to have a lot of noise. So this cosine similarity result is still a lot larger than we'd expect from random chance.
 """
 
 # ! CELL TYPE: markdown

@@ -545,8 +545,7 @@ def compute_feature_data(
         min_logit = float(logit_effects_centered.min())
         max_logit = float(logit_effects_centered.max())
         title = (
-            "LOGITS<br><span style='color:#666;font-weight:normal'>RANGE ="
-            f" [{min_logit:+.3f}, {max_logit:+.3f}]</span>"
+            f"LOGITS<br><span style='color:#666;font-weight:normal'>RANGE = [{min_logit:+.3f}, {max_logit:+.3f}]</span>"
         )
         logits_hist = hist_from_data(logit_effects_centered, n_logit_hist_bins, title)
 
@@ -582,9 +581,7 @@ def _build_neuronpedia_json(
             "feature": node_js["feature"],
             "layer": node_js["layer"],
             "ctx_idx": node_js["ctx_idx"],
-            "feature_type": NEURONPEDIA_FEATURE_TYPE_MAP.get(
-                node_js["node_type"], node_js["node_type"]
-            ),
+            "feature_type": NEURONPEDIA_FEATURE_TYPE_MAP.get(node_js["node_type"], node_js["node_type"]),
             "jsNodeId": node_js["js_node_id"],
             "clerp": node_js["clerp"],
         }
@@ -604,9 +601,7 @@ def _build_neuronpedia_json(
             "scan": metadata[0]["scan"],
             "prompt_tokens": display_tokens[1:],
             "prompt": prompt_formatted,
-            "feature_details": {
-                "neuronpedia_source_set": "gemmascope-2-transcoders-1b-it"
-            },
+            "feature_details": {"neuronpedia_source_set": "gemmascope-2-transcoders-1b-it"},
         },
         "qParams": {
             "linkType": "both",
@@ -808,9 +803,7 @@ window.featureData = {json.dumps(feature_data)};
             display_tokens=display_tokens,
             prompt_formatted=prompt_formatted,
         )
-        (output_dir / "neuronpedia.json").write_text(
-            json.dumps(neuronpedia_data, indent=2)
-        )
+        (output_dir / "neuronpedia.json").write_text(json.dumps(neuronpedia_data, indent=2))
 
     # Generate index.html that loads everything
     script_tags = []

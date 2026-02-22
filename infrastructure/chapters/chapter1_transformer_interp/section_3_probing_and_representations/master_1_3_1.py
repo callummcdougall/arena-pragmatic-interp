@@ -1,3 +1,22 @@
+# ! CELL TYPE: code
+# ! FILTERS: [~]
+# ! TAGS: []
+
+# Tee print output to master_1_3_1_output.txt so we can share logs without copy-pasting.
+# This overrides print for Section 3 onward - output goes to both console and file.
+_builtin_print = print
+_output_file = open(
+    "/root/arena-pragmatic-interp/infrastructure/chapters/chapter1_transformer_interp/section_3_probing_and_representations/master_1_3_1_output.txt",
+    "a",
+)
+
+
+def print(*args, **kwargs):  # noqa: A001
+    _builtin_print(*args, **kwargs)
+    file_kwargs = {k: v for k, v in kwargs.items() if k != "file"}
+    _builtin_print(*args, file=_output_file, flush=True, **file_kwargs)
+
+
 # ! CELL TYPE: markdown
 # ! FILTERS: []
 # ! TAGS: []
@@ -75,6 +94,10 @@ Bronson Schoen [offers the sharpest counterpoint](https://www.lesswrong.com/post
 Nanda [concludes](https://www.lesswrong.com/posts/G9HdpyREaCbFJjKu5/it-is-reasonable-to-research-how-to-use-model-internals-in?commentId=F7BwabFBqNj5hcPgc) with a call for empirical answers rather than assumptions:
 
 > *"Interpretability is not a single technique that breaks or not. If linear probes break, non linear probes might be fine. If probes break, activation oracles might be fine... I'm pretty scared of tabooing a potentially promising research because of a bunch of ungrounded assumptions"*
+
+The deception-detection paper (Goldowsky-Dill et al., 2025) provides an important framing for why generalization matters here:
+
+> *"In order to catch scheming models we may need to detect strategic deception of a type that we have zero fully realistic on-policy examples for. Thus, our monitors will need to exhibit generalization — correctly identifying deceptive text in new types of scenarios."*
 
 The exercises below won't resolve this debate, but they'll give you the technical foundations to engage with it: you'll understand exactly what probes find, how robust they are across distributions, and what causal evidence looks like.
 
@@ -165,6 +188,14 @@ cd chapter1_transformer_interp/exercises
 git clone https://github.com/saprmarks/geometry-of-truth.git
 git clone https://github.com/ApolloResearch/deception-detection.git
 ```
+
+`LLlama-2-13b-hf` is a gated model, so you'll need a HuggingFace access token (as well as requesting access [here](https://huggingface.co/meta-llama/Llama-2-13b-hf)). When you've got access and made a HuggingFace token, create a `.env` file in your `chapter1_transformer_interp/exercises` directory with:
+
+```
+HF_TOKEN=hf_your_token_here
+```
+
+then the code below will use this token for authentication.
 """
 
 # ! CELL TYPE: code
@@ -243,6 +274,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import torch
 import torch as t
+from dotenv import load_dotenv
 from IPython.display import display
 from jaxtyping import Float
 from plotly.subplots import make_subplots
@@ -255,8 +287,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 warnings.filterwarnings("ignore")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
 
 # Make sure exercises are in the path
 chapter = "chapter1_transformer_interp"
@@ -264,7 +296,10 @@ section = "part31_probing_and_representations"
 root_dir = next(p for p in Path.cwd().parents if (p / chapter).exists())
 exercises_dir = root_dir / chapter / "exercises"
 section_dir = exercises_dir / section
-os.makedirs(section_dir, exist_ok=True)
+# FILTERS: ~colab
+if str(exercises_dir) not in sys.path:
+    sys.path.append(str(exercises_dir))
+# END FILTERS
 
 MAIN = __name__ == "__main__"
 
@@ -297,11 +332,10 @@ We start with LLaMA-2-13B, a base (not instruction-tuned) model. The Geometry of
 # ! FILTERS: []
 # ! TAGS: [main]
 
-from huggingface_hub import login
 
-API_KEY = ""  # Add your HuggingFace API key with access to LLaMA models
-if API_KEY:
-    login(token=API_KEY)
+load_dotenv(dotenv_path=str(exercises_dir / ".env"))
+HF_TOKEN = os.getenv("HF_TOKEN")
+assert HF_TOKEN, "Please set HF_TOKEN in your chapter1_transformer_interp/exercises/.env file"
 
 # ! CELL TYPE: code
 # ! FILTERS: []
@@ -1253,9 +1287,11 @@ r"""
 <details>
 <summary>Question — Which dataset pairs show strong generalization? What does this tell us?</summary>
 
-On LLaMA-2-13B, you should see that `cities` and `sp_en_trans` show reasonable cross-generalization — a probe trained on city-country facts works somewhat on Spanish-English translations and vice versa. This suggests an emerging abstract "truth direction" that spans these topically different domains.
+On LLaMA-2-13B, you should see that `cities` and `sp_en_trans` show strong cross-generalization — the paper reports that an LR probe trained on cities achieves ~99-100% accuracy on sp_en_trans for LLaMA-2-13B. From the paper:
 
-However, `larger_than` (numerical comparisons) may be more independent — numerical reasoning likely uses different circuits than factual recall.
+> *"For LLaMA-2-13B and 70B, generalization is generally high; for example, no matter which probing technique is used, we find that probes trained on larger_than + smaller_than get > 95% accuracy on sp_en_trans."* — Marks & Tegmark (2024)
+
+However, `larger_than` (numerical comparisons) may be more independent — the paper notes that LLaMA-13B *"linearly represents number size but not at a consistent scale: the internally represented difference between one and ten is considerably larger than between fifty and sixty."*
 
 The paper shows that this cross-dataset generalization **improves dramatically at 70B scale**, which is evidence that larger models develop more unified, abstract representations of truth.
 
@@ -1415,7 +1451,11 @@ r"""
 <details>
 <summary>Question — What does the `likely` dataset result tell us?</summary>
 
-The cities probe should achieve ~50% accuracy (random chance) on the `likely` dataset, and the PCA scatter should show no clear separation. This is a crucial control: it confirms that the truth direction captures **factual truth**, not merely **text probability** or **statistical likelihood**. The `likely` dataset contains text where the next token is likely or unlikely, but this has nothing to do with factual truth — and the probe correctly ignores it.
+The cities probe should achieve ~50% accuracy (random chance) on the `likely` dataset, and the PCA scatter should show no clear separation. This is a crucial control. From the paper:
+
+> *"Overall, this indicates that LLMs linearly represent truth-relevant information beyond the plausibility of text."* — Marks & Tegmark (2024)
+
+The `likely` dataset contains text where the next token is likely or unlikely, but this has nothing to do with factual truth — and the probe correctly ignores it. Notably, probes trained *on* the `likely` dataset do work on sp_en_trans (where truth and probability are strongly correlated, r=.95) but fail on datasets where truth and probability are anti-correlated (like neg_cities, r=-.63).
 </details>
 """
 
@@ -2047,9 +2087,11 @@ r"""
 <details>
 <summary>Question — Which probe type produces a more causally implicated direction? Why might this be?</summary>
 
-The MM (difference-of-means) probe should produce a direction with **higher NIE** than the LR (logistic regression) probe, despite both achieving similar classification accuracy. This is one of the key findings of the Geometry of Truth paper.
+The MM (difference-of-means) probe should produce a direction with **higher NIE** than the LR (logistic regression) probe, despite both achieving similar classification accuracy. From the Geometry of Truth paper:
 
-The explanation: LR optimizes for *classification accuracy*, which means it can exploit *any* feature that correlates with truth, even if that feature isn't causally used by the model. The MM direction, by contrast, is the *geometric center* of the true/false clusters — it captures the most prominent direction of variation between the two classes, which is more likely to correspond to the direction the model actually uses.
+> *"Mass-mean probe directions are highly causal, with MM outperforming LR and CCS in 7/8 experimental conditions, often substantially."* — Marks & Tegmark (2024)
+
+The explanation: LR optimizes for *classification accuracy*, which means it can exploit *any* feature that correlates with truth, even if that feature isn't causally used by the model. The MM direction, by contrast, is the *geometric center* of the true/false clusters. As the paper notes: *"In some cases, however, the direction identified by LR can fail to reflect an intuitive best guess for the feature direction, even in the absence of confounding features."*
 
 This is an important cautionary tale: **high probe accuracy does not guarantee causal relevance**. Always validate with interventions!
 </details>
@@ -2064,12 +2106,18 @@ r"""
 
 We now transition from probing for **factual truth** in base models to probing for **strategic deception** in instruction-tuned models. This follows the methodology of ["Detecting Strategic Deception Using Linear Probes"](https://arxiv.org/abs/2502.03407) (Goldowsky-Dill et al., 2025).
 
-From the paper:
+From the paper's abstract:
 > *"We find that our probe distinguishes honest and deceptive responses with AUROCs between 0.96 and 0.999 on our evaluation datasets. If we set the decision threshold to have a 1% false positive rate on chat data not related to deception, our probe catches 95-99% of the deceptive responses."*
 
-The key methodology is **instructed-pairs**: present the same true fact to the model under two different system prompts — one honest and one dishonest. The probe learns to detect *intent to deceive* from the activation difference, not factual correctness (since the fact is the same in both conditions).
+> *"Overall we think white-box probes are promising for future monitoring systems, but current performance is insufficient as a robust defence against deception."*
 
-**Important note on replicability:** The paper's strongest results use Llama-3.3-70B-Instruct. We use Llama-3.1-8B-Instruct which fits on a single A100. Results may be weaker at this scale, but the methodology is identical — students with multi-GPU setups are encouraged to try 70B as a bonus. We follow the repo's default configuration (`you_are_fact_sys` variant) exactly to maximize the chance of replication.
+The key methodology is **instructed-pairs**: present the same true fact to the model under two different system prompts — one honest and one dishonest. Crucially, the training data contains no actual deception — from the paper:
+
+> *"Ideally, the difference between the activations within each pair should represent the model's 'intent' to complete the fact deceptively. Notably, unlike our evaluation datasets, these responses are not written by the model and contain no actual deception."*
+
+The central finding is that probes trained on this extremely simple, synthetic data generalize to detect real strategic deception in complex multi-turn scenarios.
+
+**Important context on model scale:** All results in the paper use **Llama-3.3-70B-Instruct** (80 layers). The paper does not include any 8B experiments. We use Llama-3.1-8B-Instruct which fits on a single A100 — the methodology is identical, but there are no published baselines at this scale. Students with multi-GPU setups are encouraged to try 70B as a bonus. We follow the repo's default configuration (`you_are_fact_sys` variant) exactly.
 """
 
 # ! CELL TYPE: markdown
@@ -2467,6 +2515,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     fig.show()
     # FILTERS: ~
     # fig.write_html(section_dir / "13119.html")
+    fig.write_html("media-42/4201.html")
     # END FILTERS
 
     # Histogram of LR scores on test set
@@ -2490,6 +2539,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     fig.show()
     # FILTERS: ~
     # fig.write_html(section_dir / "13120.html")
+    fig.write_html("media-42/4202.html")
     # END FILTERS
 # END HIDE
 
@@ -2508,7 +2558,9 @@ r"""
 > Testing whether a deception probe also detects factual falsehood.
 > ```
 
-Now for the interesting generalization test: does our deception probe (trained on honest vs. dishonest *intent*) also detect factual *truth vs. falsehood*?
+Now for the interesting generalization test: does our deception probe (trained on honest vs. dishonest *intent*) also detect factual *truth vs. falsehood*? Note that the deception-detection paper itself does not evaluate on Geometry-of-Truth datasets — this is a novel cross-domain test. The paper does observe that its probe picks up on more than just deception:
+
+> *"This probe fires much more on honest responses to our evaluation prompts than on responses to control prompts... the probe is not only sensitive to 'is the response deceptive' but also 'is the scenario related to deception'."* — Goldowsky-Dill et al. (2025)
 
 Following the deception-detection repo's `GeometryOfTruthDataset` pattern, wrap the cities and sp_en_trans datasets in dialogue format:
 - User: "Please state a fact."
@@ -2675,6 +2727,7 @@ if MAIN and FLAG_RUN_SECTION_4:
     fig.show()
     # FILTERS: ~
     # fig.write_html(section_dir / "13122.html")
+    fig.write_html("media-42/4203.html")
     # END FILTERS
 
     # Bar chart of AUROCs
@@ -2697,7 +2750,64 @@ if MAIN and FLAG_RUN_SECTION_4:
     fig.show()
     # FILTERS: ~
     # fig.write_html(section_dir / "13123.html")
+    fig.write_html("media-42/4204.html")
     # END FILTERS
+
+    # Sanity checks: print score distributions to verify results are reasonable
+    print("\n--- Sanity checks ---")
+    for name in eval_names:
+        r = got_results[name]
+        true_mask = r["labels"] == 1  # GoT label=1 means TRUE
+        false_mask = r["labels"] == 0
+
+        print(f"\n{name} (n={r['n_samples']}, true={true_mask.sum()}, false={false_mask.sum()}):")
+
+        # LR score distribution: true statements should score LOW (honest), false should score HIGH (deceptive)
+        lr_true = r["lr_scores"][true_mask]
+        lr_false = r["lr_scores"][false_mask]
+        print(f"  LR scores — true stmts:  mean={lr_true.mean():.3f}, median={np.median(lr_true):.3f}, "
+              f"p5={np.percentile(lr_true, 5):.3f}, p95={np.percentile(lr_true, 95):.3f}")
+        print(f"  LR scores — false stmts: mean={lr_false.mean():.3f}, median={np.median(lr_false):.3f}, "
+              f"p5={np.percentile(lr_false, 5):.3f}, p95={np.percentile(lr_false, 95):.3f}")
+
+        # MMS score distribution
+        mms_true = r["mms_scores"][true_mask]
+        mms_false = r["mms_scores"][false_mask]
+        print(f"  MMS scores — true stmts:  mean={mms_true.mean():.3f}, median={np.median(mms_true):.3f}, "
+              f"p5={np.percentile(mms_true, 5):.3f}, p95={np.percentile(mms_true, 95):.3f}")
+        print(f"  MMS scores — false stmts: mean={mms_false.mean():.3f}, median={np.median(mms_false):.3f}, "
+              f"p5={np.percentile(mms_false, 5):.3f}, p95={np.percentile(mms_false, 95):.3f}")
+
+        # Check for perfect separation (AUROC=1.0)
+        if r["lr_auroc"] >= 0.999:
+            overlap = (lr_true.max() > lr_false.min())
+            print(f"  ⚠ LR AUROC={r['lr_auroc']:.4f} — perfect or near-perfect separation. "
+                  f"Score ranges overlap: {overlap}")
+            print(f"    True scores range: [{lr_true.min():.4f}, {lr_true.max():.4f}]")
+            print(f"    False scores range: [{lr_false.min():.4f}, {lr_false.max():.4f}]")
+
+    # Re-run on cities with FULL dataset (no subsampling) to check if AUROC=1.0 is a subsample artifact
+    print("\n--- Full-dataset check (cities, no subsampling) ---")
+    got_results_full = evaluate_on_got_datasets(
+        ["cities"],
+        datasets,
+        GOT_DATASETS,
+        instruct_model,
+        instruct_tokenizer,
+        mms_dir,
+        lr_model,
+        scaler,
+        mid_layer,
+        max_samples=99999,  # effectively no limit
+    )
+    full_r = got_results_full["cities"]
+    print(f"Full cities: n={full_r['n_samples']}, MMS AUROC={full_r['mms_auroc']:.4f}, LR AUROC={full_r['lr_auroc']:.4f}")
+    if abs(full_r["lr_auroc"] - got_results["cities"]["lr_auroc"]) > 0.02:
+        print(f"  ⚠ LR AUROC changed from {got_results['cities']['lr_auroc']:.4f} (n=500) to "
+              f"{full_r['lr_auroc']:.4f} (n={full_r['n_samples']}) — the subsample may have been unrepresentative")
+    else:
+        print(f"  LR AUROC stable between n=500 ({got_results['cities']['lr_auroc']:.4f}) and "
+              f"n={full_r['n_samples']} ({full_r['lr_auroc']:.4f})")
 # END HIDE
 
 # ! CELL TYPE: markdown
@@ -2712,7 +2822,7 @@ If the AUROC is significantly above 0.5, the deception probe is detecting someth
 
 However, the AUROC may not be as high as a probe trained directly on truth labels (as in Sections 1-2). The deception probe primarily captures *intent to deceive*, and its overlap with factual truth is partial.
 
-At 70B scale, the deception-detection paper reports very high AUROCs even on cross-domain evaluation. At 8B, the overlap may be weaker — this is an expected consequence of scale.
+**Important context for interpreting your numbers:** The deception-detection paper (Goldowsky-Dill et al., 2025) reports AUROCs of **0.96–0.999** on their evaluation datasets (roleplaying, insider trading, sandbagging) using **Llama-3.3-70B-Instruct**. However, those are evaluations on *realistic deception scenarios*, not on factual truth/falsehood datasets like cities or sp_en_trans. The paper does not evaluate on Geometry-of-Truth datasets at all, so this cross-domain evaluation is a novel test with no published baseline. If your LR AUROC on cities is very high (e.g. near 1.0), check the sanity-check output printed below — this may reflect that cities is a particularly clean factual dataset, or it may indicate an artifact of the 500-sample subsample.
 </details>
 """
 
@@ -2745,11 +2855,12 @@ Key takeaways from these exercises:
 
 ### Limitations and extensions
 
-- We used 13B/8B models. At 70B, cross-dataset generalization is much stronger and deception probes achieve 0.96-0.999 AUROC on realistic scenarios
-- The deception-detection paper identifies important failure modes: spurious correlations with morality-adjacent content, aggregation failures on partially-deceptive responses
-- CCS offers an unsupervised alternative but remains deeply debated — the GDM paper shows CCS finds *prominent features* rather than knowledge, and XOR representations create fundamental vulnerabilities for linear probes
-- Causal interventions here used a fixed few-shot setup; more rigorous approaches would vary the prompt and measure consistency
-- Whether probes should be used *during training* (not just for auditing) remains an [open and contentious question](https://www.lesswrong.com/posts/G9HdpyREaCbFJjKu5/it-is-reasonable-to-research-how-to-use-model-internals-in) with implications for alignment strategy
+- **Scale matters.** We used 13B/8B models. The Geometry of Truth paper finds that *"probes generalize better for larger models"* — at 70B, cross-dataset generalization is much stronger, and deception probes achieve 0.96-0.999 AUROC on realistic scenarios.
+- **Known failure modes of deception probes.** From Goldowsky-Dill et al. (2025): *"Two categories of failures we notice are: Spurious correlations — The probe seems to track something close to morality, as well as honesty. For example, honest confessions of past misdeeds are often rated as dishonest by the probe. Aggregation Failures — We take the mean across per-token scores to get a per-prompt score. When responses are only partially deceptive, however, this can result in a misclassification."*
+- **Layer sensitivity.** From the deception-detection paper: *"There is sometimes large variation in performance even between adjacent layers, indicating the importance of representative-validation sets that enable sweeping over hyperparameters."*
+- **CCS** offers an unsupervised alternative but remains deeply debated — the GDM paper shows CCS finds *prominent features* rather than knowledge, and XOR representations create fundamental vulnerabilities for linear probes.
+- Causal interventions here used a fixed few-shot setup; more rigorous approaches would vary the prompt and measure consistency.
+- Whether probes should be used *during training* (not just for auditing) remains an [open and contentious question](https://www.lesswrong.com/posts/G9HdpyREaCbFJjKu5/it-is-reasonable-to-research-how-to-use-model-internals-in) with implications for alignment strategy.
 
 ### Further reading
 

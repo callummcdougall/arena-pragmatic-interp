@@ -4922,9 +4922,7 @@ def run_steering_experiment(
     results = []
     for coeff in tqdm(coefficients, desc="Steering coefficients"):
         for question in questions:
-            response = generate_with_steerer(
-                model, tokenizer, question, steering_vector, layer, coeff, max_new_tokens
-            )
+            response = generate_with_steerer(model, tokenizer, question, steering_vector, layer, coeff, max_new_tokens)
             results.append({"coefficient": coeff, "question": question, "response": response, "score": None})
 
     # Step 2: Batch-score all responses with the autorater
@@ -5563,10 +5561,10 @@ This means that if you finetune a model on some dataset and measure how its acti
 The exercises in Section 4 of this notebook cover inference-time monitoring via projection, but never touch finetuning monitoring. If you want to explore this direction, you can use the infrastructure from the persona vectors codebase to run the full finetuning monitoring pipeline:
 
 - **[`training.py`](https://github.com/safety-research/persona_vectors/blob/main/training.py)** implements LoRA finetuning with [Unsloth](https://github.com/unslothai/unsloth) for efficient training on Qwen2.5-7B
-- **[`eval/cal_projection.py`](https://github.com/safety-research/persona_vectors/blob/main/eval/cal_projection.py)** computes the finetuning shift — the projection of the activation difference (finetuned minus base model) onto the persona vector
+- **[`eval/cal_projection.py`](https://github.com/safety-research/persona_vectors/blob/main/eval/cal_projection.py)** computes the finetuning shift - the projection of the activation difference (finetuned minus base model) onto the persona vector
 - **[`dataset.zip`](https://github.com/safety-research/persona_vectors/blob/main/dataset.zip)** contains 8 categories of training data (Evil, Sycophancy, Hallucination, Medical, Code, GSM8K, Math, Opinions), each in 3 versions (Normal, Mistake I, Mistake II)
 
-The basic workflow is: (1) finetune Qwen2.5-7B on a "normal" dataset and on a trait-eliciting dataset using LoRA, (2) extract the mean hidden state at the last prompt token for both the base and finetuned models across evaluation prompts, (3) project the difference onto your persona vectors from Section 4, and (4) compare the projection shift against actual trait expression scores. You should be able to reproduce the paper's Figure 6 — a scatter plot showing that finetuning shift along the persona vector strongly predicts behavioral trait expression. You can also explore whether training on EM-like datasets (e.g., flawed math) produces detectable shifts along seemingly unrelated trait vectors (e.g., evil).
+The basic workflow is: (1) finetune Qwen2.5-7B on a "normal" dataset and on a trait-eliciting dataset using LoRA, (2) extract the mean hidden state at the last prompt token for both the base and finetuned models across evaluation prompts, (3) project the difference onto your persona vectors from Section 4, and (4) compare the projection shift against actual trait expression scores. You should be able to reproduce the paper's Figure 6 - a scatter plot showing that finetuning shift along the persona vector strongly predicts behavioral trait expression. You can also explore whether training on EM-like datasets (e.g., flawed math) produces detectable shifts along seemingly unrelated trait vectors (e.g., evil).
 
 This is feasible on a single A100 since Qwen2.5-7B fits comfortably in memory (~14-20 GB VRAM) and LoRA finetuning with Unsloth is efficient. With pre-computed persona vectors from Section 4, the full experiment (finetuning + evaluation) can be completed in ~30-45 minutes.
 """
@@ -5582,7 +5580,7 @@ Beyond merely *monitoring* finetuning-induced shifts, the Persona Vectors paper 
 
 > We explore a novel approach where we proactively steer the model *toward* the undesired persona direction during training, relieving the model of the need to shift in that direction to fit the training data. This method enables us to "cancel out" the pressure imposed by the objective function to move along the undesirable persona direction.
 
-This counterintuitive approach — adding the bad direction during training rather than subtracting it — has an important advantage over post-hoc inference-time steering: it better preserves the model's general capabilities.
+This counterintuitive approach - adding the bad direction during training rather than subtracting it - has an important advantage over post-hoc inference-time steering: it better preserves the model's general capabilities.
 
 > Preventative steering better preserves the model's general capabilities compared to inference-time steering, as measured by MMLU accuracy.
 
@@ -5595,7 +5593,7 @@ The existing "Training-time steering (conceptual)" exercise above covers this on
 - **[`training.py`](https://github.com/safety-research/persona_vectors/blob/main/training.py)** implements both `steering_intervention` (additive: `act = act + steering_coef * Q`) and `projection_intervention` (ablation/CAFT: `act = act - (act @ Q) @ Q.T`)
 - **[`configs/train_instruct_7b_steer.json`](https://github.com/safety-research/persona_vectors/blob/main/configs/train_instruct_7b_steer.json)** provides a ready-made config for running finetuning with steering interventions
 
-The experiment would be: (1) finetune Qwen2.5-7B on a trait-eliciting dataset (e.g., Evil II) *without* any intervention as a baseline, (2) finetune again with `steering_intervention` enabled at various steering coefficients, (3) compare trait expression scores and MMLU accuracy between the two. You should be able to reproduce the paper's Figure 7B — showing that preventative steering limits trait acquisition while preserving general capabilities. As a further extension, you could try the `projection_intervention` (CAFT) mode and verify that it works for evil/sycophancy but not for hallucination.
+The experiment would be: (1) finetune Qwen2.5-7B on a trait-eliciting dataset (e.g., Evil II) *without* any intervention as a baseline, (2) finetune again with `steering_intervention` enabled at various steering coefficients, (3) compare trait expression scores and MMLU accuracy between the two. You should be able to reproduce the paper's Figure 7B - showing that preventative steering limits trait acquisition while preserving general capabilities. As a further extension, you could try the `projection_intervention` (CAFT) mode and verify that it works for evil/sycophancy but not for hallucination.
 """
 
 # ! CELL TYPE: markdown
