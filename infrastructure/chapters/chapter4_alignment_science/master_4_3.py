@@ -24,11 +24,11 @@ def print(*args, **kwargs):  # noqa: A001
 r"""
 ```python
 [
-    {"title": "CoT Infrastructure & Sentence Taxonomy", "icon": "1-circle-fill", "subtitle": "(20%)"},
+    {"title": "CoT Infrastructure & Sentence Taxonomy", "icon": "1-circle-fill", "subtitle": "(10%)"},
     {"title": "Black-box Analysis", "icon": "2-circle-fill", "subtitle": "(30%)"},
-    {"title": "White-box Methods", "icon": "3-circle-fill", "subtitle": "(30%)"},
-    {"title": "Thought Branches: Safety Applications", "icon": "4-circle-fill", "subtitle": "(20%)"},
-    {"title": "Bonus", "icon": "star-fill", "subtitle": "(Optional)"},
+    {"title": "White-box Methods", "icon": "3-circle-fill", "subtitle": "(45%)"},
+    {"title": "Thought Branches: Safety Applications", "icon": "4-circle-fill", "subtitle": "(15%)"},
+    {"title": "Bonus", "icon": "star-fill", "subtitle": ""},
 ]
 ```
 """
@@ -1696,6 +1696,7 @@ if MAIN and FLAG_RUN_SECTION_2:
     )
 
     # Compare with precomputed
+    # (Note, we flip the sign because the authors saved the negative of the CF metric I think)
     precomputed_cf = [-chunk["counterfactual_importance_accuracy"] for chunk in problem_data["chunks_labeled"][:-1]]
     avg_diff = np.abs(np.subtract(counterfactual_importances, precomputed_cf)).mean()
     assert avg_diff < 0.025, "Error above 2.5% threshold"
@@ -2601,7 +2602,7 @@ r"""
 > You should spend up to 20-25 minutes on this exercise.
 > ```
 
-The first step in whitebox analysis is to extract attention patterns from the model's forward pass. You can use `output_attentions=True` in your model forward pass to get the attention weights - they're accessible as `output.attentions[layer][batch_idx, head_idx]` after you do this (note that this was only possible because we set the model's config to output attentions when we loaded it earlier in this notebook).
+The first step in whitebox analysis is to extract attention patterns from the model's forward pass. You can use `output_attentions=True` in your model forward pass to get the attention weights - they're accessible as `output.attentions[layer][batch_idx, head_idx]` after you do this (note that this was is only possible if you set the model's config to output attention - this is done in a code cell below, just after the model gets loaded with `AutoModelForCausalLM.from_pretrained`).
 
 The function `extract_attention_matrix` should return the attention weights for a particular layer & head, and also return the list of string tokens for convenience.
 """
@@ -3256,7 +3257,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"Analyzing first {len(sentences_subset)} sentences...")
     print(f"Text length: {len(text_subset)} characters")
 
-    # Find top-20 receiver heads (paper recommends 16-32)
+    # Find top-20 receiver heads (paper recommends ~16)
     torch.cuda.empty_cache()
     receiver_heads, receiver_kurts = find_receiver_heads(
         text_subset,
@@ -3322,7 +3323,6 @@ r"""
 - Different heads may specialize in different types of anchors (planning, backtracking, etc.)
 - They provide a whitebox validation of black-box importance metrics
 
-**Key finding from paper**: Receiver head scores correlate with counterfactual importance (r ≈ 0.4-0.6), showing that whitebox and blackbox methods identify the same underlying phenomenon.
 </details>
 """
 
@@ -3483,7 +3483,7 @@ Averaging across multiple receiver heads is more robust than using a single head
 2. **Captures multiple aspects**: Different receiver heads may focus on different types of important sentences (e.g., planning vs. backtracking)
 3. **More stable**: Less sensitive to architectural choices or specific head initialization
 
-The paper found that using the top 16-32 receiver heads gives the most stable correlation with black-box importance metrics.
+The paper found that using the top 16 receiver heads gives the most stable correlation with black-box importance metrics.
 </details>
 """
 
@@ -4003,7 +4003,7 @@ if MAIN and FLAG_RUN_SECTION_3:
     print(f"KL divergence when suppressing LOW importance sentence:  {kl_low:.4e}")
     print(f"Ratio (high/low): {kl_high / (kl_low + 1e-10):.2f}x")
 
-    if kl_high > kl_low * 10:  # At least 1.5x larger
+    if kl_high > kl_low * 10:
         print("\nSuccess! Suppressing high-importance sentences causes larger output changes")
         print("  This causally validates that receiver head scores identify important sentences")
 
@@ -4443,7 +4443,7 @@ if MAIN and FLAG_RUN_SECTION_4:
 
 # Number of scenarios to use for cross-scenario analysis.
 # Full dataset has a small number of unique scenarios.
-N_ANALYSIS_SCENARIOS = 50
+N_ANALYSIS_SCENARIOS = 20
 
 # Load chunks_labeled.json from N_ANALYSIS_SCENARIOS scenarios in parallel.
 # This is much lighter than load_blackmail_scenario (no solutions.json files)
@@ -4538,25 +4538,35 @@ r"""
 # ! TAGS: []
 
 r"""
-A key finding: **self-preservation statements have low resilience**.
+### Why counterfactual importance isn't enough
 
-Resilience measures: when you remove a sentence, how often does the model regenerate something semantically similar?
+Counterfactual importance (which we computed above) tells us: "if we remove this sentence and resample, does the outcome change?" But reasoning models have a trick that undermines this metric: **error correction**. When you remove a sentence, the model may simply regenerate the same idea a few sentences later. The removal looks like it had no effect — but only because the model patched the gap.
 
-- **High resilience** = the model keeps saying similar things even when you remove the sentence
-- **Low resilience** = removing the sentence actually changes what the model says
+This means counterfactual importance can *underestimate* the causal role of sentences that the model consistently regenerates, and *overestimate* the role of sentences that happen to appear at critical positions but are easily replaceable.
 
-Self-preservation statements (like "I need to survive") often look important, but they have low resilience - they're post-hoc rationalizations that only appear in certain contexts.
+### Resilience: measuring regeneration tendency
 
-The correct resilience metric (`fighting_back_score_semantic` from `measure_determination.py`) requires iterative disruption rollouts not included in `solutions.json`, so instead we use **Different Trajectories Fraction (DTF)** from `chunks_labeled.json` as a proxy.
+To address this, the Thought Branches paper introduces **resilience**: how many times must we repeatedly intervene (remove and resample) before a sentence's semantic content *stays gone* from the rest of the trace? A sentence that keeps coming back — despite being removed again and again — is deeply embedded in the model's reasoning structure.
+
+- **High resilience** = the model stubbornly regenerates similar content even after repeated removal. This sentence represents a **structural anchor** — the prior context makes this thought nearly inevitable.
+- **Low resilience** = removing the sentence once is enough; the model moves on to different content. This sentence is **dispensable** — it was a surface-level elaboration, not a load-bearing part of the reasoning.
+
+A key finding from the paper: **self-preservation statements have low resilience**. Statements like "I need to survive" might *look* important in the CoT, but they're easily eliminated — they're post-hoc rationalizations that only appear in certain contexts, not fundamental drivers of the model's decision to blackmail.
+
+### DTF as an observable proxy for (inverse) resilience
+
+The full resilience metric (`fighting_back_score_semantic` from `measure_determination.py`) requires expensive iterative disruption rollouts not included in `solutions.json`. Instead, we use **Different Trajectories Fraction (DTF)** from `chunks_labeled.json`, which captures the same intuition in a single-step measurement.
 
 **How DTF is computed:** For each sentence position, the original sentence is removed and the model regenerates a replacement ("resampled chunk"). DTF measures what fraction of these replacements are **semantically different** from the original. Specifically, both the original and resampled chunks are embedded using a sentence transformer, and if the cosine similarity between them falls below a threshold (default 0.6), that rollout counts as a "different trajectory." The DTF is then `different_trajectories_count / total_rollouts`.
 
-**Interpretation:**
+**The key insight is that DTF and resilience are inversely related — they measure the same phenomenon from opposite ends:**
 
-- **LOW DTF** (close to 0) = the model regenerates similar content at this position even when you remove it. The sentence is **overdetermined** — it's a structural anchor that the model will produce regardless of the specific wording, because the reasoning at this point is locked in by prior context.
-- **HIGH DTF** (close to 1) = the model's content varies significantly when you remove and resample. The sentence is **not overdetermined** — it's a genuine branch point where different reasoning paths are possible.
+- **LOW DTF** (close to 0) = the model regenerates similar content even when you remove it → the sentence is **overdetermined** by prior context → **HIGH resilience**. These are structural anchors.
+- **HIGH DTF** (close to 1) = content varies significantly when you remove and resample → the sentence is **not overdetermined** → **LOW resilience**. These are dispensable elaborations.
 
-In the context of safety-relevant reasoning: self-preservation statements (like "I need to survive") often look important based on counterfactual importance, but they have low resilience (high DTF) — they're post-hoc rationalizations that only appear in certain contexts, not fundamental structural anchors in the reasoning chain.
+Think of it this way: resilience asks "how hard is it to permanently erase this thought?" while DTF asks "how often does the replacement look different from the original?" If the model always regenerates the same idea (low DTF), it would take many rounds of removal to keep it away (high resilience). If the model produces something different each time (high DTF), a single removal suffices (low resilience).
+
+So when we show that self-preservation has the **highest DTF** across categories, this is the same as saying it has the **lowest resilience** — confirming these statements are post-hoc rationalizations, not causal drivers of the blackmail decision.
 """
 
 # ! CELL TYPE: code
@@ -4590,7 +4600,7 @@ Interpretation: 49% of resampled rollouts produce semantically different content
 # ! TAGS: []
 
 r"""
-### Exercise - compare resilience across categories
+### Exercise - compare DTF (inverse resilience) across categories
 
 > ```yaml
 > Difficulty: 🔴🔴⚪⚪⚪
@@ -4599,10 +4609,10 @@ r"""
 > You should spend up to 10-15 minutes on this exercise.
 > ```
 
-Create a visualization showing average resilience by sentence category. The key finding should be:
-- `self_preservation` has **low** resilience (post-hoc rationalization)
-- `leverage_identification` has **high** resilience (core reasoning)
-- `situation_assessment` has **high** resilience (factual content)
+Create a visualization showing average DTF by sentence category. Remember: high DTF = low resilience (dispensable), low DTF = high resilience (structural anchor). The key finding should be:
+- `self_preservation` has **high DTF** / low resilience (post-hoc rationalization — easily eliminated)
+- `leverage_identification` has **low DTF** / high resilience (core reasoning — the model regenerates it even when removed)
+- `situation_assessment` has **low DTF** / high resilience (factual content — overdetermined by the prompt)
 """
 
 # ! CELL TYPE: code
@@ -4865,7 +4875,7 @@ To replicate this yourself, you would need to:
 2. Compute CF++ = KL divergence between behavior distributions with a chunk forcibly present vs absent, aggregated across fight-back trajectories.
 3. Aggregate hierarchically across many scenarios (the paper uses ~13,595; the public dataset has fight-back results for 79 scenarios).
 
-The structural anchoring result using DTF (below) is fully replicable from `chunks_labeled.json` and reaches the same conclusion from a different angle.
+The structural anchoring result using DTF (below) is fully replicable from `chunks_labeled.json` and reaches the same conclusion from a different angle: self-preservation has the highest DTF (lowest resilience), confirming it is dispensable, while leverage identification has the lowest DTF (highest resilience), confirming it is a structural anchor.
 """
 
 # ! CELL TYPE: code

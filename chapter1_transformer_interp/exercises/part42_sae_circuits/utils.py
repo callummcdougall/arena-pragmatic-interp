@@ -1,12 +1,18 @@
 import json
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch as t
 from torch import Tensor
+from transformers import PreTrainedTokenizerBase
 
 Arr = np.ndarray
+
+
+if TYPE_CHECKING:
+    from part42_sae_circuits.solutions import AttributionResult
 
 
 # ==================================================
@@ -168,6 +174,220 @@ def find_threshold(scores: Tensor, threshold: float) -> Tensor:
 
 
 # ==================================================
+# PRUNING VISUALIZATION (for section 3)
+# ==================================================
+
+
+def generate_random_dag(
+    n_nodes: int,
+    n_logit_nodes: int,
+    edge_probability: float = 0.3,
+    seed: int = 42,
+) -> Tensor:
+    """Generate a random directed acyclic graph adjacency matrix.
+
+    Creates a DAG where edges only go from lower-indexed nodes to higher-indexed ones (ensuring
+    acyclicity). The last `n_logit_nodes` nodes have no outgoing edges (they are "output" nodes).
+
+    Convention: A[j, i] = weight of edge from node i to node j.
+
+    Args:
+        n_nodes: Total number of nodes in the graph.
+        n_logit_nodes: Number of output (logit) nodes (last n nodes in the matrix).
+        edge_probability: Probability of any given edge existing.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Adjacency matrix of shape (n_nodes, n_nodes).
+    """
+    gen = t.Generator().manual_seed(seed)
+    edge_exists = t.rand(n_nodes, n_nodes, generator=gen) < edge_probability
+    weights = t.rand(n_nodes, n_nodes, generator=gen) * 0.9 + 0.1  # uniform in [0.1, 1.0]
+
+    # Upper-triangular mask ensures edges go from smaller to larger index
+    mask = t.triu(t.ones(n_nodes, n_nodes), diagonal=1)
+    adjacency = mask * edge_exists * weights
+    adjacency = adjacency.T  # transpose so A[j, i] = edge from i to j
+
+    # Logit nodes have no outgoing edges
+    adjacency[:, -n_logit_nodes:] = 0.0
+    return adjacency
+
+
+def visualize_adjacency_matrix(
+    adjacency_matrix: Tensor,
+    title: str = "Graph",
+    n_logit_nodes: int | None = None,
+) -> None:
+    """Visualize an adjacency matrix as a directed graph with nodes in a square grid layout.
+
+    Blue nodes are regular (feature/embedding) nodes, red nodes are output (logit) nodes.
+    Nodes with no edges are shown faded. Edge thickness is proportional to weight.
+
+    Args:
+        adjacency_matrix: Adjacency matrix where A[j, i] = edge weight from i to j.
+        title: Title for the plot.
+        n_logit_nodes: Number of logit nodes (last n nodes). Defaults to 10% of total.
+    """
+    import matplotlib.pyplot as plt
+    import networkx as nx
+
+    adj_np = to_numpy(adjacency_matrix)
+    n_nodes = adj_np.shape[0]
+
+    if n_logit_nodes is None:
+        n_logit_nodes = max(1, int(0.1 * n_nodes))
+
+    G = nx.DiGraph()
+    G.add_nodes_from(range(n_nodes))
+
+    # Add edges (A[j, i] means edge from i to j)
+    for i in range(n_nodes):
+        for j in range(n_nodes):
+            if adj_np[j, i] > 0:
+                G.add_edge(i, j, weight=float(adj_np[j, i]))
+
+    # Fade nodes with no edges
+    node_alphas = []
+    for node in range(n_nodes):
+        has_edges = any(adj_np[node, i] > 0 or adj_np[i, node] > 0 for i in range(n_nodes))
+        node_alphas.append(1.0 if has_edges else 0.3)
+
+    plt.figure(figsize=(6, 6))
+
+    grid_size = int(np.ceil(np.sqrt(n_nodes)))
+    pos = {}
+    for i in range(n_nodes):
+        row = i // grid_size
+        col = i % grid_size
+        pos[i] = (
+            0.1 + 0.8 * col / max(grid_size - 1, 1),
+            0.1 + 0.8 * (grid_size - 1 - row) / max(grid_size - 1, 1),
+        )
+
+    weights = [G[u][v].get("weight", 1.0) for u, v in G.edges()]
+    if weights:
+        w_min, w_max = min(weights), max(weights)
+        norm_weights = (
+            [2.0] * len(weights) if w_max == w_min else [(w - w_min) / (w_max - w_min) * 3 + 0.5 for w in weights]
+        )
+    else:
+        norm_weights = []
+
+    nx.draw_networkx_nodes(
+        G,
+        pos,
+        node_size=300,
+        node_color=["blue"] * (n_nodes - n_logit_nodes) + ["red"] * n_logit_nodes,
+        alpha=node_alphas,
+        edgecolors="black",
+        linewidths=1,
+    )
+
+    if G.edges():
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            width=norm_weights,
+            edge_color="gray",
+            arrows=True,
+            arrowsize=15,
+            arrowstyle="-|>",
+            connectionstyle="arc3,rad=0.1",
+        )
+
+    nx.draw_networkx_labels(G, pos, font_size=10)
+    plt.title(title)
+    plt.axis("off")
+    return plt.gcf()
+
+
+def demo_pruning(
+    n_nodes: int = 30,
+    n_logit_nodes: int = 3,
+    edge_probability: float = 0.15,
+    seed: int = 43,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.8,
+) -> None:
+    """Demo of node and edge pruning on a random DAG.
+
+    Generates a random directed acyclic graph, then visualizes three stages:
+    1. The original graph
+    2. After node pruning (removing low-influence nodes)
+    3. After node + edge pruning (also removing low-influence edges)
+
+    This gives visual intuition for how pruning simplifies a graph while retaining the most
+    important causal structure.
+
+    Args:
+        n_nodes: Number of nodes in the graph.
+        n_logit_nodes: Number of output (logit) nodes.
+        edge_probability: Probability of an edge existing between any two nodes.
+        seed: Random seed for reproducibility.
+        node_threshold: Cumulative influence threshold for node pruning (0 to 1).
+        edge_threshold: Cumulative influence threshold for edge pruning (0 to 1).
+    """
+    import matplotlib.pyplot as plt
+
+    original_adjacency = generate_random_dag(n_nodes, n_logit_nodes, edge_probability, seed)
+
+    # Uniform logit weights
+    logit_weights_vec = t.zeros(n_nodes)
+    logit_weights_vec[-n_logit_nodes:] = 1.0 / n_logit_nodes
+
+    # --- Stage 1: Node pruning ---
+    node_influence = compute_node_influence(original_adjacency, logit_weights_vec)
+    non_logit_influence = node_influence[:-n_logit_nodes]
+    threshold_val = find_threshold(non_logit_influence, node_threshold)
+    keep_mask = non_logit_influence >= threshold_val
+    keep_non_logit = t.where(keep_mask)[0]
+    logit_indices = t.arange(n_nodes - n_logit_nodes, n_nodes)
+    kept_nodes = t.sort(t.cat([keep_non_logit, logit_indices]))[0]
+
+    # Build the node-pruned adjacency (padded back to original size for visualization)
+    sub_matrix = original_adjacency[kept_nodes[:, None], kept_nodes[None, :]]
+    node_pruned = t.zeros_like(original_adjacency)
+    node_pruned[kept_nodes[:, None], kept_nodes[None, :]] = sub_matrix
+
+    # --- Stage 2: Edge pruning on the node-pruned graph ---
+    edge_scores = compute_edge_influence(node_pruned, logit_weights_vec)
+    flat_scores = edge_scores.reshape(-1)
+    nonzero = flat_scores[flat_scores > 0]
+    if len(nonzero) > 0:
+        edge_thresh_val = find_threshold(nonzero, edge_threshold)
+        edge_mask = edge_scores >= edge_thresh_val
+    else:
+        edge_mask = t.ones_like(node_pruned, dtype=t.bool)
+    node_edge_pruned = node_pruned * edge_mask
+
+    # --- Visualize ---
+    fig1 = visualize_adjacency_matrix(original_adjacency, "Original Graph", n_logit_nodes)
+    fig2 = visualize_adjacency_matrix(
+        node_pruned,
+        f"Node-Pruned Graph ({node_threshold:.0%} influence retained)",
+        n_logit_nodes,
+    )
+    fig3 = visualize_adjacency_matrix(
+        node_edge_pruned,
+        f"Node+Edge-Pruned Graph ({edge_threshold:.0%} influence retained)",
+        n_logit_nodes,
+    )
+
+    n_orig_edges = (original_adjacency.abs() > 0).sum().item()
+    n_node_edges = (node_pruned.abs() > 0).sum().item()
+    n_final_edges = (node_edge_pruned.abs() > 0).sum().item()
+    print(f"Original graph: {n_nodes} nodes, {n_orig_edges} edges")
+    print(f"Node-pruned graph: {len(kept_nodes)} nodes, {n_node_edges} edges")
+    print(
+        f"Node+edge-pruned graph: {(node_edge_pruned.abs().sum(0) > 0).any().item() and len(kept_nodes)} nodes, "
+        f"{n_final_edges} edges"
+    )
+    plt.show()
+    return [fig1, fig2, fig3]
+
+
+# ==================================================
 # ATTRIBUTION GRAPH DASHBOARD (for section 3)
 # ==================================================
 
@@ -185,20 +405,252 @@ STR_TOKENS_MAP = {
     "\n": "⏎",
 }
 
+# Mapping from our NodeType values to Neuronpedia feature types
+NEURONPEDIA_FEATURE_TYPE_MAP = {
+    "embedding": "embedding",
+    "latent": "cross layer transcoder",
+    "mlp_error": "mlp reconstruction error",
+    "logit": "logit",
+}
+
+
+# ==================================================
+# FEATURE DATA (logit tables & histogram for dashboard)
+# ==================================================
+
+
+def get_ticks(min_value: float, max_value: float) -> list:
+    """Returns nicely spaced tick values for a histogram axis."""
+    if min_value > max_value:
+        min_value, max_value = max_value, min_value
+    if min_value > 0:
+        min_value = 0
+
+    span = max_value - min_value
+    if span < 1e-10:
+        return [0]
+
+    power = np.floor(np.log10(span / 4))
+    scale = 10**power
+    for interval in [5, 4, 3, 2, 1]:
+        tick_step = interval * scale
+        ticks = np.arange(
+            np.floor(min_value / tick_step) * tick_step,
+            np.ceil(max_value / tick_step) * tick_step + tick_step,
+            tick_step,
+        )
+        ticks = ticks[(ticks > min_value) & (ticks < max_value)]
+        if len(ticks) >= 4:
+            break
+
+    if 0.0 not in ticks:
+        ticks = np.append(ticks, 0.0)
+
+    if power < 0:
+        ticks = [round(t, -int(power.item())) for t in ticks.tolist()]
+    else:
+        ticks = [int(t) for t in ticks.tolist()]
+
+    return sorted(set(ticks))
+
+
+def hist_from_data(data: np.ndarray, n_bins: int, title: str | None = None) -> dict:
+    """Creates histogram data dict from a 1D array, for use by Plotly in the dashboard JS."""
+    if data.size == 0:
+        return {}
+
+    max_val = float(data.max())
+    min_val = float(data.min())
+    tick_vals = get_ticks(min_val, max_val)
+    tickangle = 45 if len(tick_vals) > 7 else 0
+
+    bin_edges = np.linspace(min_val, max_val, n_bins + 1)
+    bar_heights = np.histogram(data, n_bins, (min_val, max_val))[0]
+    bar_values = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    return {
+        "y": bar_heights.tolist(),
+        "x": [round(x, 5) for x in bar_values.tolist()],
+        "ticks": tick_vals,
+        "tickangle": tickangle,
+        "title": title,
+    }
+
+
+def compute_feature_data(
+    result: "AttributionResult",
+    model,
+    n_logit_rows: int = 10,
+    n_logit_hist_bins: int = 50,
+) -> dict[str, dict]:
+    """Compute logit tables and logit histogram data for latent nodes in an attribution graph.
+
+    For each kept latent node, computes:
+    - LogitTables: top/bottom tokens by logit effect (W_dec @ W_U)
+    - LogitHistogram: histogram of logit effects (W_dec @ W_U_centered)
+
+    Args:
+        result: The AttributionResult containing graph and kept node indices.
+        model: HookedSAETransformer model (for W_U and tokenizer).
+        n_logit_rows: Number of top/bottom tokens to show in logit tables.
+        n_logit_hist_bins: Number of bins for the logit histogram.
+
+    Returns:
+        Dict keyed by "{display_layer}_{feature}" with logit table and histogram data.
+    """
+    graph = result.graph
+    if graph.writing_vecs is None:
+        return {}
+
+    kept_indices = result.kept_indices
+    kept_nodes = [graph.nodes[i] for i in kept_indices]
+
+    W_U = model.W_U  # (d_model, d_vocab)
+    W_U_centered = W_U - W_U.mean(dim=-1, keepdim=True)
+    writing_vecs = graph.writing_vecs[kept_indices]  # (n_kept, d_model)
+    tokenizer = model.tokenizer
+
+    feature_data = {}
+
+    for i, node in enumerate(kept_nodes):
+        if node.node_type.value != "latent":
+            continue
+
+        display_layer = node.layer + 1  # 1-indexed for display
+        feature_key = f"{display_layer}_{node.feature}"
+
+        # Skip if already computed (same feature can appear at different positions)
+        if feature_key in feature_data:
+            continue
+
+        w_dec = writing_vecs[i]  # (d_model,)
+
+        # --- LogitTables: W_dec @ W_U ---
+        logit_effects = w_dec @ W_U  # (d_vocab,)
+        top_values, top_indices = t.topk(logit_effects, k=n_logit_rows)
+        bottom_values, bottom_indices = t.topk(logit_effects, k=n_logit_rows, largest=False)
+
+        def decode_token(tok_id: int) -> str:
+            s = tokenizer.decode([tok_id])
+            for k, v in STR_TOKENS_MAP.items():
+                s = s.replace(v, k) if k == "\n" else s  # Don't double-map
+            s = s.replace("\n", "⏎")
+            return s
+
+        top_str_toks = [decode_token(idx.item()) for idx in top_indices]
+        bottom_str_toks = [decode_token(idx.item()) for idx in bottom_indices]
+
+        # --- LogitHistogram: hist of W_dec @ W_U_centered ---
+        logit_effects_centered = (w_dec @ W_U_centered).detach().cpu().numpy()
+        min_logit = float(logit_effects_centered.min())
+        max_logit = float(logit_effects_centered.max())
+        title = (
+            "LOGITS<br><span style='color:#666;font-weight:normal'>RANGE ="
+            f" [{min_logit:+.3f}, {max_logit:+.3f}]</span>"
+        )
+        logits_hist = hist_from_data(logit_effects_centered, n_logit_hist_bins, title)
+
+        feature_data[feature_key] = {
+            "index": node.feature,
+            "top_logits": top_str_toks,
+            "top_logit_values": [round(v.item(), 3) for v in top_values],
+            "bottom_logits": bottom_str_toks,
+            "bottom_logit_values": [round(v.item(), 3) for v in bottom_values],
+            "logits_hist": logits_hist,
+            "acts_hist": {},  # Requires dataset activations (not available here)
+        }
+
+    return feature_data
+
+
+def _build_neuronpedia_json(
+    result: "AttributionResult",
+    nodes_json: list[dict],
+    links_json: list[dict],
+    metadata: list[dict],
+    feature_data: dict[str, dict],
+    display_tokens: list[str],
+    prompt_formatted: str,
+) -> dict:
+    """Build Neuronpedia-compatible JSON export from attribution graph data."""
+    kept_nodes = [result.graph.nodes[i] for i in result.kept_indices]
+
+    nodes_np = []
+    for node_js, node_info in zip(nodes_json, kept_nodes):
+        np_node = {
+            "node_id": node_js["node_id"],
+            "feature": node_js["feature"],
+            "layer": node_js["layer"],
+            "ctx_idx": node_js["ctx_idx"],
+            "feature_type": NEURONPEDIA_FEATURE_TYPE_MAP.get(
+                node_js["node_type"], node_js["node_type"]
+            ),
+            "jsNodeId": node_js["js_node_id"],
+            "clerp": node_js["clerp"],
+        }
+        if node_info.node_type.value == "latent":
+            np_node["activation"] = node_info.activation
+        nodes_np.append(np_node)
+
+    graph_data = {
+        "$id": "root",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": metadata[0]["slug"],
+        "version": "1.0.0",
+        "description": prompt_formatted,
+        "type": "object",
+        "metadata": {
+            "slug": metadata[0]["slug"],
+            "scan": metadata[0]["scan"],
+            "prompt_tokens": display_tokens[1:],
+            "prompt": prompt_formatted,
+            "feature_details": {
+                "neuronpedia_source_set": "gemmascope-2-transcoders-1b-it"
+            },
+        },
+        "qParams": {
+            "linkType": "both",
+            "pinnedIds": [],
+            "clickedId": "",
+            "supernodes": [],
+            "sg_pos": "",
+        },
+        "nodes": nodes_np,
+        "links": links_json,
+    }
+
+    features_data = [
+        {
+            "index": feat["index"],
+            "top_logits": feat.get("top_logits", []),
+            "bottom_logits": feat.get("bottom_logits", []),
+        }
+        for feat in feature_data.values()
+    ]
+
+    return {
+        "graph": graph_data,
+        "features": features_data,
+    }
+
 
 def create_attribution_dashboard(
     result: "AttributionResult",
     output_dir: str | Path = "attribution_dashboards",
+    model=None,
 ) -> Path:
     """
     Create an interactive attribution graph dashboard from an AttributionResult.
 
     Copies the JS/CSS template files and generates a data.js file containing the graph
-    data in the format expected by the frontend.
+    data in the format expected by the frontend. If a model is provided, also computes
+    feature data (logit tables + logit histogram) for each latent node and generates a
+    Neuronpedia-compatible JSON export.
 
     Args:
         result: The AttributionResult from the `attribute()` function.
         output_dir: Directory to save the dashboard files.
+        model: Optional HookedSAETransformer model (for computing feature data).
 
     Returns:
         Path to the generated index.html file.
@@ -207,7 +659,7 @@ def create_attribution_dashboard(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Get the template directory (relative to this file)
-    templates_dir = Path(__file__).parent / "attribution_graphs" / "templates"
+    templates_dir = Path(__file__).parent / "templates"
 
     # Copy all template files
     for suffix in [".js", ".css"]:
@@ -263,20 +715,22 @@ def create_attribution_dashboard(
         node_id = f"{display_layer}_{node.feature}_{node.ctx_idx}"
         js_node_id = f"{display_layer}_{node.feature}_-{reverse_ctx_idx}"
 
-        nodes_json.append({
-            "clerp": clerp,
-            "ctx_idx": node.ctx_idx,
-            "reverse_ctx_idx": reverse_ctx_idx,
-            "feature": node.feature,
-            "is_target_logit": node.node_type.value == "logit" and node.feature == 0,
-            "node_type": NODE_TYPE_JS_MAP.get(node.node_type.value, node.node_type.value),
-            "token_prob": node.token_prob,
-            "feature_density": 0.0,
-            "layer": display_layer,
-            "node_id": node_id,
-            "js_node_id": js_node_id,
-            "run_idx": 0,
-        })
+        nodes_json.append(
+            {
+                "clerp": clerp,
+                "ctx_idx": node.ctx_idx,
+                "reverse_ctx_idx": reverse_ctx_idx,
+                "feature": node.feature,
+                "is_target_logit": node.node_type.value == "logit" and node.feature == 0,
+                "node_type": NODE_TYPE_JS_MAP.get(node.node_type.value, node.node_type.value),
+                "token_prob": node.token_prob,
+                "feature_density": 0.0,
+                "layer": display_layer,
+                "node_id": node_id,
+                "js_node_id": js_node_id,
+                "run_idx": 0,
+            }
+        )
 
     # Build links list from pruned matrix
     links_json = []
@@ -290,24 +744,28 @@ def create_attribution_dashboard(
         source_node = nodes_json[i.item()]
         target_node = nodes_json[j.item()]
 
-        links_json.append({
-            "source": source_node["node_id"],
-            "target": target_node["node_id"],
-            "weight": round(weight, 5),
-        })
+        links_json.append(
+            {
+                "source": source_node["node_id"],
+                "target": target_node["node_id"],
+                "weight": round(weight, 5),
+            }
+        )
 
     # Prepare metadata
     prompt_formatted = result.prompt
     for k, v in STR_TOKENS_MAP.items():
         prompt_formatted = prompt_formatted.replace(k, v)
 
-    metadata = [{
-        "prompt": prompt_formatted,
-        "prompt_tokens": display_tokens[1:],  # Skip BOS
-        "scan": slug,
-        "slug": slug,
-        "n_layers": n_layers,
-    }]
+    metadata = [
+        {
+            "prompt": prompt_formatted,
+            "prompt_tokens": display_tokens[1:],  # Skip BOS
+            "scan": slug,
+            "slug": slug,
+            "n_layers": n_layers,
+        }
+    ]
 
     # Build the case study data
     case_study_data = {
@@ -325,14 +783,34 @@ def create_attribution_dashboard(
 
     graph_data_all = {slug: case_study_data}
 
+    # Compute feature data if model is provided
+    feature_data = {}
+    if model is not None:
+        feature_data = compute_feature_data(result, model)
+
     # Generate data.js
     js_str = f"""
 window.graphMetadata = {json.dumps(metadata)};
 window.graphData = {json.dumps(graph_data_all)};
-window.featureData = {json.dumps({})};
+window.featureData = {json.dumps(feature_data)};
 """
 
     (output_dir / "data.js").write_text(js_str)
+
+    # Generate Neuronpedia-compatible JSON export
+    if model is not None:
+        neuronpedia_data = _build_neuronpedia_json(
+            result=result,
+            nodes_json=nodes_json,
+            links_json=links_json,
+            metadata=metadata,
+            feature_data=feature_data,
+            display_tokens=display_tokens,
+            prompt_formatted=prompt_formatted,
+        )
+        (output_dir / "neuronpedia.json").write_text(
+            json.dumps(neuronpedia_data, indent=2)
+        )
 
     # Generate index.html that loads everything
     script_tags = []
@@ -373,3 +851,463 @@ window.featureData = {json.dumps({})};
     index_path.write_text(html)
 
     return index_path
+
+
+# ==================================================
+# CIRCUIT GRAPH VISUALIZATION (for section 4)
+# ==================================================
+# Adapted from circuit-tracer/demos/graph_visualization.py
+# and circuit-tracer/circuit_tracer/utils/demo_utils.py
+
+import html as _html
+import json as _json
+import math
+import urllib.parse
+from collections import namedtuple
+
+from IPython.display import HTML, SVG
+
+Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
+
+
+class Supernode:
+    """A group of related SAE features that serve a common role in a circuit.
+
+    Supernodes let us reason about circuits at a higher level than individual features.
+    Each supernode tracks its activation level (as a fraction of its baseline activation)
+    and can have child supernodes that it causally influences.
+    """
+
+    name: str
+    activation: float | None
+    default_activations: t.Tensor | None
+    children: list["Supernode"]
+    intervention: str | None
+    replacement_node: "Supernode | None"
+
+    def __init__(
+        self,
+        name: str,
+        features: list[Feature],
+        children: list["Supernode"] | None = None,
+        intervention: str | None = None,
+        replacement_node: "Supernode | None" = None,
+    ):
+        self.name = name
+        self.features = features
+        self.activation = None
+        self.default_activations = None
+        self.children = children or []
+        self.intervention = intervention
+        self.replacement_node = replacement_node
+
+    def __repr__(self):
+        return (
+            f"Supernode(name={self.name!r}, activation={self.activation}, "
+            f"children={[c.name for c in self.children]}, intervention={self.intervention})"
+        )
+
+
+class InterventionGraph:
+    """Container for a circuit diagram with supernodes arranged in layers.
+
+    Stores the prompt, the layered node arrangement (for visualization), and a dict
+    of all nodes indexed by name. Handles initializing node activations from model
+    outputs and computing activation fractions after interventions.
+    """
+
+    prompt: str
+    ordered_nodes: list[list[Supernode]]
+    nodes: dict[str, Supernode]
+
+    def __init__(self, ordered_nodes: list[list[Supernode]], prompt: str):
+        self.ordered_nodes = ordered_nodes
+        self.prompt = prompt
+        self.nodes = {}
+
+    def initialize_node(self, node: Supernode, activations: dict) -> None:
+        """Store a node and record its default (baseline) activations."""
+        self.nodes[node.name] = node
+        if node.features:
+            node.default_activations = t.tensor([activations[feature] for feature in node.features])
+        else:
+            node.default_activations = None
+
+    def set_node_activation_fractions(self, current_activations: dict) -> None:
+        """Update each node's activation as a fraction of its default."""
+        for node in self.nodes.values():
+            if node.features and node.default_activations is not None:
+                current = t.tensor([current_activations[feature] for feature in node.features])
+                node.activation = (current / node.default_activations).mean().item()
+            else:
+                node.activation = None
+            node.intervention = None
+            node.replacement_node = None
+
+
+# --------------- SVG graph rendering ---------------
+
+
+def _calculate_node_positions(nodes: list[list[Supernode]]) -> dict:
+    container_width = 600
+    container_height = 250
+    node_width = 100
+
+    node_data = {}
+    for row_index, row in enumerate(nodes):
+        row_y = container_height - (row_index * (container_height / (len(nodes) + 0.5)))
+        row_width = len(row) * node_width + (len(row) - 1) * 50
+        start_x = (container_width - row_width) / 2
+        for col_index, node in enumerate(row):
+            node_x = start_x + col_index * (node_width + 50)
+            node_data[node.name] = {"x": node_x, "y": row_y, "node": node}
+
+    # Position replacement nodes above their originals
+    all_nodes: set[Supernode] = set()
+    for layer in nodes:
+        for node in layer:
+            all_nodes.add(node)
+            if node.replacement_node:
+                all_nodes.add(node.replacement_node)
+
+    for node in all_nodes:
+        if node.replacement_node and node.replacement_node.name not in node_data:
+            original_pos = node_data.get(node.name)
+            if original_pos:
+                node_data[node.replacement_node.name] = {
+                    "x": original_pos["x"] + 30,
+                    "y": original_pos["y"] - 35,
+                    "node": node.replacement_node,
+                }
+    return node_data
+
+
+def _get_node_center(node_data: dict, name: str) -> dict:
+    nd = node_data.get(name)
+    if not nd:
+        return {"x": 0, "y": 0}
+    return {"x": nd["x"] + 50, "y": nd["y"] + 17.5}
+
+
+def _create_connection_svg(node_data: dict, connections: list[dict]) -> str:
+    parts: list[str] = []
+    for conn in connections:
+        fc = _get_node_center(node_data, conn["from"])
+        tc = _get_node_center(node_data, conn["to"])
+        if fc["x"] == 0 or tc["x"] == 0:
+            continue
+        color = "#D2691E" if conn.get("replacement") else "#8B4513"
+        width = "4" if conn.get("replacement") else "3"
+        parts.append(
+            f'<line x1="{fc["x"]}" y1="{fc["y"]}" x2="{tc["x"]}" y2="{tc["y"]}" '
+            f'stroke="{color}" stroke-width="{width}"/>'
+        )
+        dx, dy = tc["x"] - fc["x"], tc["y"] - fc["y"]
+        length = math.sqrt(dx * dx + dy * dy)
+        if length > 0:
+            dxn, dyn = dx / length, dy / length
+            sz = 8
+            bx, by = tc["x"] - sz * dxn, tc["y"] - sz * dyn
+            px, py = -dyn * sz / 2, dxn * sz / 2
+            parts.append(
+                f'<polygon points="{tc["x"]},{tc["y"]} {bx + px},{by + py} {bx - px},{by - py}" fill="{color}"/>'
+            )
+    return "\n".join(parts)
+
+
+def _create_nodes_svg(node_data: dict) -> str:
+    parts: list[str] = []
+    replacement_names = {d["node"].replacement_node.name for d in node_data.values() if d["node"].replacement_node}
+
+    for name, data in node_data.items():
+        node = data["node"]
+        x, y = data["x"], data["y"]
+
+        is_low = node.activation is not None and node.activation <= 0.25
+        has_neg = node.intervention and "-" in node.intervention
+        is_repl = name in replacement_names
+
+        if is_low or has_neg:
+            fill, text_col, stroke = "#f0f0f0", "#bbb", "#ddd"
+        elif is_repl:
+            fill, text_col, stroke = "#FFF8DC", "#333", "#D2691E"
+        else:
+            fill, text_col, stroke = "#e8e8e8", "#333", "#999"
+
+        parts.append(
+            f'<rect x="{x}" y="{y}" width="100" height="35" fill="{fill}" stroke="{stroke}" stroke-width="2" rx="8"/>'
+        )
+        escaped = _html.escape(name)
+        parts.append(
+            f'<text x="{x + 50}" y="{y + 22}" text-anchor="middle" '
+            f'fill="{text_col}" font-family="Arial, sans-serif" font-size="12" font-weight="bold">{escaped}</text>'
+        )
+
+        if node.activation is not None:
+            pct = round(node.activation * 100)
+            lx, ly = x - 15, y - 5
+            parts.append(
+                f'<rect x="{lx}" y="{ly}" width="30" height="16" fill="white" stroke="#ccc" stroke-width="1" rx="4"/>'
+            )
+            parts.append(
+                f'<text x="{lx + 15}" y="{ly + 12}" text-anchor="middle" '
+                f'fill="#8B4513" font-family="Arial, sans-serif" font-size="10" font-weight="bold">{pct}%</text>'
+            )
+
+        if node.intervention:
+            ix, iy = x - 20, y - 5
+            tw = len(node.intervention) * 8 + 10
+            esc_iv = _html.escape(node.intervention)
+            parts.append(f'<rect x="{ix}" y="{iy}" width="{tw}" height="16" fill="#D2691E" stroke="none" rx="12"/>')
+            parts.append(
+                f'<text x="{ix + tw / 2}" y="{iy + 12}" text-anchor="middle" '
+                f'fill="white" font-family="Arial, sans-serif" font-size="10" font-weight="bold">{esc_iv}</text>'
+            )
+    return "\n".join(parts)
+
+
+def _build_connections(nodes: list[list[Supernode]]) -> list[dict]:
+    all_nodes: set[Supernode] = set()
+
+    def _add(n: Supernode) -> None:
+        all_nodes.add(n)
+        if n.replacement_node:
+            _add(n.replacement_node)
+        for c in n.children:
+            _add(c)
+
+    for layer in nodes:
+        for n in layer:
+            _add(n)
+
+    repl_names = {n.replacement_node.name for n in all_nodes if n.replacement_node}
+    conns: list[dict] = []
+    for node in all_nodes:
+        for child in node.children:
+            if node.replacement_node:
+                continue
+            conn: dict = {"from": node.name, "to": child.name}
+            if node.name in repl_names:
+                conn["replacement"] = True
+            conns.append(conn)
+    return conns
+
+
+def _wrap_text(text: str, max_width: int = 80) -> list[str]:
+    if len(text) <= max_width:
+        return [text]
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        if len(cur + " " + w) <= max_width:
+            cur = cur + " " + w if cur else w
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def create_graph_visualization(
+    intervention_graph: InterventionGraph,
+    top_outputs: list[tuple[str, float]],
+) -> SVG:
+    """Create an SVG visualization of a circuit intervention graph.
+
+    Shows supernodes arranged in layers with edges, activation percentages,
+    intervention badges, the prompt text, and top output token probabilities.
+
+    Args:
+        intervention_graph: The InterventionGraph with nodes and prompt.
+        top_outputs: List of (token_string, probability) for top model predictions.
+
+    Returns:
+        IPython SVG object that renders inline in notebooks.
+    """
+    nodes = intervention_graph.ordered_nodes
+    prompt = intervention_graph.prompt
+
+    node_data = _calculate_node_positions(nodes)
+    connections = _build_connections(nodes)
+    conn_svg = _create_connection_svg(node_data, connections)
+    nodes_svg = _create_nodes_svg(node_data)
+
+    # Output items
+    output_y = 350
+    out_parts: list[str] = []
+    cx = 40
+    for i, (text, pct) in enumerate(top_outputs[:6]):
+        disp = text or "(empty)"
+        esc = _html.escape(disp)
+        pct_text = f"{round(pct * 100)}%"
+        iw = len(disp) * 8 + len(pct_text) * 6 + 20
+        out_parts.append(
+            f'<rect x="{cx}" y="{output_y}" width="{iw}" height="20" fill="#e8e8e8" stroke="none" rx="6"/>'
+        )
+        out_parts.append(
+            f'<text x="{cx + 5}" y="{output_y + 14}" fill="#333" font-family="Arial, sans-serif" '
+            f'font-size="11" font-weight="bold">{esc} <tspan fill="#555" font-size="10">{pct_text}</tspan></text>'
+        )
+        cx += iw + 10
+
+    # Prompt text
+    prompt_lines = _wrap_text(_html.escape(prompt))
+    prompt_svg = "\n".join(
+        f'<text x="40" y="{325 + i * 15}" fill="#333" font-family="Arial, sans-serif" font-size="12">{line}</text>'
+        for i, line in enumerate(prompt_lines)
+    )
+
+    svg = f"""<svg width="700" height="400" xmlns="http://www.w3.org/2000/svg">
+    <rect width="700" height="400" fill="#f5f5f5"/>
+    <rect x="20" y="20" width="660" height="360" fill="white" stroke="none" rx="12"/>
+    <text x="40" y="45" fill="#666" font-family="Arial, sans-serif" font-size="14" font-weight="bold"
+          letter-spacing="1px">GRAPH &amp; INTERVENTIONS</text>
+    <g transform="translate(50, 0)">
+        {conn_svg}
+        {nodes_svg}
+    </g>
+    <line x1="40" y1="290" x2="660" y2="290" stroke="#ddd" stroke-width="1"/>
+    <text x="40" y="310" fill="#666" font-family="Arial, sans-serif" font-size="12" font-weight="bold"
+          letter-spacing="0.5px">PROMPT</text>
+    {prompt_svg}
+    <text x="40" y="350" fill="#666" font-family="Arial, sans-serif" font-size="10" font-weight="bold"
+          letter-spacing="0.5px">TOP OUTPUTS</text>
+    <g transform="translate(0, 5)">
+        {chr(10).join(out_parts)}
+    </g>
+</svg>"""
+    return SVG(svg)
+
+
+# --------------- Neuronpedia URL parsing ---------------
+
+
+def decode_url_features(url: str) -> tuple[dict[str, list[Feature]], list[Feature]]:
+    """Extract supernode features and singleton features from a Neuronpedia graph URL.
+
+    Parses the `supernodes` and `pinnedIds` query parameters to recover the feature
+    lists that were annotated on Neuronpedia.
+
+    Args:
+        url: Full Neuronpedia URL with query parameters.
+
+    Returns:
+        Tuple of (supernode_features_dict, singleton_features_list).
+    """
+    decoded = urllib.parse.unquote(url)
+    parsed = urllib.parse.urlparse(decoded)
+    params = urllib.parse.parse_qs(parsed.query)
+
+    supernodes_json = params.get("supernodes", ["[]"])[0]
+    supernodes_data = _json.loads(supernodes_json)
+
+    supernode_features: dict[str, list[Feature]] = {}
+    name_counts: dict[str, int] = {}
+    for supernode in supernodes_data:
+        name = supernode[0]
+        node_ids = supernode[1:]
+        if name in name_counts:
+            name_counts[name] += 1
+            unique_name = f"{name} ({name_counts[name]})"
+        else:
+            name_counts[name] = 1
+            unique_name = name
+        nodes = []
+        for node_id in node_ids:
+            layer, feature_idx, pos = map(int, node_id.split("_"))
+            nodes.append(Feature(layer, pos, feature_idx))
+        supernode_features[unique_name] = nodes
+
+    pinned_str = params.get("pinnedIds", [""])[0]
+    singleton_features: list[Feature] = []
+    if pinned_str:
+        for pid in pinned_str.split(","):
+            if pid.startswith("E_"):
+                parts = pid[2:].split("_")
+                if len(parts) == 2:
+                    feature_idx, pos = map(int, parts)
+                    singleton_features.append(Feature(-1, pos, feature_idx))
+            else:
+                parts = pid.split("_")
+                if len(parts) == 3:
+                    layer, feature_idx, pos = map(int, parts)
+                    singleton_features.append(Feature(layer, pos, feature_idx))
+    return supernode_features, singleton_features
+
+
+def extract_supernode_features(url: str) -> dict[str, list[Feature]]:
+    """Extract supernode feature lists from a Neuronpedia graph URL."""
+    supernode_features, _ = decode_url_features(url)
+    return supernode_features
+
+
+# --------------- HTML display helpers ---------------
+
+
+def get_topk(logits: t.Tensor, tokenizer: PreTrainedTokenizerBase, k: int = 5) -> list[tuple[str, float]]:
+    """Get top-k predicted tokens and their probabilities from logits."""
+    probs = t.softmax(logits.squeeze()[-1].float(), dim=-1)
+    topk = t.topk(probs, k)
+    return [(tokenizer.decode([topk.indices[i]]), topk.values[i].item()) for i in range(k)]
+
+
+def display_topk_token_predictions(
+    sentence: str,
+    original_logits: t.Tensor,
+    new_logits: t.Tensor,
+    tokenizer: PreTrainedTokenizerBase,
+    k: int = 5,
+) -> None:
+    """Display an HTML comparison table of top-k token predictions before and after an intervention.
+
+    Shows two tables: original (blue header) and new (green header), each with token names,
+    probabilities, and horizontal bar charts.
+    """
+    from IPython.display import display as _display
+
+    original_tokens = get_topk(original_logits, tokenizer, k)
+    new_tokens = get_topk(new_logits, tokenizer, k)
+    max_prob = max(max(p for _, p in original_tokens), max(p for _, p in new_tokens))
+
+    def _rows(tokens: list[tuple[str, float]], color: str) -> str:
+        r = ""
+        for i, (tok, prob) in enumerate(tokens):
+            bw = int(prob / max_prob * 100)
+            rc = "even-row" if i % 2 == 0 else "odd-row"
+            r += f"""<tr class="{rc}">
+                <td class="monospace token-col" title="{_html.escape(tok)}">{_html.escape(tok)}</td>
+                <td class="prob-col" style="text-align:right;">{prob:.3f}</td>
+                <td class="dist-col"><div class="bar-container">
+                    <div class="bar" style="background-color:{color};width:{bw}%;"></div>
+                    <span class="bar-text">{prob * 100:.1f}%</span>
+                </div></td></tr>"""
+        return r
+
+    html_str = f"""<style>
+    .token-viz {{font-family:system-ui,sans-serif;margin-bottom:10px;max-width:700px;}}
+    .token-viz .header {{font-weight:bold;font-size:14px;margin-bottom:3px;padding:4px 6px;border-radius:3px;color:white;display:inline-block;}}
+    .token-viz .sentence {{background-color:rgba(200,200,200,0.2);padding:4px 6px;border-radius:3px;border:1px solid rgba(100,100,100,0.5);font-family:monospace;margin-bottom:8px;font-weight:500;font-size:14px;}}
+    .token-viz table {{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:13px;table-layout:fixed;}}
+    .token-viz th {{text-align:left;padding:4px 6px;font-weight:bold;border:1px solid rgba(150,150,150,0.5);background-color:rgba(200,200,200,0.3);}}
+    .token-viz td {{padding:3px 6px;border:1px solid rgba(150,150,150,0.5);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+    .token-viz .token-col {{width:20%;}} .token-viz .prob-col {{width:15%;}} .token-viz .dist-col {{width:65%;}}
+    .token-viz .monospace {{font-family:monospace;}}
+    .token-viz .bar-container {{display:flex;align-items:center;}}
+    .token-viz .bar {{height:12px;min-width:2px;}} .token-viz .bar-text {{margin-left:6px;font-weight:500;font-size:12px;}}
+    .token-viz .even-row {{background-color:rgba(240,240,240,0.1);}} .token-viz .odd-row {{background-color:rgba(255,255,255,0.1);}}
+    </style>
+    <div class="token-viz">
+        <div class="header" style="background-color:#555;">Input Sentence:</div>
+        <div class="sentence">{_html.escape(sentence)}</div>
+        <div class="header" style="background-color:#2471A3;">Original Top {k} Tokens</div>
+        <table><thead><tr><th class="token-col">Token</th><th class="prob-col" style="text-align:right;">Probability</th><th class="dist-col">Distribution</th></tr></thead>
+        <tbody>{_rows(original_tokens, "#2471A3")}</tbody></table>
+        <div class="header" style="background-color:#27AE60;">New Top {k} Tokens</div>
+        <table><thead><tr><th class="token-col">Token</th><th class="prob-col" style="text-align:right;">Probability</th><th class="dist-col">Distribution</th></tr></thead>
+        <tbody>{_rows(new_tokens, "#27AE60")}</tbody></table>
+    </div>"""
+    _display(HTML(html_str))
+    return html_str

@@ -2256,7 +2256,7 @@ class ActivationSteerer:
     - "response": steer only the last token position
 
     Usage:
-        with ActivationSteerer(model, vector, coeff=2.0, layer_idx=20, positions="response"):
+        with ActivationSteerer(model, vector, coeff=2.0, layer=19, positions="response"):
             output = model.generate(...)
     """
 
@@ -2265,13 +2265,13 @@ class ActivationSteerer:
         model: t.nn.Module,
         steering_vector: Float[Tensor, " d_model"],
         coeff: float = 1.0,
-        layer_idx: int = 20,
+        layer: int = 19,
         positions: str = "all",
     ):
         assert positions in ("all", "prompt", "response"), f"positions must be 'all', 'prompt', or 'response', got {positions!r}"
         self.model = model
         self.coeff = coeff
-        self.layer_idx = layer_idx
+        self.layer = layer
         self.positions = positions
         self._handle = None
 
@@ -2302,9 +2302,8 @@ class ActivationSteerer:
         return output
 
     def __enter__(self):
-        layers = _return_layers(self.model)
-        layer = layers[self.layer_idx - 1]
-        self._handle = layer.register_forward_hook(self._hook_fn)
+        # layer is a 0-based index into model.layers, matching ConversationAnalyzer/ActivationCapper
+        self._handle = _return_layers(self.model)[self.layer].register_forward_hook(self._hook_fn)
         return self
 
     def __exit__(self, *exc):
@@ -2326,18 +2325,19 @@ if MAIN:
     baseline_hidden = baseline_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
 
     # Get steered hidden states
-    test_vector = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # -1 because vectors are 0-indexed by layer
-    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer_idx=TRAIT_VECTOR_LAYER):
+    STEER_LAYER = TRAIT_VECTOR_LAYER - 1  # Convert from hidden_states index to 0-based model.layers index
+    test_vector = sycophantic_vectors[STEER_LAYER]  # 0-indexed: vectors[L] = output of model.layers[L]
+    with ActivationSteerer(qwen_model, test_vector, coeff=1.0, layer=STEER_LAYER):
         with t.inference_mode():
             steered_out = qwen_model(**test_inputs, output_hidden_states=True)
-    steered_hidden = steered_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
+    steered_hidden = steered_out.hidden_states[STEER_LAYER + 1][0, -1].cpu()
 
     diff = (steered_hidden - baseline_hidden).norm().item()
     print(f"Difference in hidden states with steering: {diff:.4f} (should be > 0)")
     assert diff > 0, "Steering hook is not modifying hidden states!"
 
     # Test 2: coeff=0 should match baseline
-    with ActivationSteerer(qwen_model, test_vector, coeff=0.0, layer_idx=TRAIT_VECTOR_LAYER):
+    with ActivationSteerer(qwen_model, test_vector, coeff=0.0, layer=STEER_LAYER):
         with t.inference_mode():
             zero_out = qwen_model(**test_inputs, output_hidden_states=True)
     zero_hidden = zero_out.hidden_states[TRAIT_VECTOR_LAYER + 1][0, -1].cpu()
@@ -2361,7 +2361,7 @@ def generate_with_steerer(
     tokenizer,
     prompt: str,
     steering_vector: Float[Tensor, " d_model"],
-    layer_idx: int,
+    layer: int,
     coeff: float,
     max_new_tokens: int = 256,
     temperature: float = 0.7,
@@ -2372,7 +2372,7 @@ def generate_with_steerer(
     inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
     prompt_length = inputs.input_ids.shape[1]
 
-    with ActivationSteerer(model, steering_vector, coeff=coeff, layer_idx=layer_idx):
+    with ActivationSteerer(model, steering_vector, coeff=coeff, layer=layer):
         with t.inference_mode():
             output_ids = model.generate(
                 **inputs,
@@ -2392,7 +2392,7 @@ def run_steering_experiment(
     questions: list[str],
     steering_vector: Float[Tensor, " d_model"],
     eval_prompt_template: str,
-    layer_idx: int = 20,
+    layer: int = 19,
     coefficients: list[float] | None = None,
     max_new_tokens: int = 256,
 ) -> list[dict]:
@@ -2405,7 +2405,7 @@ def run_steering_experiment(
         questions: List of evaluation questions
         steering_vector: The trait vector for the target layer
         eval_prompt_template: Template for autorater scoring
-        layer_idx: Which layer to steer at
+        layer: 0-based index into model.layers for steering
         coefficients: List of steering coefficients to test
         max_new_tokens: Maximum tokens per response
 
@@ -2423,7 +2423,7 @@ def run_steering_experiment(
         for question in questions:
             # Generate with steering
             response = generate_with_steerer(
-                model, tokenizer, question, steering_vector, layer_idx, coeff, max_new_tokens
+                model, tokenizer, question, steering_vector, layer, coeff, max_new_tokens
             )
 
             # Score with autorater
@@ -2446,15 +2446,16 @@ def run_steering_experiment(
 
 if MAIN:
     # Run the steering experiment
-    sycophantic_vector_layer20 = sycophantic_vectors[TRAIT_VECTOR_LAYER - 1]  # 0-indexed
+    steer_layer = TRAIT_VECTOR_LAYER - 1  # Convert from hidden_states index to 0-based model.layers index
+    sycophantic_vector_at_layer = sycophantic_vectors[steer_layer]
 
     steering_results = run_steering_experiment(
         model=qwen_model,
         tokenizer=qwen_tokenizer,
         questions=sycophantic_data["questions"],
-        steering_vector=sycophantic_vector_layer20,
+        steering_vector=sycophantic_vector_at_layer,
         eval_prompt_template=sycophantic_data["eval_prompt"],
-        layer_idx=TRAIT_VECTOR_LAYER,
+        layer=steer_layer,
         coefficients=[-3.0, -1.0, 0.0, 1.0, 3.0, 5.0],
     )
 
@@ -2620,7 +2621,7 @@ def run_trait_pipeline(
     tokenizer,
     trait_name: str,
     trait_data: dict,
-    layer_idx: int = 20,
+    layer: int = 19,
     steering_coefficients: list[float] | None = None,
     max_new_tokens: int = 256,
 ) -> tuple[Float[Tensor, "num_layers d_model"], list[dict]]:
@@ -2632,7 +2633,7 @@ def run_trait_pipeline(
         tokenizer: The tokenizer
         trait_name: Name of the trait (e.g., "evil", "hallucinating")
         trait_data: Dict with 'instruction', 'questions', 'eval_prompt' keys
-        layer_idx: Which layer to use for steering experiments
+        layer: 0-based index into model.layers for steering
         steering_coefficients: Coefficients to test in steering experiment
         max_new_tokens: Maximum tokens per response
 
@@ -2699,9 +2700,9 @@ def run_trait_pipeline(
 
     # Step 4: Run steering experiment
     print("\n--- Step 4: Running steering experiment ---")
-    trait_vector_at_layer = trait_vectors[layer_idx - 1]
+    trait_vector_at_layer = trait_vectors[layer]
     steering_results = run_steering_experiment(
-        model, tokenizer, trait_data["questions"], trait_vector_at_layer, eval_prompt, layer_idx, steering_coefficients
+        model, tokenizer, trait_data["questions"], trait_vector_at_layer, eval_prompt, layer, steering_coefficients
     )
 
     # Save steering results
@@ -2737,7 +2738,7 @@ if MAIN:
             tokenizer=qwen_tokenizer,
             trait_name=trait_name,
             trait_data=trait_data,
-            layer_idx=TRAIT_VECTOR_LAYER,
+            layer=TRAIT_VECTOR_LAYER - 1,
         )
         all_trait_vectors[trait_name] = vectors
         all_steering_results[trait_name] = steer_results

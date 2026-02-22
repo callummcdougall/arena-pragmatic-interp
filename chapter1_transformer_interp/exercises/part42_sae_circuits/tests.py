@@ -98,6 +98,76 @@ def test_compute_influence_section3(compute_influence_fn):
 # ==================================================
 
 
+# ==================================================
+# BONUS TESTS (manual attribution)
+# ==================================================
+
+
+def test_map_through_ln(map_through_ln_fn, model, cache):
+    """Test frozen LayerNorm matches the expected computation: x * scale * weight."""
+    layer = 0
+    resid_pre = cache[f"blocks.{layer}.hook_resid_pre"]
+    scale = cache[f"blocks.{layer}.ln1.hook_scale"]
+    weight = model.blocks[layer].ln1.w
+    expected = resid_pre * scale * weight
+    result = map_through_ln_fn(resid_pre, cache, model, layer=layer)
+    diff = (result - expected).abs().max().item()
+    assert result.shape == expected.shape, f"Shape mismatch: {result.shape} != {expected.shape}"
+    assert diff < 1e-5, f"Frozen LN output doesn't match expected. Max diff = {diff:.6f}"
+    print("All tests in `test_map_through_ln` passed!")
+
+
+def test_map_through_attn(map_through_attn_fn, model, cache):
+    """Test frozen attention by comparing to actual attention output derived from cache."""
+    layer = 0
+    resid_pre = cache[f"blocks.{layer}.hook_resid_pre"]
+    # Derive actual attention output: attn_out = resid_post - mlp_out - resid_pre
+    expected = cache[f"blocks.{layer}.hook_resid_post"] - cache[f"blocks.{layer}.hook_mlp_out"] - resid_pre
+    result = map_through_attn_fn(resid_pre, cache, model, layer)
+    diff = (result - expected).abs().max().item()
+    assert result.shape == expected.shape, f"Shape mismatch: {result.shape} != {expected.shape}"
+    assert diff < 1e-3, f"Frozen attention output doesn't match expected. Max diff = {diff:.6f}"
+    print("All tests in `test_map_through_attn` passed!")
+
+
+def test_map_through_mlp(map_through_mlp_fn, model, cache, transcoders):
+    """Test frozen MLP skip by comparing to manual ln2 @ W_skip computation."""
+    layer = 0
+    resid_mid = cache[f"blocks.{layer}.hook_resid_post"] - cache[f"blocks.{layer}.hook_mlp_out"]
+    tc = transcoders[layer]
+    # Expected: frozen_ln2(resid_mid) @ W_skip
+    scale = cache[f"blocks.{layer}.ln2.hook_scale"]
+    weight = model.blocks[layer].ln2.w
+    ln_output = resid_mid * scale * weight
+    expected = ln_output @ tc.W_skip
+    result = map_through_mlp_fn(resid_mid, cache, model, transcoders, layer)
+    diff = (result - expected).abs().max().item()
+    assert result.shape == expected.shape, f"Shape mismatch: {result.shape} != {expected.shape}"
+    assert diff < 1e-5, f"Frozen MLP skip output doesn't match expected. Max diff = {diff:.6f}"
+    print("All tests in `test_map_through_mlp` passed!")
+
+
+def test_compute_adjacency_matrix_manual(manual_adj, auto_adj):
+    """Test that the manual adjacency matrix matches the gradient-based one."""
+    assert manual_adj.shape == auto_adj.shape, (
+        f"Shape mismatch: manual {manual_adj.shape} != auto {auto_adj.shape}"
+    )
+    diff = (manual_adj - auto_adj).abs().max().item()
+    assert diff < 1e-2, (
+        f"Manual and automatic attribution matrices disagree! Max diff = {diff:.6f}. "
+        "Check: (1) Are you mapping through all intermediate layers? "
+        "(2) Are you applying the right LN at the target? "
+        "(3) Does your attention computation handle cross-position flow correctly?"
+    )
+    print(f"Max difference between manual and automatic: {diff:.6f}")
+    print("All tests in `test_compute_adjacency_matrix_manual` passed!")
+
+
+# ==================================================
+# SECTION 4 TESTS (interventions)
+# ==================================================
+
+
 def test_ablation_reduces_target(model, prompt, features_to_ablate, target_token_str):
     """Test that ablating features reduces the probability of a target token."""
     interventions = [(*f, 0.0) for f in features_to_ablate]
