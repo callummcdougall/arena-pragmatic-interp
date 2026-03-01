@@ -18,7 +18,7 @@ from pathlib import Path
 IN_COLAB = "google.colab" in sys.modules
 
 chapter = "chapter1_transformer_interp"
-repo = "arena-pragmatic-interp"  # "ARENA_3.0"
+repo = "arena-pragmatic-interp"  
 branch = "main"
 
 root = (

@@ -9,5 +9,5 @@ source ~/.bashrc
 # Create & activate the Conda environment
 ~/miniconda3/bin/conda create -n arena-env python=3.11 -y
 ~/miniconda3/bin/conda activate arena-env
-~/miniconda3/envs/arena-env/bin/pip install -r ~/ARENA_3.0/requirements.txt 
+~/miniconda3/envs/arena-env/bin/pip install -r ~/arena-pragmatic-interp/requirements.txt 
 ~/miniconda3/bin/conda install -n arena-env ipykernel --update-deps --force-reinstall -y

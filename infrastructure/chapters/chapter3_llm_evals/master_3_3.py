@@ -121,7 +121,7 @@ ipython.run_line_magic("autoreload", "2")
 # IN_COLAB = "google.colab" in sys.modules
 
 # chapter = "chapter3_llm_evals"
-# repo = "ARENA_3.0"
+# repo = "arena-pragmatic-interp"
 # branch = "alignment-science"
 
 # # Install dependencies
@@ -145,7 +145,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/{repo}/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -215,7 +215,7 @@ r"""
 - **OpenAI**: If you haven't already, go to https://platform.openai.com/ to create an account, then create a key in 'Dashboard'-> 'API keys'. 
 - **Anthropic**: If you haven't already, go to https://console.anthropic.com/ to create an account, then select 'Get API keys' and create a key.
 
-If you're in Google Colab, you should be able to set API Keys from the "secrets" tab on the left-side of the screen (the key icon). If in VSCode, then you can create a file called `ARENA_3.0/.env` containing the following:
+If you're in Google Colab, you should be able to set API Keys from the "secrets" tab on the left-side of the screen (the key icon). If in VSCode, then you can create a file called `arena-pragmatic-interp/.env` containing the following:
 
 ```ini
 OPENAI_API_KEY = "your-openai-key"

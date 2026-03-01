@@ -102,7 +102,7 @@ from __future__ import annotations
 # from pathlib import Path
 # IN_COLAB = "google.colab" in sys.modules
 # chapter = "chapter2_rl"
-# repo = "ARENA_3.0"
+# repo = "arena-pragmatic-interp"
 # branch = "alignment-science"
 # # Install dependencies
 # try:
@@ -122,7 +122,7 @@ from __future__ import annotations
 #         !sudo apt-get install unzip
 #         %pip install jupyter ipython --upgrade
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/{repo}/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip

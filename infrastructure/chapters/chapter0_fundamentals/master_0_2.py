@@ -145,7 +145,7 @@ ipython.run_line_magic("autoreload", "2")
 # IN_COLAB = "google.colab" in sys.modules
 
 # chapter = "chapter0_fundamentals"
-# repo = "ARENA_3.0"
+# repo = "arena-pragmatic-interp"
 # branch = "alignment-science"
 
 # # Install dependencies
@@ -169,7 +169,7 @@ ipython.run_line_magic("autoreload", "2")
 #         %pip install jupyter ipython --upgrade
 
 #     if not os.path.exists(f"{root}/{chapter}"):
-#         !wget -P {root} https://github.com/callummcdougall/ARENA_3.0/archive/refs/heads/{branch}.zip
+#         !wget -P {root} https://github.com/callummcdougall/{repo}/archive/refs/heads/{branch}.zip
 #         !unzip {root}/{branch}.zip '{repo}-{branch}/{chapter}/exercises/*' -d {root}
 #         !mv {root}/{repo}-{branch}/{chapter} {root}/{chapter}
 #         !rm {root}/{branch}.zip
@@ -2404,7 +2404,7 @@ display(images[0])
 # ! TAGS: []
 
 r"""
-<img src="https://raw.githubusercontent.com/callummcdougall/ARENA_3.0/refs/heads/main/chapter0_fundamentals/exercises/part2_cnns/resnet_inputs/chimpanzee.jpg" width="750">
+<img src="https://raw.githubusercontent.com/callummcdougall/arena-pragmatic-interp/refs/heads/main/chapter0_fundamentals/exercises/part2_cnns/resnet_inputs/chimpanzee.jpg" width="750">
 """
 
 # ! CELL TYPE: markdown
@@ -2522,7 +2522,7 @@ r"""
 └─────────────────┴────────────────────────────────────┴─────────────┘
 </pre>
 
-<img src="https://raw.githubusercontent.com/callummcdougall/ARENA_3.0/refs/heads/main/chapter0_fundamentals/exercises/part2_cnns/resnet_inputs/chimpanzee.jpg" width="750">
+<img src="https://raw.githubusercontent.com/callummcdougall/arena-pragmatic-interp/refs/heads/main/chapter0_fundamentals/exercises/part2_cnns/resnet_inputs/chimpanzee.jpg" width="750">
 """
 
 # ! CELL TYPE: markdown

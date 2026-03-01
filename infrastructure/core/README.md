@@ -286,7 +286,7 @@ Below shows the structure, just limited to the exercise set [1.3.2] (but obvious
 - The Colab notebooks appear in the exercises folder, and they'll have the same names as they will when loaded as Colabs.
 
 ```
-ARENA_3.0
+arena-pragmatic-interp
 ├── st_dependencies.py
 ├── pyproject.toml
 │
